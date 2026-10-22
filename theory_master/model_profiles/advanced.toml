@@ -1,0 +1,32 @@
+name = "advanced"
+description = "Advanced research profile: the standard research hierarchy is shifted up one reasoning level."
+
+[roles.research_lead]
+model = "gpt-6-sol"
+provider = "CodexHTTPS"
+reasoning_effort = "xhigh"
+
+[roles.challenger]
+model = "gpt-6-sol"
+provider = "CodexHTTPS"
+reasoning_effort = "high"
+
+[roles.investigator]
+model = "gpt-6-sol"
+provider = "CodexHTTPS"
+reasoning_effort = "xhigh"
+
+[roles.literature]
+model = "gpt-6-luna"
+provider = "CodexHTTPS"
+reasoning_effort = "medium"
+
+[roles.judge]
+model = "gpt-6-sol"
+provider = "CodexHTTPS"
+reasoning_effort = "high"
+
+[roles.reporter]
+model = "gpt-6-luna"
+provider = "CodexHTTPS"
+reasoning_effort = "medium"

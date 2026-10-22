@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 820" role="img" aria-labelledby="title desc">
+<title id="title">Sciver A2 brand overview</title><desc id="desc">Sciver geometric symbol, brand wordmark, and core color palette.</desc>
+<defs><linearGradient id="blue" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#408EF7"/><stop offset="1" stop-color="#1762F5"/></linearGradient></defs>
+<rect width="1400" height="820" rx="32" fill="#F4F7FC"/>
+<text x="72" y="68" font-family="Arial,sans-serif" font-size="18" letter-spacing="5" fill="#52627C">SCIVER / BRAND SYSTEM A2</text>
+<text x="72" y="116" font-family="Arial,sans-serif" font-size="38" font-weight="700" fill="#08162C">Geometry for scientific discovery.</text>
+<rect x="56" y="150" width="1288" height="330" rx="24" fill="#FFFFFF" stroke="#E1E7F0" stroke-width="2"/>
+<g transform="translate(180 195) scale(.70)">
+<path d="M0 87 L147 0 L147 64 L60 117 Z" fill="url(#blue)"/><path d="M0 87 L60 117 L0 150 Z" fill="#1D4BC7"/><path d="M0 150 L60 117 L117 212 Z" fill="#2151BF"/><path d="M60 117 L181 179 L117 212 Z" fill="#47A2F7"/><path d="M187 180 L187 249 L123 216 Z" fill="#245AF1"/><path d="M42 259 L123 216 L91 299 L42 326 Z" fill="#1762F5"/><path d="M123 216 L187 249 L91 299 Z" fill="#1A45BB"/>
+</g>
+<text x="360" y="330" font-family="Arial,sans-serif" font-size="112" font-weight="700" letter-spacing="2" fill="#08162C">Sciver</text>
+<text x="365" y="374" font-family="Arial,sans-serif" font-size="20" letter-spacing="3" fill="#52627C">AUTONOMOUS SCIENTIFIC DISCOVERY</text>
+<text x="88" y="445" font-family="Arial,sans-serif" font-size="16" letter-spacing="2" fill="#52627C">PRIMARY BLUE SYMBOL · NEGATIVE-SPACE FOLD</text>
+<rect x="56" y="510" width="400" height="250" rx="22" fill="#FFFFFF" stroke="#E1E7F0" stroke-width="2"/>
+<text x="88" y="555" font-family="Arial,sans-serif" font-size="18" font-weight="700" fill="#08162C">THE SYMBOL</text>
+<g transform="translate(205 575) scale(.42)">
+<path d="M0 87 L147 0 L147 64 L60 117 Z" fill="url(#blue)"/><path d="M0 87 L60 117 L0 150 Z" fill="#1D4BC7"/><path d="M0 150 L60 117 L117 212 Z" fill="#2151BF"/><path d="M60 117 L181 179 L117 212 Z" fill="#47A2F7"/><path d="M187 180 L187 249 L123 216 Z" fill="#245AF1"/><path d="M42 259 L123 216 L91 299 L42 326 Z" fill="#1762F5"/><path d="M123 216 L187 249 L91 299 Z" fill="#1A45BB"/>
+</g>
+<rect x="486" y="510" width="400" height="250" rx="22" fill="#FFFFFF" stroke="#E1E7F0" stroke-width="2"/>
+<text x="518" y="555" font-family="Arial,sans-serif" font-size="18" font-weight="700" fill="#08162C">CORE PALETTE</text>
+<g font-family="Arial,sans-serif" font-size="16" fill="#52627C"><rect x="518" y="580" width="48" height="48" rx="10" fill="#1762F5"/><text x="584" y="601">Primary Blue</text><text x="584" y="621" font-size="14">#1762F5</text><rect x="518" y="640" width="48" height="48" rx="10" fill="#408EF7"/><text x="584" y="661">Highlight Blue</text><text x="584" y="681" font-size="14">#408EF7</text><rect x="518" y="700" width="48" height="40" rx="10" fill="#1A45BB"/><text x="584" y="716">Deep Blue</text><text x="584" y="735" font-size="14">#1A45BB</text></g>
+<rect x="916" y="510" width="428" height="250" rx="22" fill="#07162F"/>
+<text x="948" y="555" font-family="Arial,sans-serif" font-size="18" font-weight="700" fill="#FFFFFF">DARK BACKGROUND</text>
+<g transform="translate(1070 580) scale(.40)" fill="#FFFFFF"><path d="M0 87 L147 0 L147 64 L60 117 Z"/><path d="M0 87 L60 117 L0 150 Z"/><path d="M0 150 L60 117 L117 212 Z"/><path d="M60 117 L181 179 L117 212 Z"/><path d="M187 180 L187 249 L123 216 Z"/><path d="M42 259 L123 216 L91 299 L42 326 Z"/><path d="M123 216 L187 249 L91 299 Z"/></g>
+<text x="948" y="720" font-family="Arial,sans-serif" font-size="15" fill="#D8E3F7">Use white artwork for contrast.</text>
+</svg>

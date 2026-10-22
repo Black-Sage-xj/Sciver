@@ -1,0 +1,32 @@
+name = "codex"
+description = "Cost-controlled research profile: Lead GPT-6 Sol/high; Challenger and Judge GPT-6 Sol/medium; Investigator GPT-6 Sol/low; Literature and Reporter GPT-6 Luna/low."
+
+[roles.research_lead]
+model = "gpt-6-sol"
+provider = "CodexHTTPS"
+reasoning_effort = "high"
+
+[roles.challenger]
+model = "gpt-6-sol"
+provider = "CodexHTTPS"
+reasoning_effort = "medium"
+
+[roles.investigator]
+model = "gpt-6-sol"
+provider = "CodexHTTPS"
+reasoning_effort = "low"
+
+[roles.literature]
+model = "gpt-6-luna"
+provider = "CodexHTTPS"
+reasoning_effort = "low"
+
+[roles.judge]
+model = "gpt-6-sol"
+provider = "CodexHTTPS"
+reasoning_effort = "medium"
+
+[roles.reporter]
+model = "gpt-6-luna"
+provider = "CodexHTTPS"
+reasoning_effort = "low"

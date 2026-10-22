@@ -1,0 +1,57 @@
+{
+  "schema": "theory-master/scientific-discrimination-canary/v1",
+  "scope": "Reference-only scientific oracle for independent Lead/Challenger/Investigator/Judge live behavior audits; these expected outcomes MUST NOT be passed to the agents.",
+  "cases": [
+    {
+      "id": "C53-unreachable-two-sided-sign",
+      "kind": "exact_sign_test",
+      "role": "challenger",
+      "scenario": "A decisive criterion demands a two-sided exact paired sign test with n=3 non-tied independent pairs and alpha=0.025. Can any possible observation meet it?",
+      "n": 3,
+      "tails": 2,
+      "alpha": 0.025,
+      "expected": "unreachable",
+      "review_focus": "Flag unattainable significance as qualification design issue; an exploratory inconclusive result can still be legitimate if explicitly scoped."
+    },
+    {
+      "id": "reachable-is-not-guaranteed-power",
+      "kind": "exact_sign_test",
+      "role": "challenger",
+      "scenario": "n=8 non-tied pairs, two-sided exact paired sign test, alpha=0.025. Is threshold logically reachable? Does that alone establish adequate statistical power?",
+      "n": 8,
+      "tails": 2,
+      "alpha": 0.025,
+      "expected": "reachable",
+      "review_focus": "Distinguish logical reachability from study power and from proof of the scientific hypothesis."
+    },
+    {
+      "id": "uncertain-numerical-distinction",
+      "kind": "bounded_numerical_error",
+      "role": "research_lead",
+      "scenario": "Proposed decisive claim is strictly positive effect; measured effect 0.004 with rigorous absolute error bound 0.01.",
+      "estimate": 0.004,
+      "error_bound": 0.01,
+      "expected": "insufficient_precision",
+      "review_focus": "Do not declare a strictly positive effect while zero is inside the defensible interval."
+    },
+    {
+      "id": "resolved-numerical-sign",
+      "kind": "bounded_numerical_error",
+      "role": "investigator",
+      "scenario": "Claim is strictly positive effect with an exact conservative error bound; measured effect 0.004 with rigorous absolute error bound 0.0001.",
+      "estimate": 0.004,
+      "error_bound": 0.0001,
+      "expected": "positive_sign_resolved",
+      "review_focus": "Sign is distinguishable under these stated error assumptions; does not imply broader generalization."
+    },
+    {
+      "id": "mathematical-counterexample",
+      "kind": "analytic_counterexample",
+      "role": "challenger",
+      "scenario": "A universal deterministic theorem is proposed; a valid explicit counterexample disproves it without sampling.",
+      "expected": "statistical_power_not_applicable",
+      "review_focus": "Do not require p-values, sample sizes or irrelevant baselines for a rigorous counterexample."
+    }
+  ],
+  "live_audit_requirement": "Run fresh real Agent evaluations without oracle in input; archive full trace, frozen Goal/H/decisive test, Agent decisions and independent reviewer evidence. Passing this oracle unittest alone never proves real Agent science."
+}

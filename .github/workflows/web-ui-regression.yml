@@ -1,0 +1,50 @@
+name: Sciver Web UI regression
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  web-ui:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/research_chat_frontend/package-lock.json
+      - name: Install deterministic test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]" -e ./web
+      - name: Python compile check
+        run: python -m compileall -q theory_master web/tm_observer
+      - name: Web regression tests
+        run: >-
+          python -m pytest -q
+          web/tests/test_web_performance.py
+          web/tests/test_canvas_md.py
+          web/tests/test_research_chat.py
+          web/tests/test_run_views.py
+          web/tests/test_observer.py
+          web/tests/test_science_graph_sqlite_explorer.py
+          web/tests/test_supervisor_safe_polling_20261018.py
+          web/tests/test_workflow_legacy_route_20261019.py
+          web/tests/test_webui_browser_smoke_20261018.py
+      - name: Build and validate Research Chat frontend
+        working-directory: web/research_chat_frontend
+        run: |
+          npm ci
+          npm run typecheck
+          npm run test:markdown
+          npm run build
+          node --check ../tm_observer/research_chat_dist/research-chat.js
+      - name: Ensure checked-in frontend JavaScript bundle matches source
+        run: git diff --exit-code -- web/tm_observer/research_chat_dist/research-chat.js

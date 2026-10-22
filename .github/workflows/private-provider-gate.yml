@@ -1,0 +1,14 @@
+name: Public provider boundary
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+jobs:
+  public-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan committed public source for private providers
+        run: python scripts/public_release_guard.py --ref HEAD

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:dc="http://purl.org/dc/elements/1.1/" viewBox="0 0 187 326" role="img" aria-labelledby="title desc">
+<title id="title">Sciver / Primary Faceted Blue</title><desc id="desc">Sciver A2: two opposed V folds compose an S, separated by a deliberate negative-space gap.</desc>
+<defs>
+<linearGradient id="sciver-primary-upper" x1="0" y1="117" x2="170" y2="35" gradientUnits="userSpaceOnUse"><stop stop-color="#1D57EF"/><stop offset="1" stop-color="#408EF7"/></linearGradient>
+<linearGradient id="sciver-primary-highlight" x1="60" y1="117" x2="181" y2="179" gradientUnits="userSpaceOnUse"><stop stop-color="#377EF1"/><stop offset="1" stop-color="#47A2F7"/></linearGradient>
+<linearGradient id="sciver-primary-lower" x1="40" y1="285" x2="170" y2="227" gradientUnits="userSpaceOnUse"><stop stop-color="#265AF4"/><stop offset="1" stop-color="#1660F4"/></linearGradient>
+</defs>
+<path id="sciver-primary-upper_ribbon" d="M0 87 L147 0 L147 64 L60 117 Z" fill="url(#sciver-primary-upper)"/>
+<path id="sciver-primary-upper_fold" d="M0 87 L60 117 L0 150 Z" fill="#1D4BC7"/>
+<path id="sciver-primary-bridge_shadow" d="M0 150 L60 117 L117 212 Z" fill="#2151BF"/>
+<path id="sciver-primary-bridge_highlight" d="M60 117 L181 179 L117 212 Z" fill="url(#sciver-primary-highlight)"/>
+<path id="sciver-primary-lower_fold" d="M187 180 L187 249 L123 216 Z" fill="#245AF1"/>
+<path id="sciver-primary-lower_ribbon" d="M42 259 L123 216 L91 299 L42 326 Z" fill="url(#sciver-primary-lower)"/>
+<path id="sciver-primary-lower_shadow" d="M123 216 L187 249 L91 299 Z" fill="#1A45BB"/>
+</svg>

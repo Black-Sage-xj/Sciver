@@ -1,0 +1,17 @@
+{
+  "schema": "theory-master/regression-case-index/v1",
+  "cases": [
+    {
+      "id": "test_0",
+      "path": "test_0",
+      "aliases": [
+        "Test0",
+        "test0",
+        "test_0",
+        "TEST0",
+        "brownian",
+        "brownian-2d"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tm-observer"
+version = "0.1.0"
+description = "TheoryMaster observability and formal engineering change-request surface"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+tm-observer = "tm_observer.cli:main"
+
+[tool.setuptools]
+packages = ["tm_observer"]
+
+[tool.setuptools.package-data]
+tm_observer = ["static/*.svg"]

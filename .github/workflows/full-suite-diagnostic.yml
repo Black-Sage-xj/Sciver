@@ -1,0 +1,27 @@
+name: Sciver full-suite diagnostic
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 5 * * 1"
+
+jobs:
+  full-suite:
+    name: Full core suite (known failures remain visible)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/web
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]" -e ./web
+      - name: Run every core test, including quarantined failures
+        run: python scripts/test_profiles.py full

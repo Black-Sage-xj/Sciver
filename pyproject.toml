@@ -1,0 +1,38 @@
+[project]
+name = "sciver"
+version = "0.1.0"
+description = "Persistent Codex SDK scientific workflow engine"
+license = "MIT"
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.scripts]
+sciver = "theory_master.__main__:main"
+theory_master = "theory_master.__main__:main"
+TheoryMaster = "theory_master.__main__:main"
+tm = "theory_master.__main__:main"
+tm-audit = "theory_master.audit_queue:main"
+
+[project.optional-dependencies]
+sdk = ["openai-codex>=0.1", "mcp>=1.0"]
+test = ["pytest>=8.0", "numpy>=1.24", "beautifulsoup4>=4.12", "textual>=0.50", "openai-codex>=0.1"]
+tui = ["textual"]
+jev = ["typesafe-sdk>=0.7"]
+
+[tool.setuptools.packages.find]
+include = ["theory_master*"]
+
+[tool.setuptools.package-data]
+theory_master = [
+  "model_profiles/test.toml",
+  "model_profiles/codex.toml",
+  "model_profiles/advanced.toml",
+  "model_profiles/README.md",
+  "resources/identities/*.md",
+  "resources/skills/*/*",
+  "resources/skills/*/*/*",
+  "resources/skills/*/*/*/*",
+]
+
+[tool.setuptools.exclude-package-data]
+theory_master = ["config/local/*", "config/local/**/*", "**/*.pyc", "**/__pycache__/*"]

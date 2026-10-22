@@ -1,0 +1,21 @@
+{
+  "schema": "tm-benchmark-harness/source-manifest/v1",
+  "origin": {
+    "type": "original_synthetic",
+    "producer": "TheoryMaster test_0 reproducible generator",
+    "generator": "evaluator/generate_data.py",
+    "third_party_data": false,
+    "distribution": "original data generated for this project"
+  },
+  "all_required_present": true,
+  "files": [
+    {
+      "path": "benchmark/datasets/brownian_2d/trajectories.csv",
+      "role": "public_input",
+      "exists": true,
+      "size": 1488263,
+      "sha256": "d35201918b27ad78270cffd72dc6f90f71f625c5c8732ed024dcc5090f0889e3",
+      "source": "original-synthetic://theory-master/test_0/v1"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:dc="http://purl.org/dc/elements/1.1/" viewBox="0 0 720 255" role="img" aria-labelledby="title desc">
+<title id="title">Sciver horizontal full-color logo</title><desc id="desc">Sciver A2: two opposed V folds compose an S, separated by a deliberate negative-space gap.</desc>
+<g transform="translate(24 20) scale(.64)"><defs>
+<linearGradient id="hprimary-upper" x1="0" y1="117" x2="170" y2="35" gradientUnits="userSpaceOnUse"><stop stop-color="#1D57EF"/><stop offset="1" stop-color="#408EF7"/></linearGradient>
+<linearGradient id="hprimary-highlight" x1="60" y1="117" x2="181" y2="179" gradientUnits="userSpaceOnUse"><stop stop-color="#377EF1"/><stop offset="1" stop-color="#47A2F7"/></linearGradient>
+<linearGradient id="hprimary-lower" x1="40" y1="285" x2="170" y2="227" gradientUnits="userSpaceOnUse"><stop stop-color="#265AF4"/><stop offset="1" stop-color="#1660F4"/></linearGradient>
+</defs>
+<path id="hprimary-upper_ribbon" d="M0 87 L147 0 L147 64 L60 117 Z" fill="url(#hprimary-upper)"/>
+<path id="hprimary-upper_fold" d="M0 87 L60 117 L0 150 Z" fill="#1D4BC7"/>
+<path id="hprimary-bridge_shadow" d="M0 150 L60 117 L117 212 Z" fill="#2151BF"/>
+<path id="hprimary-bridge_highlight" d="M60 117 L181 179 L117 212 Z" fill="url(#hprimary-highlight)"/>
+<path id="hprimary-lower_fold" d="M187 180 L187 249 L123 216 Z" fill="#245AF1"/>
+<path id="hprimary-lower_ribbon" d="M42 259 L123 216 L91 299 L42 326 Z" fill="url(#hprimary-lower)"/>
+<path id="hprimary-lower_shadow" d="M123 216 L187 249 L91 299 Z" fill="#1A45BB"/></g>
+<g fill="#08162C" transform="translate(200.0000 83.0000) scale(0.08266164)"><g transform="translate(-70.0000 1514.0000) scale(1 -1)"><path transform="translate(0 0)" d="M675 -24C1042 -24 1266 153 1266 440C1266 664 1125 795 807 862L664 893C481 933 407 984 407 1076C407 1185 514 1261 666 1261C826 1261 931 1174 942 1033H1230C1221 1333 1008 1514 665 1514C326 1514 99 1332 99 1061C99 848 242 711 537 647L694 613C883 572 961 516 961 420C961 304 848 229 677 229C486 229 371 325 367 489H70C70 165 293 -24 675 -24Z"/><path transform="translate(1317 0)" d="M588 -24C869 -24 1071 153 1084 397H797C778 286 711 214 592 214C444 214 355 335 355 527C355 720 443 842 592 842C710 842 784 769 799 661H1084C1065 907 866 1080 588 1080C271 1080 58 854 58 527C58 200 270 -24 588 -24Z"/><path transform="translate(2435 0)" d="M104 0H399V1056H104ZM251 1189C348 1189 419 1256 419 1346C419 1436 348 1503 251 1503C154 1503 83 1436 83 1346C83 1256 154 1189 251 1189Z"/><path transform="translate(2919 0)" d="M403 0H731L1123 1056H817L645 534C620 451 595 367 571 284C547 367 522 451 495 534L321 1056H12Z"/><path transform="translate(4034 0)" d="M586 -24C842 -24 1046 122 1085 332H816C789 250 710 197 595 197C440 197 350 298 345 454H1096V533C1096 855 887 1080 576 1080C273 1080 58 849 58 527C58 206 266 -24 586 -24ZM347 642C363 774 450 856 582 856C715 856 803 774 818 642Z"/><path transform="translate(5165 0)" d="M104 0H399V572C399 731 488 815 609 815C659 815 714 811 736 810V1061C712 1062 683 1063 649 1063C510 1063 430 1003 391 876H388V1056H104Z"/></g></g>
+</svg>

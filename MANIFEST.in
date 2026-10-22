@@ -1,0 +1,6 @@
+global-exclude *.py[cod]
+prune build
+prune dist
+prune config/local
+prune audit
+prune changes

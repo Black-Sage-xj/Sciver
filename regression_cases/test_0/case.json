@@ -1,0 +1,30 @@
+{
+  "schema": "theory-master/regression-case/v1",
+  "id": "test_0",
+  "aliases": [
+    "Test0",
+    "test0",
+    "test_0",
+    "TEST0",
+    "brownian",
+    "brownian-2d"
+  ],
+  "kind": "original synthetic physics benchmark",
+  "purpose": "Estimate 2D Brownian diffusion D in the presence of unknown Gaussian localization noise",
+  "scientific_fixture": {
+    "plan": "research_plan.md",
+    "benchmark_root": "benchmark",
+    "source_manifest": "benchmark/source_manifest.json"
+  },
+  "separation": {
+    "materialized_into_new_task": [
+      "research_plan.md",
+      "benchmark/"
+    ],
+    "reference_only_not_materialized": [
+      "case.json",
+      "expected.json",
+      "evaluator/"
+    ]
+  }
+}

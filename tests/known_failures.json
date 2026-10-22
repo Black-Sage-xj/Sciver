@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "description": "Known-failure quarantine. Previous five entries were removed after all five exact targeted regression cases passed locally on 2026-10-20. New failures must be reproduced before addition; passing tests remain in the normal suite.",
+  "tests": []
+}

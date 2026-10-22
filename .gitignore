@@ -1,0 +1,67 @@
+# Python and built artifacts
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage*
+htmlcov/
+.venv/
+venv/
+build/
+dist/
+*.whl
+# Do not ignore all JSON/SQLite: some fixtures are source-controlled.
+node_modules/
+
+# Private deployment and credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+auth.json
+config/local/
+config/*secrets*
+config/*.env
+!.env.example
+.codex/
+.codex-home/
+.local/
+.secrets/
+.secrets.d/
+
+# Operator data, run output and local audit history
+.theory-master-tasks/
+/research_runs/
+/tmlab_workspace/
+research/
+workspace/
+runtime/
+logs/
+cache/
+audit/
+change_requests/
+changes/
+# Only original Test0 is published; all other case directories are excluded.
+/regression_cases/*
+!/regression_cases/README.md
+!/regression_cases/index.json
+!/regression_cases/test_0/
+# Previously tracked third-party cases require an explicit git rm (ignore alone is insufficient).
+ModifyHistory.md
+observation.md
+
+# Local IDE / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local operator bootstrap and private implementation scratchpads
+.theory-master-codex-root
+web/IMPLEMENTATION_PLAN.md
