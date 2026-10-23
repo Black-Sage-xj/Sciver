@@ -29,7 +29,22 @@ def dispatch(specified: dict[str, Any]) -> dict[str, Any]:
         raise ControlRejected("unknown operator action")
     root = Path(str(specified["task_root"])).resolve(strict=True)
     binding = TaskBinding.load(root)
-    spec = TaskSpec.from_config(binding.config_path)
+    try:
+        spec = TaskSpec.from_config(binding.config_path)
+    except FileNotFoundError as error:
+        # Only an explicit launch may upgrade a registered legacy graph.
+        # Verify the server's target before allowing any migration write.
+        if action not in {"run", "resume"} or not str(error).startswith("canonical science_graph.sqlite3 is required:"):
+            raise
+        if Path(str(specified["research_root"])).resolve(strict=True) != binding.research_root:
+            raise ControlRejected("task research root changed")
+        if specified.get("run_id") is not None and int(binding.master_id) != int(specified["run_id"]):
+            raise ControlRejected("task ID changed")
+        if (binding.branch_canvas.parent / "science_graph.sqlite3").exists():
+            raise
+        from .task_graph_upgrade import upgrade_task_graph
+        upgrade_task_graph(binding)
+        spec = TaskSpec.from_config(binding.config_path)
     research = Path(str(specified["research_root"])).resolve(strict=True)
     if spec.research_root.resolve() != research:
         raise ControlRejected("task research root changed")

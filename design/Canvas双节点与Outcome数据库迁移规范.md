@@ -1,5 +1,11 @@
 # 2026-10-17 ResearchGraph V2 迁移记录
 
+## 已注册旧任务的启动兼容（2026-10-23）
+
+网页显式 Run/Resume 在加载旧任务因缺少 SQLite 失败时，先核对任务 ID 与运行目录，再升级原始 Canvas。升级与启动共用 launch/branch claim 锁，并独占 runner 锁；运行中或已有 Worker claim 的任务拒绝转换。原始 Canvas 保持不变，另存哈希备份并逐字归档，转换在临时数据库中完成；完整性、节点映射及配置锚点验证通过后才原子发布 `science_graph.sqlite3`。失败不留下可被误认为成功的半成品数据库；已存在的数据库不覆盖。已是投影的 Canvas 缺库时要求恢复原库，不从投影重建科学记录。
+
+查看页面、任务发现和 TaskSpec 加载不执行转换。命令行旧任务可先运行 `python -m theory_master.task_graph_upgrade /absolute/task/home`，再正常 resume。升级沿用既有导入器的科学语义，历史 Cycle 裁决不升级为新的全 H 裁决。
+
 > 本文记录旧 Canvas 切换到 SQLite 时的事实和保全边界。2026-10-18 起，**“每 H 唯一 Outcome”不再是现行科学语义**；现行规范见 [ResearchGraph设计文档.md](./ResearchGraph设计文档.md)。此前的唯一 H Outcome 行保留为兼容的全 H 状态，不得覆盖每轮独立的 Cycle Outcome。
 
 ## V2 切换时的事实
