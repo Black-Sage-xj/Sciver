@@ -1311,7 +1311,7 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
         if status in {"over", "completed", "cancelled"}:
             raise ValueError(f"Cycle is not resumable: {status}")
         owner_pid = state.get("owner_pid")
-        if status in {"active", "running"} and state.get("execution_active") and owner_pid:
+        if state.get("execution_active") and owner_pid:
             try:
                 os.kill(int(owner_pid), 0)
             except (OSError, ValueError):

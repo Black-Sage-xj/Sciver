@@ -1604,12 +1604,21 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
     # The native TUI bridge renders a persisted Cycle snapshot. For Worker
     # mode, never let its possibly stale RUNNING label override the verified
     # Worker process state also used by Task List and Worker tabs.
+    monitor_state = run_monitor.data(run)
+    pause_pending = (not selected_worker and run.get("state") == "LIVE"
+                     and str(monitor_state.get("status") or "").upper() == "PAUSED"
+                     and str(monitor_state.get("phase") or "").lower() == "control_requested")
     status = (run.get("state") if selected_worker else projection.get("status")) or run.get("state") or run.get("raw_status")
+    if pause_pending:
+        status = "PAUSE REQUESTED"
     cycle = projection.get("cycle_id") or run.get("cycle")
     state_note = (
         '<p class="tm-tui-unavailable">' + _e(projection.get("unavailable")) + '</p>'
         if projection.get("unavailable") else ""
     )
+    if pause_pending:
+        state_note += ('<p class="tm-tui-unavailable" role="status">'
+                       '暂停请求已收到；当前 Agent 仍在执行，等待安全检查点后才会暂停。</p>')
     if selected_worker and master_running:
         state_note += ('<p class="tm-tui-unavailable" role="status">'
                        '当前 Task Runner 正在运行；此页是旧 Worker 的历史状态。'
@@ -1692,7 +1701,7 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
                               resume_available=can_resume_state(run_monitor.data(run)),
                               run_available=(status_key in {"OVER", "CANCELLED", "STOPPED", "IDLE", "NEW"}),
                               allow_process_actions=not bool(selected_worker),
-                              effective_status=status_key if selected_worker else None,
+                              effective_status=status_key if selected_worker or pause_pending else None,
                               worker_state_actions=bool(selected_worker and worker_actions),
                               worker_cycle_progress=worker_cycle_progress)}
                 {quota_auto_card(projection.get("quota_auto_adjust"),

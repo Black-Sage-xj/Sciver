@@ -1782,6 +1782,21 @@ class TheoryMasterTest(unittest.TestCase):
             run_state = json.loads((self.cycle(spec) / 'run_state.json').read_text())
             self.assertTrue(run_state['resumable'])
 
+    def test_resume_rejects_live_owner_during_pending_pause(self):
+        with tempfile.TemporaryDirectory() as temp:
+            spec, backend = self.make(Path(temp), reworks=0)
+            workflow = Workflow(spec, backend)
+            workflow.initialize()
+            workflow.request_control('pause', reason='operator pause')
+            cycle = self.cycle(spec)
+            path = cycle / 'research_state.json'
+            state = json.loads(path.read_text())
+            state.update(owner_pid=os.getpid(), execution_active=True)
+            path.write_text(json.dumps(state), encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'already has an active execution'):
+                workflow.resume(spec.master_id)
+            self.assertTrue((cycle / 'recovery_control.json').is_file())
+
     def test_recovery_control_rejects_stopped_cycle(self):
         with tempfile.TemporaryDirectory() as temp:
             spec, backend = self.make(Path(temp), reworks=0)

@@ -33,7 +33,7 @@ def can_resume_state(state: dict[str, Any]) -> bool:
     return (status in {"PAUSED", "INTERRUPTED", "NEEDS_ATTENTION", "FAILED",
                        "FAILED_RECOVERY", "ORPHANED", "CHECKPOINT_REACHED",
                        "RECOVERABLE", "UNRESPONSIVE"}
-            and str(state.get("phase") or "").lower() != "abandon_requested")
+            and str(state.get("phase") or "").lower() not in {"abandon_requested", "control_requested"})
 
 
 def control_panel(run: dict[str, Any]) -> str:

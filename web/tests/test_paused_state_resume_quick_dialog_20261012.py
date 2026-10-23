@@ -70,6 +70,22 @@ class PausedStateResumeDialogTests(unittest.TestCase):
         self.assertFalse(can_resume_state({'status':'interrupted','phase':'abandon_requested'}))
         self.assertTrue(can_resume_state({'status':'paused','phase':'provider_quota_exhausted'}))
 
+    def test_live_pause_request_is_not_shown_as_completed_pause(self):
+        run={'observer_id':'a'*16,'cycle':'71','state':'LIVE','task_name':'Fixture'}
+        projection={'status':'PAUSED','cycle_id':'71','parts':{'header':_PAUSED}}
+        state={'status':'paused','phase':'control_requested',
+               'cycle_id':'71','execution_active':True,'resumable':True}
+        self.assertFalse(can_resume_state(state))
+        with patch('tm_observer.run_tui_bridge.read_tui',return_value=projection),\
+             patch('tm_observer.run_views.run_monitor.data',return_value=state),\
+             patch('tm_observer.run_controls_ui.run_monitor.data',return_value=state):
+            page=run_detail_body(run)
+        soup=BeautifulSoup(page,'html.parser')
+        self.assertEqual(soup.select_one('.tm-tui-screen')['data-tui-status'],'PAUSE REQUESTED')
+        self.assertEqual(soup.select_one('.tm-tui-process').get_text(strip=True),'PAUSE REQUESTED')
+        self.assertIn('等待安全检查点后才会暂停',page)
+        self.assertNotIn('data-tui-quick-action="resume"',page)
+
     def test_complete_run_page_binds_paused_badge_to_real_status(self):
         run={'observer_id':'a'*16,'cycle':'71','state':'PAUSED','task_name':'Fixture'}
         projection={'status':'PAUSED','cycle_id':'71','parts':{'header':_PAUSED}}
