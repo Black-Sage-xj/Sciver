@@ -11,7 +11,7 @@
 <p align="center"><em>Sci(ence)+(Disco)ver 从提出猜想到获得发现。</em></p>
 <p align="center"><a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a></p>
 
-Sciver 是一个持久化、多 Agent 协作的科学研究工作流引擎，并配有用于查看运行记录和审查科研进度的 **Web Observatory（网页观测台）**。观测台主要读取已持久化的产物和进程元数据，也可创建经过校验的工程变更申请；但它不会直接启动或恢复科研运行，也不会修改科研状态。Sciver 旨在帮助研究团队将研究从猜想推进到结构化调查、证据审查和可追溯的结论记录。
+Sciver 是一个持久化、多 Agent 协作的科学研究工作流引擎，并配有用于查看运行记录和审查科研进度的 **Web Observatory（网页观测台）**。观测台展示已持久化的产物和进程元数据，并通过 SDK 提供明确的操作入口，包括启动、恢复、暂停和终止科研运行。Sciver 旨在帮助研究团队将研究从猜想推进到结构化调查、证据审查和可追溯的结论记录。
 
 本仓库包含引擎、Agent 工作流和 Web UI 的维护版本源码。实验数据、研究者账号、本地部署配置和个人科研工作区应与本仓库分开管理。
 
@@ -19,7 +19,7 @@ Sciver 是一个持久化、多 Agent 协作的科学研究工作流引擎，并
 
 - **科研工作流引擎**：编排多阶段、多 Agent 的科学调查过程。
 - **Agent 角色与技能**：可复用的身份定义、指令和研究流程。
-- **Web Observatory**：查看已持久化的运行记录、审查进度并提交经过校验的工程变更申请；不会直接启动/恢复科研运行或修改科研状态。
+- **Web Observatory**：查看已持久化的运行记录、审查进度，并通过 SDK 显式控制科研运行。
 - **测试与设计资料**：回归测试和技术设计文档。
 
 ## 仓库结构
@@ -28,9 +28,8 @@ Sciver 是一个持久化、多 Agent 协作的科学研究工作流引擎，并
 - `web/tm_observer/` — Web Observatory；Web 包从 `web/` 安装。
 - `tests/`、`web/tests/` — 回归测试和集成测试。
 - `design/`、`web/design/` — 技术设计文档。
-- `skills/`、`identities/`、`scripts/` — 项目支持的技能、Agent 身份定义和开发工具。
+- `theory_master/resources/skills/`、`identities/`、`scripts/` — 项目支持的技能、Agent 身份定义和开发工具。
 - `config/.env.example` — 不包含凭据的配置模板。
-- `docs/assets/brand/` — 本 README 使用的 Sciver Logo 与品牌预览 SVG。
 
 部分包名和 CLI 命令仍保留历史上的 `TheoryMaster` / `tm` 命名。这些路径属于实现细节，不影响产品当前名称 Sciver。
 
@@ -51,13 +50,14 @@ python -m pip install -e ./web
 
 ## 运行测试
 
-查看可用的测试分类：
+安装测试依赖并查看可用的 unittest 测试分类：
 
 ```bash
+python -m pip install -e '.[test]' -e ./web
 python scripts/run_tests.py --list
 ```
 
-运行已登记的完整测试集：`python scripts/run_tests.py`；只运行不变量测试门禁：`python scripts/run_tests.py --category invariant`。部分集成测试可能需要本地服务或额外依赖。
+运行 CI 使用的完整核心 pytest 门禁：`python scripts/test_profiles.py default`。运行已登记的 unittest 分类测试集：`python scripts/run_tests.py`；只运行不变量测试门禁：`python scripts/run_tests.py --category invariant`。部分集成测试可能需要本地服务或额外依赖。
 
 ## 启动 Web Observatory
 
@@ -67,31 +67,11 @@ tm-observer serve --search-root /path/to/your/research/workspace --host 127.0.0.
 
 在本机打开 `http://127.0.0.1:8787/`。如需远程访问，请自行配置经过身份验证的反向代理或 SSH 隧道。**不要在没有身份验证的情况下直接暴露服务。**
 
+网页包含会改变状态的操作。查看任务状态、日志及 Canvas/Markdown 文档属于只读操作；`run`、`resume`、`pause`、`kill` 会通过 SDK 改变执行状态。目标草稿、研究计划、Worker 设置和服务/账号控制也可能写入本地状态。启动或恢复任务可能发起模型请求并消耗模型提供方额度。网页登录账号不等于只读角色。请求保护和部署说明见 [Web 操作边界](web/README.md#operation-boundaries)。
+
 `tm` CLI 仍可用于程序化工作流和诊断，但使用网页界面不要求先使用 CLI。
 
 旧版交互式 TUI 暂时保留以维持兼容性，但不是推荐的主要界面。若要退役，将通过单独变更处理。
-
-## Sciver 品牌资产
-
-仓库包含轻量级 SVG 资产，README 和项目资料可以直接使用统一的品牌标识，无需依赖外部图片资源。
-
-| 资产 | 路径 | 推荐用途 |
-|---|---|---|
-| 标准横版 Logo | `docs/assets/brand/Sciver_Lockup_Horizontal_Primary.svg` | 浅色背景、网站和文档 |
-| 蓝色图形 + 白色字标 | `docs/assets/brand/Sciver_Lockup_Horizontal_Blue_White.svg` | 深色背景；README 深色主题使用此版本 |
-| 全白横版 Logo | `docs/assets/brand/Sciver_Lockup_Horizontal_White.svg` | 深色背景下需要单色反白时使用 |
-| 独立图形符号 | `docs/assets/brand/Sciver_Symbol_primary.svg` | 应用导航、头像和紧凑的品牌位置 |
-| 品牌总览图 | `docs/assets/brand/Sciver_Brand_Overview.svg` | 品牌与配色参考 |
-| 图标尺寸预览 | `docs/assets/brand/Sciver_Icon_Size_Test.svg` | 检查不同显示尺寸下的符号辨识度 |
-
-A2 图形符号由七个可编辑的几何面构成，中间保留有意设计的负空间间隙。优先使用 SVG；不要拉伸、旋转、单独重画色块或填补间隙。在深色背景上优先使用蓝色图形 + 白色字标版本；只有需要单色反白效果时，才使用全白组合标识。
-
-核心配色参考：
-
-- 品牌主蓝：`#1762F5`
-- 高光蓝：`#408EF7`
-- 深折面蓝：`#1A45BB`
-- 字标 / 深色背景：`#08162C` / `#07162F`
 
 ## 科研数据与安全
 

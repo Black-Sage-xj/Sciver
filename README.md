@@ -11,7 +11,7 @@
 <p align="center"><em>From Hypotheses to Discoveries.</em></p>
 <p align="center"><a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a></p>
 
-Sciver is a persistent multi-agent scientific-research workflow engine with a companion **Web Observatory** for inspecting runs and reviewing research progress. The Observatory primarily reads persisted artifacts and process metadata; it can create validated engineering change requests, but it does not directly start or resume research runs or mutate scientific state. Sciver is designed to help research teams move from hypotheses through structured investigation, evidence review, and recorded outcomes.
+Sciver is a persistent multi-agent scientific-research workflow engine with a companion **Web Observatory** for inspecting runs and reviewing research progress. The Observatory displays persisted artifacts and process metadata and provides explicit operator controls through the SDK, including starting, resuming, pausing, and terminating research runs. Sciver is designed to help research teams move from hypotheses through structured investigation, evidence review, and recorded outcomes.
 
 This repository contains the maintained source for the engine, agent workflows, and Web UI. It is separate from experiment data, researcher accounts, local deployment settings, and personal research workspaces.
 
@@ -19,7 +19,7 @@ This repository contains the maintained source for the engine, agent workflows, 
 
 - **Research workflow engine** — orchestrates multi-stage, multi-agent scientific investigation.
 - **Agent roles and skills** — reusable identities, instructions, and research procedures.
-- **Web Observatory** — inspect persisted runs and review progress; it can submit validated engineering change requests but does not directly start/resume research runs or change scientific state.
+- **Web Observatory** — inspect persisted runs, review progress, and explicitly control research runs through the SDK.
 - **Tests and design references** — regression tests and technical design documentation.
 
 ## Repository layout
@@ -28,9 +28,8 @@ This repository contains the maintained source for the engine, agent workflows, 
 - `web/tm_observer/` — Web Observatory; install the Web package from `web/`.
 - `tests/`, `web/tests/` — regression and integration tests.
 - `design/`, `web/design/` — technical design notes.
-- `skills/`, `identities/`, `scripts/` — project-supported skills, agent identities, and development tools.
+- `theory_master/resources/skills/`, `identities/`, `scripts/` — project-supported skills, agent identities, and development tools.
 - `config/.env.example` — credential-free configuration template.
-- `docs/assets/brand/` — Sciver logo and brand-preview SVGs used by this README.
 
 Some package and CLI names retain historical `TheoryMaster`/`tm` naming. Those paths are implementation details and do not change the product name, Sciver.
 
@@ -51,13 +50,14 @@ The repository includes the `research-lit` skill, but it does not bundle the ext
 
 ## Run tests
 
-List the available test categories with:
+Install test dependencies and list the available unittest categories:
 
 ```bash
+python -m pip install -e '.[test]' -e ./web
 python scripts/run_tests.py --list
 ```
 
-Run the registered test suite with `python scripts/run_tests.py`, or run the invariant gate with `python scripts/run_tests.py --category invariant`. Some integration paths may require locally configured services or optional dependencies.
+Run the full core pytest gate used by CI with `python scripts/test_profiles.py default`. Run the categorized unittest suite with `python scripts/run_tests.py`, or run the invariant gate with `python scripts/run_tests.py --category invariant`. Some integration paths may require locally configured services or optional dependencies.
 
 ## Run the Web Observatory
 
@@ -67,31 +67,11 @@ tm-observer serve --search-root /path/to/your/research/workspace --host 127.0.0.
 
 Open `http://127.0.0.1:8787/` locally. For remote access, configure your own authenticated reverse proxy or SSH tunnel. **Do not expose the server directly without authentication.**
 
+The Web interface includes state-changing operations. Viewing task status, logs, and Canvas/Markdown documents is read-only; `run`, `resume`, `pause`, and `kill` change execution state through the SDK. Goal drafts, research plans, worker settings, and service/account controls can also write local state. Starting or resuming work can send model requests and consume provider quota. The UI is not a read-only access role. See [Web operation boundaries](web/README.md#operation-boundaries) for request protections and deployment details.
+
 The `tm` CLI remains available for programmatic workflows and diagnostics; it is not required for using the Web interface.
 
 The legacy interactive TUI is retained for compatibility but is not the preferred interface. Its retirement, if needed, will be handled separately.
-
-## Sciver brand assets
-
-The repository includes lightweight SVG assets so the README and project materials can use the same identity without external image dependencies.
-
-| Asset | Path | Recommended use |
-|---|---|---|
-| Primary horizontal logo | `docs/assets/brand/Sciver_Lockup_Horizontal_Primary.svg` | Light backgrounds, websites, and documents |
-| Blue symbol + white wordmark | `docs/assets/brand/Sciver_Lockup_Horizontal_Blue_White.svg` | Dark backgrounds; used by the README in dark mode |
-| All-white horizontal logo | `docs/assets/brand/Sciver_Lockup_Horizontal_White.svg` | Monochrome white treatment on dark backgrounds |
-| Standalone symbol | `docs/assets/brand/Sciver_Symbol_primary.svg` | App navigation, avatars, and compact brand placements |
-| Brand overview | `docs/assets/brand/Sciver_Brand_Overview.svg` | Brand and color reference |
-| Icon-size preview | `docs/assets/brand/Sciver_Icon_Size_Test.svg` | Check symbol legibility at different sizes |
-
-The A2 symbol uses seven editable geometric facets and a deliberate negative-space gap. Prefer SVG for scalable use; do not stretch, rotate, redraw individual facets, or close the gap. For dark backgrounds, prefer the blue-symbol/white-wordmark lockup; use the all-white lockup only when a monochrome treatment is needed.
-
-Core color references:
-
-- Primary blue: `#1762F5`
-- Highlight blue: `#408EF7`
-- Deep facet blue: `#1A45BB`
-- Wordmark / dark background: `#08162C` / `#07162F`
 
 ## Research data and security
 
