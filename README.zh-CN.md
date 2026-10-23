@@ -22,6 +22,14 @@ Sciver 是一个持久化、多 Agent 协作的科学研究工作流引擎，并
 - **Web Observatory**：查看已持久化的运行记录、审查进度，并通过 SDK 显式控制科研运行。
 - **测试与设计资料**：回归测试和技术设计文档。
 
+### Agent 状态与模型配置
+
+Web Observatory 将六个科研阶段集中展示，并呈现各 Agent 的当前状态、模型选择和推理强度。
+
+<p align="center">
+  <img src="docs/assets/screenshots/agent-status.svg" alt="Sciver Agent 状态页面，展示六个科研阶段、模型选择、推理强度和运行状态" width="100%">
+</p>
+
 ## 仓库结构
 
 - `theory_master/` — 核心 SDK、工作流编排、Agent 契约和运行时。
