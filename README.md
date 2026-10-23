@@ -53,6 +53,20 @@ The browser opens in **Workspace → Research Chat** and shows a short guide on 
 
 To create your own project, start from scratch or select an existing directory containing a `research_plan.md`, notes, or data. Choose the files to import. If you select an existing plan, Sciver uses it as input for a new draft and preserves the original directory and files. The conversation asks for your research goal, checkable completion criteria, and resource or method limits. Review or edit the Research Plan draft, then choose **Confirm project creation**. Only then does the project appear in **Task List**; research does not start automatically. Basic setup needs no model account. If you choose model-assisted drafting, excerpts from selected plans and notes are sent to the model and may consume quota.
 
+### Give this to your Agent
+
+Copy the entire prompt below into your coding Agent. It asks the Agent to install Sciver in your computer or development environment and return the Web UI link:
+
+```text
+Install and start Sciver for me, then give me a clickable Web UI link. Perform the steps rather than only suggesting commands:
+
+1. Check the environment: use Python 3.11+ on Linux/macOS, or WSL2 on Windows. If a Sciver checkout already exists, inspect uncommitted changes and preserve them; otherwise clone https://github.com/Black-Sage-xj/Sciver.git. In the repository, create and activate .venv, upgrade pip, and install this checkout's .[sdk] and ./web.
+2. Run sciver quickstart --no-web for the offline Test0 check. Diagnose and fix installation or verification errors before continuing. This does not need a model account. Do not start actual research for me.
+3. Start the Web UI with sciver web --no-open and keep the service running after your reply. If the default port is occupied, use sciver web --port 8788 --no-open or another free port. Check that /healthz succeeds on the actual port and that the page opens.
+4. If the Agent runs on my computer, return the local address printed by the server. If it runs on a remote host or in a container, first use the development environment's secure port forwarding so my browser can reach it, then return the forwarded link. If forwarding is unavailable, clearly say that the URL works only on the remote host and give me the SSH port-forward command I need to run. Do not expose the login-free default service directly to the public Internet.
+5. Make the first line of your final reply a clickable Markdown link, for example [Open Sciver Web UI](http://127.0.0.1:8787/), using the address and port I can actually access. Then briefly report the repository path, workspace path, verification result, and how to stop the Web server. Tell me I can inspect the initialized task under Task List → test0; do not start research for me.
+```
+
 To verify setup without starting the Web server:
 
 ```bash
