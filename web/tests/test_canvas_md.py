@@ -261,6 +261,36 @@ console.log('trackpad pan/pinch assertions passed');
         with self.assertRaises(ExplorerError):
             vault_root(self.repo, self.ident, self.state)
 
+    def test_registered_task_outside_legacy_notebook_is_readable(self):
+        task = self.repo / "gs_study" / "task-2"
+        task.mkdir(parents=True)
+        (task / "exploration.canvas").write_text('{"nodes":[],"edges":[]}', encoding="utf-8")
+        config = task / "theory-master.config.json"
+        config.write_text(json.dumps({
+            "task_home": str(task), "research_root": str(self.research),
+            "branch_canvas": str(task / "exploration.canvas"),
+        }), encoding="utf-8")
+        marker = task / ".theory-master" / "task.json"
+        marker.parent.mkdir()
+        marker.write_text(json.dumps({
+            "schema": "theory-master/task/v2", "config_path": str(config),
+        }), encoding="utf-8")
+        indexed = {"runs": [dict(self.run, task_root=str(task))]}
+        self.assertEqual(vault_root(self.repo, self.ident, indexed), task)
+
+        marker.unlink()
+        with self.assertRaises(ExplorerError):
+            vault_root(self.repo, self.ident, indexed)
+        marker.write_text(json.dumps({
+            "schema": "theory-master/task/v2", "config_path": str(config),
+        }), encoding="utf-8")
+        config.write_text(json.dumps({
+            "task_home": str(self.notebook), "research_root": str(self.research),
+            "branch_canvas": str(task / "exploration.canvas"),
+        }), encoding="utf-8")
+        with self.assertRaises(ExplorerError):
+            vault_root(self.repo, self.ident, indexed)
+
     def test_http_api_requires_auth_and_is_readonly(self):
         class Cache:
             search_root = self.repo

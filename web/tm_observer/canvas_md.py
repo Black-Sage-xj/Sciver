@@ -57,7 +57,7 @@ def vault_root(search_root: Path, observer_id: str, state: dict[str, Any]) -> Pa
     """Locate the vault through a Run's stable ID and canonical research root.
 
     The research root contains runtime/data, while source Canvas/MD live under
-    the task's canonical notebook root. Never accept either path from HTTP.
+    the task's canonical home. Never accept either path from HTTP.
     """
     if not OBSERVER_ID.fullmatch(observer_id):
         raise ExplorerError("无效任务标识", 404)
@@ -72,7 +72,8 @@ def vault_root(search_root: Path, observer_id: str, state: dict[str, Any]) -> Pa
     root = Path(root_text).resolve()
     research = Path(research_text).resolve()
     if (
-        root == notebook or not _inside(root, notebook) or not _inside(research, repo)
+        root == repo or not _inside(root, repo) or root == notebook
+        or not _inside(research, repo)
         or hashlib.sha256(str(research).encode("utf-8")).hexdigest()[:16] != observer_id
     ):
         raise ExplorerError("任务映射不安全", 403)
@@ -83,9 +84,25 @@ def vault_root(search_root: Path, observer_id: str, state: dict[str, Any]) -> Pa
         or (graph_database.is_file() and _inside(graph_database.resolve(), root))
     ):
         raise ExplorerError("此任务尚无可阅读的科研图谱", 404)
-    # If present, ensure the task configuration really binds this notebook
-    # to the research root reported by Run. Do not follow config-provided paths.
+    # Outside the historical notebook area, require the SDK's task marker and
+    # exact config binding before exposing any files from a registered Run.
     config = root / "theory-master.config.json"
+    registered_home = not _inside(root, notebook)
+    if registered_home:
+        marker = root / ".theory-master" / "task.json"
+        if not marker.is_file() or not _inside(marker.resolve(), root) or marker.stat().st_size > 512 * 1024:
+            raise ExplorerError("任务映射不安全", 403)
+        try:
+            binding = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise ExplorerError("任务映射不安全", 403) from exc
+        if not isinstance(binding, dict) or (
+            binding.get("schema") != "theory-master/task/v2"
+            or binding.get("config_path") != str(config)
+        ) or not config.is_file():
+            raise ExplorerError("任务映射不安全", 403)
+    # Ensure the task configuration binds this home to the indexed research
+    # root. Do not follow config-provided paths.
     if config.is_file():
         if not _inside(config.resolve(), root) or config.stat().st_size > 512 * 1024:
             raise ExplorerError("任务配置不可读取", 403)
@@ -94,6 +111,12 @@ def vault_root(search_root: Path, observer_id: str, state: dict[str, Any]) -> Pa
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise ExplorerError("任务配置无效", 422) from exc
         if not isinstance(parsed, dict) or (
+            registered_home and (
+                parsed.get("task_home") != str(root)
+                or parsed.get("research_root") != str(research)
+                or (canvas.is_file() and parsed.get("branch_canvas") != str(canvas))
+            )
+        ) or (
             parsed.get("research_root") and Path(parsed["research_root"]).resolve() != research
         ) or (
             parsed.get("branch_canvas") and canvas.is_file()
