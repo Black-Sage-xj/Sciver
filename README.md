@@ -7,8 +7,8 @@
 </p>
 
 <h1 align="center">Sciver</h1>
-<p align="center"><strong>An Open-Source Autonomous Scientific Discovery System</strong></p>
-<p align="center"><em>From Hypotheses to Discoveries.</em></p>
+<p align="center"><strong>Autonomous Scientific Discovery System</strong></p>
+<p align="center"><em>Sci(ence)+(Disco)ver — from hypotheses to discoveries.</em></p>
 <p align="center"><a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a></p>
 
 Sciver is a persistent multi-agent scientific-research workflow engine with a companion **Web Observatory** for inspecting runs and reviewing research progress. The Observatory displays persisted artifacts and process metadata and provides explicit operator controls through the SDK, including starting, resuming, pausing, and terminating research runs. Sciver is designed to help research teams move from hypotheses through structured investigation, evidence review, and recorded outcomes.
@@ -47,11 +47,11 @@ python -m pip install -e '.[sdk]' -e ./web
 sciver quickstart
 ```
 
-`quickstart` checks the original Test0 Brownian-motion data, initializes a task and SQLite graph, starts the local server, and opens **http://127.0.0.1:8787/**. The default workspace is `~/Sciver-workspace`, with the task in `test0/` and separate computation artifacts under `.theory-master-tasks/`. Generated files stay outside the source checkout.
+`quickstart` checks the original Test0 Brownian-motion data, initializes a task and SQLite graph, starts the local server, and opens **http://127.0.0.1:8787/**. The default workspace is `~/Sciver-workspace`, with the task in `test0/` and separate computation artifacts under `.theory-master-tasks/`. Generated files stay outside the source checkout. This is an offline installation check: it sends no model requests, starts no research, and produces no scientific verdict. Test0 has a **one-Cycle limit**; research begins only when you explicitly start it later. Repeating `quickstart` preserves your task and settings.
 
-The browser opens in **Workspace → Research Chat**. On first visit, a short guide offers a new project or an import from an existing directory. For an import, select the files you want Sciver to read, including an existing `research_plan.md` if you have one. Sciver asks for the research goal, a checkable completion criterion, and resource or method limits. Review or edit the proposed plan, then choose **Confirm project creation**. The project appears in **Task List**; creating it does not start research. The original directory is preserved. The basic setup works without a model account; model-assisted drafting is optional and may use quota.
+The browser opens in **Workspace → Research Chat** and shows a short guide on the first visit. To inspect the Test0 task just created, close the guide and open **Task List → test0**. You can view the task and its research plan without creating another project.
 
-This is an offline installation check: it sends no model requests and produces no scientific verdict. A newly created Test0 is limited to **one Cycle**. Repeating the command preserves your task and settings. Inspect the research plan in the task console, configure a provider, then explicitly start research when ready.
+To create your own project, start from scratch or select an existing directory containing a `research_plan.md`, notes, or data. Choose the files to import. If you select an existing plan, Sciver uses it as input for a new draft and preserves the original directory and files. The conversation asks for your research goal, checkable completion criteria, and resource or method limits. Review or edit the Research Plan draft, then choose **Confirm project creation**. Only then does the project appear in **Task List**; research does not start automatically. Basic setup needs no model account. If you choose model-assisted drafting, excerpts from selected plans and notes are sent to the model and may consume quota.
 
 To verify setup without starting the Web server:
 
@@ -113,12 +113,6 @@ The Web interface includes state-changing operations. Viewing task status, logs,
 The `tm` CLI remains available for programmatic workflows and diagnostics; it is not required for using the Web interface.
 
 The legacy interactive TUI is retained for compatibility but is not the preferred interface. Its retirement, if needed, will be handled separately.
-
-## Research data and security
-
-This repository does **not** include personal Canvas graphs, experiment runs, model credentials, local provider accounts, operator logs, historical change registries, or private benchmark data. Those belong in separate user-owned locations.
-
-Review `config/.env.example` and set secrets locally. The repository's `.gitignore` is not a substitute for security review. Never commit credentials, private scientific data, or third-party material without redistribution permission.
 
 ## Contributing and license
 
