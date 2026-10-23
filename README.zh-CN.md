@@ -109,12 +109,6 @@ tm-observer serve --search-root /path/to/your/research/workspace --host 127.0.0.
 
 旧版交互式 TUI 暂时保留以维持兼容性，但不是推荐的主要界面。若要退役，将通过单独变更处理。
 
-## 科研数据与安全
-
-本仓库**不包含**个人 Canvas 图谱、实验运行数据、模型凭据、本地模型提供方账号、操作日志、历史变更登记或私有基准测试数据。这些内容应保存在独立的用户目录中。
-
-请参考 `config/.env.example` 并在本地设置机密信息。仓库中的 `.gitignore` 不能替代安全审查。不要提交账号凭据、私有科研数据或未经授权再分发的第三方材料。
-
 ## 参与贡献与许可证
 
 开发和 Pull Request 流程请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)；安全问题报告方式请参阅 [SECURITY.md](SECURITY.md)。开发期间请避免直接修改正式科研任务。
