@@ -138,12 +138,10 @@ class QualificationMixin:
             candidates = working.get("candidates") if isinstance(working, dict) else []
         derived = [item for item in candidates or [] if isinstance(item, dict) and item.get("evolution_operator")]
         stale_pending_lineage = False
-        if qualification_status == "pending" and isinstance(working, dict) and derived:
+        if qualification_status == "pending" and derived:
             anchors = _scientific_anchor_types(self)
             stale_pending_lineage = any(
-                (not sources or anchors.get(sources[0]) not in {"Hypothesis", "Decision"}
-                 or any(anchors.get(anchor) not in {"Hypothesis", "Decision", "Finding"}
-                        for anchor in sources))
+                (not sources or any(anchors.get(anchor) != "Hypothesis" for anchor in sources))
                 for item in derived
                 for sources in [list(item.get("lineage_anchor_node_ids") or [
                     str(item.get("lineage_anchor_node_id") or "").strip()
@@ -167,6 +165,9 @@ class QualificationMixin:
         reviews = (state.get("frontier_review") or {}).get("reviews") or []
         history.append({
             "at": now(),
+            **({"stale_frontier": json.loads(json.dumps(frontier)),
+                "stale_working_set": json.loads(json.dumps(working))}
+               if stale_pending_lineage else {}),
             **({"reviews": json.loads(json.dumps(reviews))} if reviews else {
                 "reason": str(state.get("qualification_rationale") or "unqualified qualification"),
                 "candidate_ids": candidate_ids,

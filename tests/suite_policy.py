@@ -142,6 +142,7 @@ MODULE_CATEGORIES: dict[str, str] = {
     "test_science_graph_preserve_legacy": "architecture",
     "test_science_graph_store": "architecture",
     "test_task_graph_upgrade": "regression",
+    "test_legacy_qualification_resume": "regression",
     "test_science_graph_tools": "architecture",
     "test_submodule_task_discovery": "regression",
     "test_supervisor_blocked_preservation_20261013": "invariant",
