@@ -30,7 +30,7 @@
 4. 原 `milestone_advanced` 保留其原始类型和正文；兼容投影若需 `open` 只作显示归一，不把它说成原 Judge 的 `open`。无 Judge 授权的 Finding/StageSummary 仍归 External。
 5. 在隔离副本比对 Outcome 数量、Cycle 唯一性、H 归属、全部历史字节、连线、文档及 Web 阅读，然后才原子切换生产投影。任一冲突停止切换，不覆盖原件。
 
-图谱字段、Frontier 权限、External 及 Reporter 维护细则以现行 [Canvas设计文档.md](./Canvas设计文档.md) 为准。旧 H/Decision/Finding/StageSummary 原规范现归档于 [Canvas设计文档-历史V1.md](./Canvas设计文档-历史V1.md)；迁移保全证据见 [Canvas双节点与Outcome数据库迁移规范.md](./Canvas双节点与Outcome数据库迁移规范.md) 和 Git 历史。
+图谱字段、Frontier 权限、External 及 Reporter 维护细则以现行 [Canvas设计文档.md](./Canvas设计文档.md) 为准。旧 H/Decision/Finding/StageSummary 原规范现归档于 用户的私有历史归档（不随公开源码分发）；迁移保全证据见 [Canvas双节点与Outcome数据库迁移规范.md](./Canvas双节点与Outcome数据库迁移规范.md) 和 Git 历史。
 
 ## 节点摘要与档案生成契约（2026-10-20）
 

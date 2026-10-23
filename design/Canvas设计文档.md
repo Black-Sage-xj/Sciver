@@ -7,7 +7,7 @@
 - The Reporter returns a human-readable report; the SDK records the Cycle Outcome in SQLite and regenerates the projection. There is no `canvas_maintenance` stage, Canvas patch, or Decision-node runtime path.
 - A workspace that has a Canvas but no canonical SQLite database fails closed. Use the explicit one-time importer to migrate it; runtime does not create a placeholder database or fall back to Canvas.
 
-> **2026-10-18 · 当前有效。** 本文件取代旧 H/Finding/Decision/StageSummary 的 Canvas V1 规则。旧文全文保存在 [Canvas设计文档-历史V1.md](./Canvas设计文档-历史V1.md)，不得用旧规则指导生产写入。逐 Cycle 科研裁决细节以 [ResearchGraph设计文档.md](./ResearchGraph设计文档.md) 与实际 SDK/SQLite 代码核对。
+> **2026-10-18 · 当前有效。** 本文件取代旧 H/Finding/Decision/StageSummary 的 Canvas V1 规则。旧版私有运行归档不随公开源码分发，不得用旧规则指导生产写入。逐 Cycle 科研裁决细节以 [ResearchGraph设计文档.md](./ResearchGraph设计文档.md) 与实际 SDK/SQLite 代码核对。
 
 ## 1. 研究资料的权威层
 
@@ -116,7 +116,7 @@ Reporter 只接收 SDK 提供的 canvas_focus、terminal Decision、Evidence sco
 
 - **科研 Cycle Outcome 权威设计**：[ResearchGraph设计文档.md](./ResearchGraph设计文档.md)
 - **原 Canvas 迁移保全**：[Canvas双节点与Outcome数据库迁移规范.md](./Canvas双节点与Outcome数据库迁移规范.md)
-- **旧版规则归档**：[Canvas设计文档-历史V1.md](./Canvas设计文档-历史V1.md)
+- **旧版规则归档**：留在用户自己的私有研究工作区，不随公开源码分发。
 - **数据库实际行为**：theory_master/science_graph_store.py
 - **Reporter Stage/Contract**：theory_master/stage_registry.py、theory_master/contract_stages.py
 - **只读角色规则/维护边界**：identities/_canvas_read.md、identities/_canvas_renderer_policy.md
