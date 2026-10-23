@@ -30,12 +30,12 @@ The diagram below summarizes Sciver's architecture and the lifecycle of a scient
   <img src="docs/assets/architecture/sciver-system-architecture-en.png" alt="Sciver system architecture and Cycle workflow" width="100%">
 </p>
 
-### Agent status and model configuration
+### Sciver Web Observatory
 
-The Web Observatory brings the six research stages together in one view, with each agent's current status, model selection, and reasoning effort.
+Inspect task status, research stages, and agent activity from desktop and mobile interfaces.
 
 <p align="center">
-  <img src="docs/assets/screenshots/agent-status.svg" alt="Sciver Agent status page showing six research stages, model choices, effort levels, and statuses" width="720" style="max-width: 100%; height: auto;">
+  <img src="docs/assets/screenshots/sciver-product-en.png" alt="Sciver Web Observatory on desktop and mobile" width="100%">
 </p>
 
 ## Repository layout
