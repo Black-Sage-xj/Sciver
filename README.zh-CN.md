@@ -33,9 +33,15 @@ Sciver 是一个持久化、多 Agent 协作的科学研究工作流引擎，并
 
 部分包名和 CLI 命令仍保留历史上的 `TheoryMaster` / `tm` 命名。这些路径属于实现细节，不影响产品当前名称 Sciver。
 
-## 快速开始：Test0 → 网页
+## 快速开始：交给你的 Agent
 
-支持 Linux 和 macOS，使用 **Python 3.11+**。Windows 请在 WSL2 中执行。先下载并安装：
+复制下面这段给编程 Agent：
+
+```text
+请从 https://github.com/Black-Sage-xj/Sciver.git 安装并启动 Sciver。先检查系统和 Python 3.11+ 环境（Windows 使用 WSL2），安装仓库及 Web 依赖；保留已有仓库中的改动。然后运行 sciver quickstart：完成离线 Test0 自检并打开网页；遇到错误请修复后重试。确认页面可访问，让服务保持运行，最后回复一个我能点击的 Web UI 链接；若在远程环境，请配置安全端口转发并给出转发后的链接。不要启动真实研究。
+```
+
+自己动手时，在 Linux、macOS 或 Windows 的 WSL2 中使用 **Python 3.11+**：
 
 ```bash
 git clone https://github.com/Black-Sage-xj/Sciver.git
@@ -52,20 +58,6 @@ sciver quickstart
 网页首先进入 **Workspace → Research Chat**，首次打开会弹出简短说明。若只想查看刚创建的 Test0，关闭说明，打开 **Task List → test0** 即可查看任务和研究计划，无需再建项目。
 
 若要建立自己的项目，可从空白开始，或选择已有目录中的 `research_plan.md`、笔记和数据。导入时自行勾选文件；如果勾选已有计划，Sciver 会以它为参考生成一份新草稿，原目录和原文件保持不变。对话依次询问科研目标、可核验的完成标准、资源或方法限制。检查并可编辑 Research Plan 草稿后，点击「确认建立项目」，项目才会出现在 **Task List**，不会自动开始研究。基础建项无需模型账号；若选择模型辅助完善，选中计划和笔记的文本摘录会发送给模型，并可能消耗额度。
-
-### 这段交给你的 Agent
-
-把下面整段复制给你使用的编程 Agent，让它在你的电脑或开发环境中完成安装，并把网页链接交还给你：
-
-```text
-请帮我安装并启动 Sciver，最后直接给我一个可以点击打开的 Web UI 链接。请按以下步骤执行，不要只给我安装建议：
-
-1. 检查当前环境：Linux/macOS 使用 Python 3.11+；Windows 使用 WSL2。如果已有 Sciver 仓库，先检查其中的未提交改动，不要覆盖它们；否则从 https://github.com/Black-Sage-xj/Sciver.git 克隆。进入仓库后创建并激活 .venv，升级 pip，安装当前仓库的 .[sdk] 和 ./web。
-2. 运行 sciver quickstart --no-web，完成离线 Test0 自检；安装或自检报错时先排查修复，再继续。这个步骤不需要模型账号，也不要替我启动真实研究。
-3. 用 sciver web --no-open 启动 Web UI，并让服务在你回复后继续运行。若默认端口被其他程序占用，改用 sciver web --port 8788 --no-open 或其他可用端口。检查实际端口的 /healthz 返回成功，网页能够打开。
-4. 如果 Agent 和我在同一台电脑上，返回服务实际打印的本机地址。如果运行在远程主机或容器中，先使用当前开发环境支持的安全端口转发，让我的浏览器能访问，再返回转发后的链接；如果无法建立转发，明确说明链接只在远端有效，并给出我需要执行的 SSH 端口转发命令。不要把默认免登录的服务直接暴露到公网。
-5. 最终回复的第一行写成可点击的 Markdown 链接，例如 [打开 Sciver Web UI](http://127.0.0.1:8787/)；使用实际可访问的地址和端口。随后简要说明仓库路径、工作区路径、自检结果，以及如何停止网页服务。告诉我进入 Task List → test0 可以查看已建立的任务；不要替我点击开始研究。
-```
 
 只做自检、不启动网页：
 
