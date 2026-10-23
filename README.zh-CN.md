@@ -27,7 +27,7 @@ Sciver 面向复杂、开放、需要长期探索的科学问题，帮助研究�
 下图概览 Sciver 的系统分层与科研 Cycle 生命周期：从提出候选命题、独立资格审查，到开展研究、形成裁决，以及独立判断任务是否完成。
 
 <p align="center">
-  <img src="docs/assets/architecture/sciver-system-architecture-zh-CN.png" alt="Sciver 系统架构与科研 Cycle 流程图" width="100%">
+  <img src="docs/assets/architecture/sciver-research-workflow-zh-CN.png" alt="Sciver 中文科研工作流：研究输入、Lead、Challenger、Investigator、Judge、Reporter 与平台支持" width="100%">
 </p>
 
 ### Sciver 网页观测台
