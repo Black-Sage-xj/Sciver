@@ -28,7 +28,7 @@ def _default_root() -> Path:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="tm-observer", description="Read-only TheoryMaster observability")
+    parser = argparse.ArgumentParser(prog="tm-observer", description="Sciver research observability and operator controls")
     sub = parser.add_subparsers(dest="command", required=True)
 
     snap = sub.add_parser("snapshot", help="collect one normalized observer_state.json")
@@ -78,8 +78,9 @@ def build_parser() -> argparse.ArgumentParser:
     tunnel.add_argument("--no-start", action="store_true")
     sub.add_parser("al-tunnel-uninstall", help="disable and remove the dedicated AL reverse tunnel")
 
-    web = sub.add_parser("serve", help="serve the read-only Control Room")
+    web = sub.add_parser("serve", help="serve the Sciver Web UI")
     web.add_argument("--search-root", type=Path, default=_default_root())
+    web.add_argument("--open", action="store_true", help="open the browser after the server is ready")
     web.add_argument("--host", default="127.0.0.1")
     web.add_argument("--port", type=int, default=8787)
     web.add_argument("--cache-ttl", type=float, default=5.0)
@@ -180,6 +181,7 @@ def main(argv: list[str] | None = None) -> int:
             archify_root=args.archify_root,
             static_refresh=args.static_refresh,
             auth_file=args.basic_auth_file,
+            open_browser=args.open,
         )
         return 0
     raise AssertionError(args.command)

@@ -272,6 +272,14 @@ def main() -> int:
             print(f"TheoryMaster: {exc}", file=sys.stderr)
             return 2
     parser = argparse.ArgumentParser(prog="sciver"); sub = parser.add_subparsers(dest="command", required=True)
+    from .onboarding import default_workspace
+    for name in ("quickstart", "web"):
+        command = sub.add_parser(name, help="prepare and verify Test0, then open Web UI" if name == "quickstart" else "start and open the local Web UI")
+        command.add_argument("--workspace", type=Path, default=default_workspace())
+        command.add_argument("--port", type=int, default=8787)
+        command.add_argument("--no-open", action="store_true", help="print the URL without opening a browser")
+        if name == "quickstart":
+            command.add_argument("--no-web", action="store_true", help="only initialize and verify Test0, then exit")
     for name in ("validate", "initialize", "cancel", "project"):
         item = sub.add_parser(name); item.add_argument("master_id", nargs="?", default=None)
         if name == "cancel": item.add_argument("--reason", required=True)
@@ -362,6 +370,8 @@ def main() -> int:
     test_p = sub.add_parser("test", help="instantiate a fresh canonical Sciver regression fixture")
     test_p.add_argument("case", nargs="?", help="fixture selector such as Test0")
     test_p.add_argument("destination", type=Path, nargs="?", help="empty/new directory for the runnable TM task")
+    test_p.add_argument("--open", action="store_true", help="start and open the local Web UI after task creation")
+    test_p.add_argument("--port", type=int, default=8787)
     test_p.add_argument("--list", action="store_true", help="list available canonical test fixtures")
     worker_p = sub.add_parser("workers", help="dynamic parallel research Workers; launch requires explicit start")
     worker_p.add_argument("master_id", nargs="?", default=None)
@@ -429,6 +439,18 @@ def main() -> int:
             parser.error(str(exc))
         print(json.dumps(outcome, ensure_ascii=False, indent=2))
         return 0
+    if args.command in {"quickstart", "web"}:
+        from .onboarding import launch_web, prepare_test0
+        try:
+            if args.command == "quickstart":
+                prepare_test0(args.workspace.expanduser().resolve())
+            if not getattr(args, "no_web", False):
+                launch_web(args.workspace, port=args.port, open_browser=not args.no_open)
+        except KeyboardInterrupt:
+            print("\nWeb UI stopped. Your task is saved; reopen with sciver web.")
+        except (OSError, ValueError, RuntimeError) as exc:
+            parser.error(str(exc))
+        return 0
     if args.command == "ls": return print_runs(args.root)
     if args.command == "smoke": return smoke(args.live)
     if args.command == "new": print(task_summary(bootstrap(args.research_plan))); return 0
@@ -445,6 +467,14 @@ def main() -> int:
         except (RegressionCaseError, OSError, ValueError, json.JSONDecodeError) as exc:
             parser.error(str(exc))
         print(task_summary(binding))
+        if args.open:
+            from .onboarding import launch_web
+            try:
+                launch_web(root, port=args.port)
+            except KeyboardInterrupt:
+                pass
+            except (OSError, ValueError) as exc:
+                parser.error(str(exc))
         return 0
     if args.command == "migrate": print(json.dumps(migration_preview(args.state), ensure_ascii=False, indent=2)); return 0
     if args.command == "tui":

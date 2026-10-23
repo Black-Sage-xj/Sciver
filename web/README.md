@@ -37,11 +37,13 @@ The retired TMCR engineering-request UI is not the current write boundary.
 
 ## Install and run
 
+For first-time setup, use `sciver quickstart` from the main [quick start](../README.md#quick-start-test0--web-ui). To reopen the local workspace, use `sciver web`. Both open the browser after the server responds; pass `--no-open` on headless machines.
+
 From the repository root, after configuring the SDK dependencies and provider:
 
 ```bash
 python -m pip install -e ./web
-tm-observer serve --search-root /path/to/your/research/workspace --host 127.0.0.1 --port 8787
+tm-observer serve --search-root /path/to/your/research/workspace --host 127.0.0.1 --port 8787 --open
 ```
 
 Open `http://127.0.0.1:8787/`. The search root identifies user-owned research workspaces; it does not need to be this source checkout.

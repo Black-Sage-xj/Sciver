@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "tm-observer"
 version = "0.1.0"
-description = "TheoryMaster observability and formal engineering change-request surface"
-requires-python = ">=3.10"
+description = "Sciver research observability and operator controls"
+requires-python = ">=3.11"
 dependencies = []
 
 [project.scripts]
@@ -16,4 +16,4 @@ tm-observer = "tm_observer.cli:main"
 packages = ["tm_observer"]
 
 [tool.setuptools.package-data]
-tm_observer = ["static/*.svg"]
+tm_observer = ["static/*.svg", "*.js", "vendor/*.js", "research_chat_dist/*", "workflow_versions/*.json"]

@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Persistent Codex SDK scientific workflow engine"
 license = "MIT"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 [project.scripts]
 sciver = "theory_master.__main__:main"
@@ -36,3 +36,10 @@ theory_master = [
 
 [tool.setuptools.exclude-package-data]
 theory_master = ["config/local/*", "config/local/**/*", "**/*.pyc", "**/__pycache__/*"]
+
+[tool.setuptools.data-files]
+"share/sciver/regression_cases" = ["regression_cases/index.json"]
+"share/sciver/regression_cases/test_0" = ["regression_cases/test_0/PROTOCOL.md", "regression_cases/test_0/case.json", "regression_cases/test_0/expected.json", "regression_cases/test_0/research_plan.md"]
+"share/sciver/regression_cases/test_0/benchmark" = ["regression_cases/test_0/benchmark/instruction.md", "regression_cases/test_0/benchmark/source_manifest.json"]
+"share/sciver/regression_cases/test_0/benchmark/datasets/brownian_2d" = ["regression_cases/test_0/benchmark/datasets/brownian_2d/trajectories.csv"]
+"share/sciver/regression_cases/test_0/evaluator" = ["regression_cases/test_0/evaluator/generate_data.py", "regression_cases/test_0/evaluator/grade.py", "regression_cases/test_0/evaluator/score_trajectory.py"]

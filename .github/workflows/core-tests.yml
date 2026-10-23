@@ -31,3 +31,9 @@ jobs:
         run: python -m compileall -q theory_master web/tm_observer
       - name: Run deterministic core tests
         run: python scripts/test_profiles.py default
+      - name: Verify installed wheels and Test0 Web startup
+        run: |
+          python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/sciver-wheels" . ./web
+          python -m venv "$RUNNER_TEMP/sciver-smoke"
+          "$RUNNER_TEMP/sciver-smoke/bin/python" -I -m pip install --no-deps "$RUNNER_TEMP/sciver-wheels/"*.whl
+          python scripts/smoke_install.py --python "$RUNNER_TEMP/sciver-smoke/bin/python"

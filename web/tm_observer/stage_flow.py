@@ -5,6 +5,7 @@ import html
 import json
 import re
 from pathlib import Path
+from importlib.util import find_spec
 from typing import Any, Mapping
 from urllib.parse import urlencode
 
@@ -12,7 +13,9 @@ from .field_notes import default_description, field_key
 from .workflow_versions import load_workflow_snapshots, workflow_snapshot
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+_sdk_spec = find_spec("theory_master")
+REPO_ROOT = (Path(_sdk_spec.origin).resolve().parent.parent
+             if _sdk_spec is not None and _sdk_spec.origin else Path(__file__).resolve().parents[2])
 STAGE_PREVIEW_GUIDE = REPO_ROOT / "web" / "WORKFLOW_STAGE_PREVIEW_GUIDE.md"
 
 

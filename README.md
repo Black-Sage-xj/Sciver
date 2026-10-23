@@ -33,20 +33,56 @@ This repository contains the maintained source for the engine, agent workflows, 
 
 Some package and CLI names retain historical `TheoryMaster`/`tm` naming. Those paths are implementation details and do not change the product name, Sciver.
 
-## Quick start
+## Quick start: Test0 → Web UI
 
-Use Python 3.10 or newer. From the repository root:
+Use **Python 3.11+** on Linux or macOS. On Windows, run these commands in WSL2:
 
 ```bash
-python -m venv .venv
+git clone https://github.com/Black-Sage-xj/Sciver.git
+cd Sciver
+python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[sdk]'
-python -m pip install -e ./web
+python -m pip install --upgrade pip
+python -m pip install -e '.[sdk]' -e ./web
+sciver quickstart
 ```
 
-Configure a supported SDK provider and the external tools required for the features you plan to use. Numerical-compute Python and scholarly-retrieval dependencies may need to be configured separately.
+`quickstart` checks the original Test0 Brownian-motion data, initializes a task and SQLite graph, starts the local server, and opens **http://127.0.0.1:8787/**. The default workspace is `~/Sciver-workspace`, with the task in `test0/` and separate computation artifacts under `.theory-master-tasks/`. Generated files stay outside the source checkout.
 
-The repository includes the `research-lit` skill, but it does not bundle the external scholarly-retrieval adapter. To enable external retrieval, install an adapter you are licensed to use. The SDK looks for `lit_retrieve.py` in `~/.local/share/theory-master/scholarly-scripts` by default; override that directory with `THEORYMASTER_SCHOLARLY_SCRIPTS` and, if needed, set `THEORYMASTER_SCHOLARLY_PYTHON` to the Python interpreter that has the adapter's dependencies. Literature can still inspect research artifacts supplied directly to it without an external retrieval adapter.
+This is an offline installation check: it sends no model requests and produces no scientific verdict. A newly created Test0 is limited to **one Cycle**. Repeating the command preserves your task and settings. Inspect the research plan in the task console, configure a provider, then explicitly start research when ready.
+
+To verify setup without starting the Web server:
+
+```bash
+sciver quickstart --no-web
+```
+
+### Start, stop, and reopen
+
+```bash
+sciver web                         # start the server and open the browser
+sciver web --port 8788             # use another port if 8787 is occupied
+sciver web --no-open               # print the URL on a headless/SSH machine
+sciver quickstart --workspace ~/my-sciver
+sciver web --workspace ~/my-sciver  # reopen the same workspace
+```
+
+Keep the terminal running. Press `Ctrl+C` to stop the Web server; task files are preserved. In a new terminal, `cd Sciver`, run `source .venv/bin/activate`, then `sciver web`. For SSH, forward the port with `ssh -L 8787:127.0.0.1:8787 user@host` and open the printed URL on your own computer.
+
+You can also create a separate Test0 and open its Web UI immediately:
+
+```bash
+sciver test Test0 ~/Sciver-workspace/another-test0 --open
+```
+
+The destination must be empty. This command initializes and verifies the task; it does not start model-based research.
+
+### Before starting real research
+
+- Install a supported Codex CLI and log in to your model provider; the CLI is not bundled with the Python package. After installing the CLI, log in with `sciver codex-account login-1`, then check `sciver codex-account status`.
+- Select available models and accounts in the Web UI. The model tier named `test` still makes real model requests and consumes quota; it is separate from the offline setup check.
+- `sciver web` defaults to the active Python for computation. Run `python -m pip install numpy scipy` for numerical work, or run `export THEORYMASTER_COMPUTE_PYTHON=/absolute/path/to/python` to select your scientific environment. Explicit settings are preserved.
+- External literature retrieval is optional for setup and viewing. The `research-lit` skill does not bundle a retrieval adapter. When needed, install a licensed `lit_retrieve.py` adapter in `~/.local/share/theory-master/scholarly-scripts`, or override the directory and interpreter with `THEORYMASTER_SCHOLARLY_SCRIPTS` and `THEORYMASTER_SCHOLARLY_PYTHON`.
 
 ## Run tests
 
@@ -62,7 +98,7 @@ Run the full core pytest gate used by CI with `python scripts/test_profiles.py d
 ## Run the Web Observatory
 
 ```bash
-tm-observer serve --search-root /path/to/your/research/workspace --host 127.0.0.1 --port 8787
+tm-observer serve --search-root /path/to/your/research/workspace --host 127.0.0.1 --port 8787 --open
 ```
 
 Open `http://127.0.0.1:8787/` locally. For remote access, configure your own authenticated reverse proxy or SSH tunnel. **Do not expose the server directly without authentication.**

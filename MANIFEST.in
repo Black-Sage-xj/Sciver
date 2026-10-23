@@ -4,3 +4,6 @@ prune dist
 prune config/local
 prune audit
 prune changes
+
+recursive-include regression_cases/test_0 *
+include regression_cases/index.json

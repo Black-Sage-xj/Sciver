@@ -33,20 +33,56 @@ Sciver 是一个持久化、多 Agent 协作的科学研究工作流引擎，并
 
 部分包名和 CLI 命令仍保留历史上的 `TheoryMaster` / `tm` 命名。这些路径属于实现细节，不影响产品当前名称 Sciver。
 
-## 快速开始
+## 快速开始：Test0 → 网页
 
-需要 Python 3.10 或更高版本。在仓库根目录执行：
+支持 Linux 和 macOS，使用 **Python 3.11+**。Windows 请在 WSL2 中执行。先下载并安装：
 
 ```bash
-python -m venv .venv
+git clone https://github.com/Black-Sage-xj/Sciver.git
+cd Sciver
+python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[sdk]'
-python -m pip install -e ./web
+python -m pip install --upgrade pip
+python -m pip install -e '.[sdk]' -e ./web
+sciver quickstart
 ```
 
-请根据实际使用的功能配置受支持的 SDK 模型提供方和外部工具。数值计算所用的 Python 环境，以及文献检索相关依赖，可能需要单独配置。
+`quickstart` 会校验 Test0 的原创布朗运动数据、初始化任务和 SQLite 图谱，然后启动本地服务，自动打开 **http://127.0.0.1:8787/**。默认工作区是 `~/Sciver-workspace`，Test0 任务在其 `test0/` 子目录；计算产物放在工作区内独立的 `.theory-master-tasks/`，不会写回源码。
 
-仓库中包含 `research-lit` 技能，但不捆绑外部文献检索适配器。如需启用外部检索，请安装一个你有权使用的适配器。SDK 默认在 `~/.local/share/theory-master/scholarly-scripts` 中查找 `lit_retrieve.py`；可通过 `THEORYMASTER_SCHOLARLY_SCRIPTS` 覆盖该目录，并在需要时用 `THEORYMASTER_SCHOLARLY_PYTHON` 指定已安装适配器依赖的 Python 解释器。即使没有外部检索适配器，Literature 仍可检查直接提供给它的研究资料。
+这一步是离线安装自检，不会调用模型，也不会生成科研结论。首次创建的 Test0 最多运行 **1 个 Cycle**；重复执行会保留已有任务和设置。网页打开后，在任务控制台查看研究计划，再配置模型账号并显式启动研究。
+
+只做自检、不启动网页：
+
+```bash
+sciver quickstart --no-web
+```
+
+### 启动、停止和重新打开
+
+```bash
+sciver web                         # 启动服务并自动打开浏览器
+sciver web --port 8788             # 8787 被占用时换一个端口
+sciver web --no-open               # 无桌面/SSH 环境只打印网址
+sciver quickstart --workspace ~/my-sciver  # 指定独立工作区
+sciver web --workspace ~/my-sciver         # 再次打开同一工作区
+```
+
+终端保持运行；按 `Ctrl+C` 停止网页服务，任务文件保留。以后打开新终端，先 `cd Sciver` 并执行 `source .venv/bin/activate`，再运行 `sciver web`。SSH 用户可用 `ssh -L 8787:127.0.0.1:8787 user@host` 转发端口，在本机打开打印的网址。
+
+也可以单独创建 Test0 并立即打开网页：
+
+```bash
+sciver test Test0 ~/Sciver-workspace/another-test0 --open
+```
+
+目标目录须为空；`test` 创建任务并校验数据，不会启动模型研究。
+
+### 开始真实研究前
+
+- 安装受支持的 Codex CLI，并完成模型提供方登录；CLI 不随 Python 包捆绑。安装 CLI 后，用 `sciver codex-account login-1` 登录第一个账号，再用 `sciver codex-account status` 检查状态。
+- 在网页中选择可用模型与账号。名为 `test` 的模型档位仍会调用真实模型、消耗额度，与上述离线自检不同。
+- `sciver web` 默认把当前 Python 作为计算环境；需要数值计算库时，执行 `python -m pip install numpy scipy`。也可先执行 `export THEORYMASTER_COMPUTE_PYTHON=/absolute/path/to/python` 指定已有科学 Python，显式设置会保留。
+- 暂不配置文献检索也能完成离线自检和查看网页。`research-lit` 不捆绑外部检索适配器；需要时再安装有权使用的 `lit_retrieve.py`，默认目录为 `~/.local/share/theory-master/scholarly-scripts`，可通过 `THEORYMASTER_SCHOLARLY_SCRIPTS` 和 `THEORYMASTER_SCHOLARLY_PYTHON` 覆盖适配器目录与解释器。
 
 ## 运行测试
 
@@ -62,7 +98,7 @@ python scripts/run_tests.py --list
 ## 启动 Web Observatory
 
 ```bash
-tm-observer serve --search-root /path/to/your/research/workspace --host 127.0.0.1 --port 8787
+tm-observer serve --search-root /path/to/your/research/workspace --host 127.0.0.1 --port 8787 --open
 ```
 
 在本机打开 `http://127.0.0.1:8787/`。如需远程访问，请自行配置经过身份验证的反向代理或 SSH 隧道。**不要在没有身份验证的情况下直接暴露服务。**

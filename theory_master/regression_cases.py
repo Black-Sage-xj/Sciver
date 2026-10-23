@@ -12,12 +12,15 @@ import json
 import shutil
 import sys
 import subprocess
+import sysconfig
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 CASES_ROOT = PACKAGE_ROOT / "regression_cases"
+if not (CASES_ROOT / "index.json").is_file():
+    CASES_ROOT = Path(sysconfig.get_path("data")) / "share/sciver/regression_cases"
 INDEX_PATH = CASES_ROOT / "index.json"
 
 

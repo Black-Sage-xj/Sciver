@@ -2321,6 +2321,32 @@ def make_handler(
     return Handler
 
 
+def _open_ready_browser(url: str) -> None:
+    """Wait for an HTTP response before asking the desktop to open the UI."""
+    import webbrowser
+    from urllib.error import HTTPError, URLError
+    from urllib.request import urlopen
+    for _ in range(50):
+        try:
+            with urlopen(url + "healthz", timeout=0.2):
+                pass
+        except HTTPError:
+            break  # An authenticated response also proves that the server is ready.
+        except (URLError, TimeoutError, OSError):
+            time.sleep(0.1)
+        else:
+            break
+    else:
+        print(f"Browser launch timed out. Open {url} manually.", flush=True)
+        return
+    try:
+        opened = webbrowser.open(url)
+    except webbrowser.Error:
+        opened = False
+    if not opened:
+        print(f"No desktop browser found. Open {url} manually (SSH: forward this port).", flush=True)
+
+
 def serve(
     search_root: Path,
     host: str = "127.0.0.1",
@@ -2331,6 +2357,7 @@ def serve(
     archify_root: Path | None = None,
     static_refresh: float = 30.0,
     auth_file: Path | None = None,
+    open_browser: bool = False,
 ) -> None:
     search_root = search_root.resolve()
     auth = load_auth_file(auth_file) if auth_file is not None else None
@@ -2341,8 +2368,16 @@ def serve(
         archify_root=archify_root or default_archify_root(),
         interval_s=static_refresh,
     )
+    try:
+        server = ThreadingHTTPServer((host, int(port)), make_handler(cache, manager, auth))
+    except OSError as exc:
+        raise OSError(f"Cannot listen on {host}:{port}: {exc}. Choose another port with --port 8788.") from exc
     manager.start()
-    server = ThreadingHTTPServer((host, int(port)), make_handler(cache, manager, auth))
+    browser_host = "127.0.0.1" if host in {"0.0.0.0", "127.0.0.1"} else host
+    url = f"http://{browser_host}:{server.server_port}/"
+    print(f"Sciver Web UI: {url}\nPress Ctrl+C to stop the server; task files are preserved.", flush=True)
+    if open_browser:
+        threading.Thread(target=_open_ready_browser, args=(url,), daemon=True).start()
     from theory_master.provider_extensions import optional_account_quota_plugin
     monitor = optional_account_quota_plugin()
     monitor_stop = threading.Event()
