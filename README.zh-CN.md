@@ -7,8 +7,8 @@
 </p>
 
 <h1 align="center">Sciver</h1>
-<p align="center"><strong>开源自主科学发现系统</strong></p>
-<p align="center"><em>从提出猜想到获得发现。</em></p>
+<p align="center"><strong>自主科学发现系统</strong></p>
+<p align="center"><em>Sci(ence)+(Disco)ver 从提出猜想到获得发现。</em></p>
 <p align="center"><a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a></p>
 
 Sciver 是一个持久化、多 Agent 协作的科学研究工作流引擎，并配有用于查看运行记录和审查科研进度的 **Web Observatory（网页观测台）**。观测台主要读取已持久化的产物和进程元数据，也可创建经过校验的工程变更申请；但它不会直接启动或恢复科研运行，也不会修改科研状态。Sciver 旨在帮助研究团队将研究从猜想推进到结构化调查、证据审查和可追溯的结论记录。
