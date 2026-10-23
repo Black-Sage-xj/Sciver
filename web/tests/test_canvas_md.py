@@ -262,7 +262,7 @@ console.log('trackpad pan/pinch assertions passed');
             vault_root(self.repo, self.ident, self.state)
 
     def test_registered_task_outside_legacy_notebook_is_readable(self):
-        task = self.repo / "gs_study" / "task-2"
+        task = self.repo / "project" / "tasks" / "task-2"
         task.mkdir(parents=True)
         (task / "exploration.canvas").write_text('{"nodes":[],"edges":[]}', encoding="utf-8")
         config = task / "theory-master.config.json"

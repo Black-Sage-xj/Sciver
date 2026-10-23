@@ -29,6 +29,6 @@
 
 `node` 与 `doc` 在引用索引中分别使用 `node:{id}` 和 `doc:{root-relative-path}` 身份。Canvas 的 `edges[]` 仅来自源 Canvas，不把 `[[链接]]` 转换为科学演化边。Node ID 使用 Canvas 原始 id，文档使用 vault 根下规范化相对路径。源文件改变后刷新页面即可重新读取，不额外创建知识数据库。
 
-服务端先从 Run 快照中按 **stable observer_id** 找到 canonical research_root，再定位 Run 声明的笔记 task_root，并交叉核对现有 task config 中的 research_root/branch_canvas。仅在 repo 下的笔记区任务范围内允许读取 `exploration.canvas`、`research_plan.md`、`notes/**/*.md`、`nodes/**/*.md`、`literature/**/*.md`，禁止读取任意绝对路径、越界相对路径、vault 外的 symlink 或 raw 研究数据。未配置有效 Canvas 的任务返回 404，不按重复的 Master ID 猜测目录。
+服务端先从 Run 快照中按 **stable observer_id** 找到 canonical research_root，再定位 Run 声明的 task_root。任务可以位于搜索根目录内的任意项目目录；位于历史 `笔记区` 之外时，必须由 SDK 的 `.theory-master/task.json` 精确绑定任务配置，并核对配置中的 task_home、research_root 与 Canvas 路径。只允许读取 `exploration.canvas`、`notes/**/*.md`、`nodes/**/*.md`、`literature/**/*.md` 等只读投影，禁止读取任意绝对路径、越界相对路径、任务根目录外的 symlink 或 raw 研究数据。未配置有效 Canvas 的任务返回 404，不按重复的 Master ID 猜测目录。
 
 所有 GET 在现有 Observatory 认证之后调用；返回 `Cache-Control: no-store`。写入权限全部不存在，系统不改变 Agent、SDK、Hypothesis 或科研状态。Markdown 在前端经安全清理后渲染，公式使用 KaTeX；当前浏览器从 jsDelivr 加载只读渲染库，离线时回退显示转义后的原文。
