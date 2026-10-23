@@ -2043,6 +2043,7 @@ class TheoryMasterTest(unittest.TestCase):
         self.assertNotIn("model_catalog_json=", joined)
         self.assertEqual(env, {})
 
+    @mock.patch.dict("os.environ", {"THEORYMASTER_COMPUTE_PYTHON": sys.executable})
     def test_codex_account_thread_uses_chatgpt_auth_and_medium_reasoning(self):
         class FakeThread:
             id = "thread-account"

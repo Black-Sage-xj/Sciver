@@ -214,6 +214,7 @@ class IdentityLayerOptimizationTests(unittest.TestCase):
             with self.subTest(boundary=boundary):
                 self.assertIn(boundary, paths)
 
+    @mock.patch.dict("os.environ", {"THEORYMASTER_COMPUTE_PYTHON": sys.executable})
     def test_new_and_resumed_threads_keep_identity_and_read_only_sandbox_boundaries(self):
         from theory_master.backends import CodexBackend
 

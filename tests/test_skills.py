@@ -354,6 +354,7 @@ class SkillInjectionTest(unittest.TestCase):
         self.assertEqual(environment["PYTHON"], resolved)
         self.assertTrue(environment["PATH"].startswith(str(Path(compute_python).resolve().parent) + ":"))
 
+    @unittest.mock.patch.dict("os.environ", {"THEORYMASTER_COMPUTE_PYTHON": sys.executable})
     def test_backend_initializes_once_for_direct_and_precreated_threads(self):
         from theory_master.backends import CodexBackend
 
@@ -383,6 +384,7 @@ class SkillInjectionTest(unittest.TestCase):
                     backend.ensure_thread("investigator", identifier, "model", "provider")
                     self.assertNotIn("developer_instructions", client.thread_resume.call_args.kwargs)
 
+    @unittest.mock.patch.dict("os.environ", {"THEORYMASTER_COMPUTE_PYTHON": sys.executable})
     def test_investigator_thread_gets_task_read_anchor_without_widening_write_root(self):
         from theory_master.backends import CodexBackend
 
@@ -413,6 +415,7 @@ class SkillInjectionTest(unittest.TestCase):
             self.assertEqual(instructions.count("有目的地检索"), 1)
             self.assertNotIn("never proves that task-local scientific inputs are absent", instructions)
 
+    @unittest.mock.patch.dict("os.environ", {"THEORYMASTER_COMPUTE_PYTHON": sys.executable})
     def test_account_threads_get_native_compaction_on_start_and_resume(self):
         from theory_master.backends import CodexBackend, RoleRoute
 
@@ -443,6 +446,7 @@ class SkillInjectionTest(unittest.TestCase):
             self.assertEqual([event["thread_action"] for event in config_events], ["start", "resume"])
             self.assertTrue(all(event["native_compaction_enabled"] for event in config_events))
 
+    @unittest.mock.patch.dict("os.environ", {"THEORYMASTER_COMPUTE_PYTHON": sys.executable})
     def test_literature_uses_scoped_workspace_write_cwd(self):
         from theory_master.backends import CodexBackend
 

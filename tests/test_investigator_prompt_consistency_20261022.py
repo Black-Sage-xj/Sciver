@@ -6,6 +6,7 @@ must not be counted as the production prompt.
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -201,6 +202,7 @@ class InvestigatorPromptConsistencyTests(unittest.TestCase):
                 self.assertIn("data isolation and error checks", goal)
                 self.assertIn("cannot impersonate new independent evidence", goal)
 
+    @mock.patch.dict("os.environ", {"THEORYMASTER_COMPUTE_PYTHON": sys.executable})
     def test_new_thread_loads_identity_and_resumed_thread_does_not(self):
         from theory_master.backends import CodexBackend
 
