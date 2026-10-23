@@ -11,7 +11,7 @@
 <p align="center"><em>Sci(ence)+(Disco)ver — from hypotheses to discoveries.</em></p>
 <p align="center"><a href="README.md">English</a> · <a href="README.zh-CN.md">简体中文</a></p>
 
-Sciver is a persistent multi-agent scientific-research workflow engine with a companion **Web Observatory** for inspecting runs and reviewing research progress. The Observatory displays persisted artifacts and process metadata and provides explicit operator controls through the SDK, including starting, resuming, pausing, and terminating research runs. Sciver is designed to help research teams move from hypotheses through structured investigation, evidence review, and recorded outcomes.
+Sciver is built for complex, open-ended scientific questions that require sustained exploration. It helps researchers work with AI over time: clarify goals through conversation, follow progress and evidence across research stages, and adjust direction or intervene when needed. Research processes and artifacts are preserved for review, revision, and reproduction.
 
 This repository contains the maintained source for the engine, agent workflows, and Web UI. It is separate from experiment data, researcher accounts, local deployment settings, and personal research workspaces.
 
