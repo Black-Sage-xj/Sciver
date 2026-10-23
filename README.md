@@ -27,7 +27,7 @@ This repository contains the maintained source for the engine, agent workflows, 
 The diagram below summarizes Sciver's architecture and the lifecycle of a scientific Cycle, from candidate proposal and independent qualification through investigation, adjudication, and task-level completion.
 
 <p align="center">
-  <img src="docs/assets/architecture/sciver-system-architecture-en.svg" alt="Sciver system architecture and Cycle workflow" width="100%">
+  <img src="docs/assets/architecture/sciver-system-architecture-en.png" alt="Sciver system architecture and Cycle workflow" width="100%">
 </p>
 
 ### Agent status and model configuration
