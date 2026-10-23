@@ -38,17 +38,6 @@ Inspect task status, research stages, and agent activity from desktop and mobile
   <img src="docs/assets/screenshots/sciver-product-en.png" alt="Sciver Web Observatory on desktop and mobile" width="100%">
 </p>
 
-## Repository layout
-
-- `theory_master/` — core SDK, workflow orchestration, agent contracts, and runtime.
-- `web/tm_observer/` — Web Observatory; install the Web package from `web/`.
-- `tests/`, `web/tests/` — regression and integration tests.
-- `design/`, `web/design/` — technical design notes.
-- `theory_master/resources/skills/`, `identities/`, `scripts/` — project-supported skills, agent identities, and development tools.
-- `config/.env.example` — credential-free configuration template.
-
-Some package and CLI names retain historical `TheoryMaster`/`tm` naming. Those paths are implementation details and do not change the product name, Sciver.
-
 ## Quick start: give this to your Agent
 
 Copy this prompt into your coding Agent:
@@ -120,6 +109,17 @@ The destination must be empty. This command initializes and verifies the task; i
 - Select available models and accounts in the Web UI. The model tier named `test` still makes real model requests and consumes quota; it is separate from the offline setup check.
 - `sciver web` defaults to the active Python for computation. Run `python -m pip install numpy scipy` for numerical work, or run `export THEORYMASTER_COMPUTE_PYTHON=/absolute/path/to/python` to select your scientific environment. Explicit settings are preserved.
 - External literature retrieval is optional for setup and viewing. The `research-lit` skill does not bundle a retrieval adapter. When needed, install a licensed `lit_retrieve.py` adapter in `~/.local/share/theory-master/scholarly-scripts`, or override the directory and interpreter with `THEORYMASTER_SCHOLARLY_SCRIPTS` and `THEORYMASTER_SCHOLARLY_PYTHON`.
+
+## Repository layout
+
+- `theory_master/` — core SDK, workflow orchestration, agent contracts, and runtime.
+- `web/tm_observer/` — Web Observatory; install the Web package from `web/`.
+- `tests/`, `web/tests/` — regression and integration tests.
+- `design/`, `web/design/` — technical design notes.
+- `theory_master/resources/skills/`, `identities/`, `scripts/` — project-supported skills, agent identities, and development tools.
+- `config/.env.example` — credential-free configuration template.
+
+Some package and CLI names retain historical `TheoryMaster`/`tm` naming. Those paths are implementation details and do not change the product name, Sciver.
 
 ## Run tests
 

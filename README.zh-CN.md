@@ -38,17 +38,6 @@ Sciver 面向复杂、开放、需要长期探索的科学问题，帮助研究�
   <img src="docs/assets/screenshots/sciver-product-zh-CN.png" alt="Sciver 中文网页观测台的桌面与移动端界面" width="100%">
 </p>
 
-## 仓库结构
-
-- `theory_master/` — 核心 SDK、工作流编排、Agent 契约和运行时。
-- `web/tm_observer/` — Web Observatory；Web 包从 `web/` 安装。
-- `tests/`、`web/tests/` — 回归测试和集成测试。
-- `design/`、`web/design/` — 技术设计文档。
-- `theory_master/resources/skills/`、`identities/`、`scripts/` — 项目支持的技能、Agent 身份定义和开发工具。
-- `config/.env.example` — 不包含凭据的配置模板。
-
-部分包名和 CLI 命令仍保留历史上的 `TheoryMaster` / `tm` 命名。这些路径属于实现细节，不影响产品当前名称 Sciver。
-
 ## 快速开始：交给你的 Agent
 
 复制下面这段给编程 Agent, 可以跑一个小的 扩散问题 ,以及看到 web ui：
@@ -120,6 +109,17 @@ sciver test Test0 ~/Sciver-workspace/another-test0 --open
 - 在网页中选择可用模型与账号。名为 `test` 的模型档位仍会调用真实模型、消耗额度，与上述离线自检不同。
 - `sciver web` 默认把当前 Python 作为计算环境；需要数值计算库时，执行 `python -m pip install numpy scipy`。也可先执行 `export THEORYMASTER_COMPUTE_PYTHON=/absolute/path/to/python` 指定已有科学 Python，显式设置会保留。
 - 暂不配置文献检索也能完成离线自检和查看网页。`research-lit` 不捆绑外部检索适配器；需要时再安装有权使用的 `lit_retrieve.py`，默认目录为 `~/.local/share/theory-master/scholarly-scripts`，可通过 `THEORYMASTER_SCHOLARLY_SCRIPTS` 和 `THEORYMASTER_SCHOLARLY_PYTHON` 覆盖适配器目录与解释器。
+
+## 仓库结构
+
+- `theory_master/` — 核心 SDK、工作流编排、Agent 契约和运行时。
+- `web/tm_observer/` — Web Observatory；Web 包从 `web/` 安装。
+- `tests/`、`web/tests/` — 回归测试和集成测试。
+- `design/`、`web/design/` — 技术设计文档。
+- `theory_master/resources/skills/`、`identities/`、`scripts/` — 项目支持的技能、Agent 身份定义和开发工具。
+- `config/.env.example` — 不包含凭据的配置模板。
+
+部分包名和 CLI 命令仍保留历史上的 `TheoryMaster` / `tm` 命名。这些路径属于实现细节，不影响产品当前名称 Sciver。
 
 ## 运行测试
 
