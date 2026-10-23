@@ -27,7 +27,7 @@ Sciver 是一个持久化、多 Agent 协作的科学研究工作流引擎，并
 Web Observatory 将六个科研阶段集中展示，并呈现各 Agent 的当前状态、模型选择和推理强度。
 
 <p align="center">
-  <img src="docs/assets/screenshots/agent-status.svg" alt="Sciver Agent 状态页面，展示六个科研阶段、模型选择、推理强度和运行状态" width="100%">
+  <img src="docs/assets/screenshots/agent-status.svg" alt="Sciver Agent 状态页面，展示六个科研阶段、模型选择、推理强度和运行状态" width="720" style="max-width: 100%; height: auto;">
 </p>
 
 ## 仓库结构
