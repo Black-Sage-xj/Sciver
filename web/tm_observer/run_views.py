@@ -133,7 +133,7 @@ def run_index_body(state: dict[str, Any], *, query: str = "", status: str = "", 
     return f'''
 <style>{SUPERVISOR_STYLE}</style>
 <section class="tm-run-workspace" aria-label="Sciver tasks">
-  <div class="tm-run-heading"><div><strong>任务清单</strong><p>{len(filtered)} 个任务 · 每页 {PAGE_SIZE} 个 · 只读监控</p></div>{live_link}<a class="tm-run-refresh" href="{html.escape(_index_url(query, status, page), quote=True)}">⟳ 刷新</a></div>
+  <div class="tm-run-heading"><div><strong>任务清单</strong><p>{len(filtered)} 个任务 · 每页 {PAGE_SIZE} 个 · 只读监控</p></div>{live_link}<a class="tm-run-refresh" href="/research-chat/?new=1">＋ 建立科研项目</a><a class="tm-run-refresh" href="{html.escape(_index_url(query, status, page), quote=True)}">⟳ 刷新</a></div>
   <form class="tm-run-filters" method="get" action="/run/">
     <input name="q" value="{_e(query) if query else ''}" placeholder="搜索 Task / Master ID / Cycle" aria-label="搜索任务">
     <select name="status" aria-label="筛选状态">{options}</select>

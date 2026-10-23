@@ -49,6 +49,8 @@ sciver quickstart
 
 `quickstart` checks the original Test0 Brownian-motion data, initializes a task and SQLite graph, starts the local server, and opens **http://127.0.0.1:8787/**. The default workspace is `~/Sciver-workspace`, with the task in `test0/` and separate computation artifacts under `.theory-master-tasks/`. Generated files stay outside the source checkout.
 
+The browser opens in **Workspace → Research Chat**. On first visit, a short guide offers a new project or an import from an existing directory. For an import, select the files you want Sciver to read, including an existing `research_plan.md` if you have one. Sciver asks for the research goal, a checkable completion criterion, and resource or method limits. Review or edit the proposed plan, then choose **Confirm project creation**. The project appears in **Task List**; creating it does not start research. The original directory is preserved. The basic setup works without a model account; model-assisted drafting is optional and may use quota.
+
 This is an offline installation check: it sends no model requests and produces no scientific verdict. A newly created Test0 is limited to **one Cycle**. Repeating the command preserves your task and settings. Inspect the research plan in the task console, configure a provider, then explicitly start research when ready.
 
 To verify setup without starting the Web server:
@@ -65,9 +67,12 @@ sciver web --port 8788             # use another port if 8787 is occupied
 sciver web --no-open               # print the URL on a headless/SSH machine
 sciver quickstart --workspace ~/my-sciver
 sciver web --workspace ~/my-sciver  # reopen the same workspace
+sciver web --workspace ~/new-sciver # create an empty workspace and open the project guide
 ```
 
 Keep the terminal running. Press `Ctrl+C` to stop the Web server; task files are preserved. In a new terminal, `cd Sciver`, run `source .venv/bin/activate`, then `sciver web`. For SSH, forward the port with `ssh -L 8787:127.0.0.1:8787 user@host` and open the printed URL on your own computer.
+
+Local Web login is **off by default**. In **Settings → Web login**, you can enable a username and password for the current workspace. To recover a forgotten password, stop the server and run `sciver web --reset-login` (add the same `--workspace` if you used a custom one). This opens the Web UI with local login disabled so you can set new credentials.
 
 You can also create a separate Test0 and open its Web UI immediately:
 
@@ -120,4 +125,3 @@ Review `config/.env.example` and set secrets locally. The repository's `.gitigno
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development and pull requests and [SECURITY.md](SECURITY.md) for reporting security issues. Avoid editing production research tasks during development.
 
 The software in this repository is licensed under the MIT License; see [LICENSE](LICENSE). Sciver brand artwork, trademarks, and third-party materials may be subject to separate rights or notices. Do not assume that the MIT software license grants trademark rights; review applicable terms before reusing or redistributing those materials.
-

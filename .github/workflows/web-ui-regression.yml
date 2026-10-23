@@ -32,6 +32,8 @@ jobs:
           web/tests/test_web_performance.py
           web/tests/test_canvas_md.py
           web/tests/test_research_chat.py
+          web/tests/test_project_setup.py
+          web/tests/test_access_settings.py
           web/tests/test_run_views.py
           web/tests/test_observer.py
           web/tests/test_science_graph_sqlite_explorer.py

@@ -5,6 +5,8 @@ import html
 import json
 from typing import Any
 
+from .project_setup_ui import setup_panel
+
 
 _STYLE = """
 .tm-research_chat-view .tm-main{height:100vh;min-height:0;display:flex;flex-direction:column;overflow:hidden}
@@ -80,7 +82,7 @@ _STYLE = """
 .tm-research-migrate{font-size:12px;color:#a1a1aa}
 .tm-research-migrate summary{cursor:pointer;width:max-content}
 .tm-research-migrate button{border:1px solid #41414a;border-radius:8px;background:#1c1c21;color:#d4d4d8;padding:10px;margin-top:12px;cursor:pointer;text-align:left}
-.tm-research-action{border:1px solid #78643e;background:#30291d;border-radius:12px;padding:14px;margin:0 0 12px;color:#f4f4f5}
+.tm-research-action{border:1px solid #78643e;background:#30291d;border-radius:12px;padding:14px;margin:0 0 12px;color:#f4f4f5;max-height:45vh;overflow:auto;flex:0 1 auto}
 .tm-research-action h3{font-size:14px;margin:0 0 8px}.tm-research-action p{font-size:12px;line-height:1.6;color:#e5dcc8}
 .tm-research-action pre,.tm-research-action textarea{box-sizing:border-box;width:100%;max-height:420px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#1b1916;color:#f4f4f5;border:1px solid #514735;border-radius:8px;padding:10px;font:12px/1.6 ui-monospace,monospace}
 .tm-research-action button{border:1px solid #5d5548;border-radius:8px;background:#3a3429;color:#f4f4f5;padding:8px 10px;margin:8px 8px 0 0;cursor:pointer}
@@ -375,13 +377,17 @@ _SCRIPT = """<script>
       tip.focus(); return;
     }
     const plan = root.querySelector('[data-research-plan]');
+    if (button.dataset.decision === 'confirm' && plan && plan.value !== plan.defaultValue) {
+      if (error) error.textContent = '草稿有未保存的修改，请先点「更新预览」，检查后再次确认。';
+      return;
+    }
     button.disabled = true;
     try {
-      await request('/api/research-chat/' + encodeURIComponent(root.dataset.session || '') + '/action',
+      const result = await request('/api/research-chat/' + encodeURIComponent(root.dataset.session || '') + '/action',
         {action_id:button.dataset.researchAction,decision:button.dataset.decision,
          tip_id:tip && tip.value || undefined,
-         details:button.dataset.decision === 'revise' && plan ? plan.value : undefined});
-      location.reload();
+         details:plan && button.dataset.decision !== 'reject' ? plan.value : undefined});
+      if(result.redirect)location.assign(result.redirect);else location.reload();
     } catch (err) {
       button.disabled = false;
       if (error) error.textContent = String(err.message || err);
@@ -403,8 +409,8 @@ def _action(value: Any) -> str:
     details = value.get("details")
     if isinstance(details, (dict, list)):
         details = json.dumps(details, ensure_ascii=False, indent=2)
-    detail_html = (f'<textarea data-research-plan aria-label="Research Plan 草稿">{_e(details)}</textarea>'
-                   if kind == "migration" and details else f'<pre>{_e(details)}</pre>' if details else "")
+    detail_html = (f'<textarea data-research-plan rows="12" aria-label="Research Plan 草稿">{_e(details)}</textarea>'
+                   if kind in {"migration", "setup"} and details else f'<pre>{_e(details)}</pre>' if details else "")
     choices = value.get("choices") if kind in {"preference", "direction"} else None
     choice_html, confirm_disabled = "", ""
     if isinstance(choices, list) and choices:
@@ -419,13 +425,13 @@ def _action(value: Any) -> str:
         confirm_disabled = " disabled"
     action_id = _e(value["id"])
     revise = (f'<button type="button" data-research-action="{action_id}" data-decision="revise">更新预览</button>'
-              if kind == "migration" else "")
+              if kind in {"migration", "setup"} else "")
     return (
         '<section class="tm-research-action" aria-label="待确认操作">'
         f'<h3>{_e(value.get("title") or label)}</h3><p>{_e(value.get("summary") or "请检查预览后选择是否执行。")}</p>'
         f'{detail_html}{choice_html}{revise}'
-        f'<button type="button" data-research-action="{action_id}" data-decision="confirm"{confirm_disabled}>确认执行</button>'
-        f'<button type="button" data-research-action="{action_id}" data-decision="reject">暂不执行</button>'
+        f'<button type="button" data-research-action="{action_id}" data-decision="confirm"{confirm_disabled}>{"确认建立项目" if kind == "setup" else "确认执行"}</button>'
+        f'<button type="button" data-research-action="{action_id}" data-decision="reject">{"保留对话，暂不创建" if kind == "setup" else "暂不执行"}</button>'
         '</section>'
     )
 
@@ -456,8 +462,13 @@ def page_body(snapshot: dict[str, Any], *, mode: str = "research") -> str:
                 f'aria-label="Supervisor 接管对话"></div>'
             )
         else:
+            created = session.get("completed_action") if session.get("mode") == "setup" else None
+            result = created.get("result") if isinstance(created, dict) else None
+            completed = (f'<div class="tm-research-action" role="status"><h3>项目已建立</h3>'
+                         f'<p>研究计划已保存，项目已加入 Task List。可以稍后再决定何时开始研究。</p>'
+                         f'<a href="/run/">打开 Task List</a></div>' if isinstance(result, dict) and result.get("task_id") else "")
             body = (
-                _action(session.get("pending_action"))
+                completed + _action(session.get("pending_action"))
                 + f'<div id="tm-research-chat-app" data-session-id="{_e(sid)}" data-mode="research" '
                 'aria-label="Sciver 科研对话"></div>'
             )
@@ -486,6 +497,7 @@ def page_body(snapshot: dict[str, Any], *, mode: str = "research") -> str:
             for item in efforts)
         body = (
             '<div class="tm-research-entry">'
+            + setup_panel(str(snapshot.get("workspace") or "")) +
             '<div class="tm-research-empty"><h3>和 Sciver 讨论科研</h3><p>选择推荐问题，或直接输入自己的问题；新对话会自动保存在右侧历史中。</p></div>'
             f'<label class="tm-research-task-picker">选择 Sciver 项目任务<select data-research-task aria-label="选择项目任务">{task_options}</select></label>'
             '<div class="tm-research-recommend-label">推荐的聊天内容</div>'
@@ -504,7 +516,7 @@ def page_body(snapshot: dict[str, Any], *, mode: str = "research") -> str:
             '<button type="submit" class="tm-research-direct-send" data-research-send disabled>发送 ↗</button></div>'
             '<p class="tm-research-direct-hint" id="tm-research-first-message-hint">发送后自动创建会话。可以先编辑推荐内容，再提交。</p>'
             '</form>'
-            '<details class="tm-research-migrate"><summary>从已有工作迁移初始化（高级功能）</summary>'
+            '<details class="tm-research-migrate"><summary>旧版目录内初始化（兼容入口）</summary>'
             '<button type="button" data-research-mode="migration">迁移已有工作并初始化任务</button></details>'
             '</div>'
         )

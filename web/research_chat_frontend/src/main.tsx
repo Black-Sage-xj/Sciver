@@ -105,8 +105,9 @@ function ChatMessageView() {
   const page = document.querySelector<HTMLElement>('.tm-research-chat');
   const isSupervisor = page?.dataset.mode === 'supervisor';
   const isMigration = page?.dataset.sessionMode === 'migration';
-  const canEdit = !isSupervisor && !isMigration;
-  const canReload = !isSupervisor && !isMigration;
+  const isSetup = page?.dataset.sessionMode === 'setup';
+  const canEdit = !isSupervisor && !isMigration && !isSetup;
+  const canReload = !isSupervisor && !isMigration && !isSetup;
   return (
     <MessagePrimitive.Root className="tm-aui-message">
       <MessagePrimitive.If user>

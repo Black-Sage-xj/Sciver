@@ -1370,13 +1370,16 @@ class WebTests(unittest.TestCase):
                     no_redirect.open(base + "/", timeout=3)
                 self.assertEqual(ctx.exception.code, 303)
                 live_id = cache.get()["runs"][0]["observer_id"]
-                self.assertEqual(ctx.exception.headers.get("Location"), f"/run/{live_id}/")
+                self.assertEqual(ctx.exception.headers.get("Location"), "/research-chat/")
+                with self.assertRaises(HTTPError) as console:
+                    no_redirect.open(base + "/task-console/", timeout=3)
+                self.assertEqual(console.exception.headers.get("Location"), f"/run/{live_id}/")
                 with urlopen(base + "/workflow-stage-preview/", timeout=3) as response:
                     stage_preview = response.read().decode("utf-8")
                 self.assertIn('<nav class="tm-nav"', stage_preview)
                 nav = stage_preview.split('<nav class="tm-nav"', 1)[1].split('</nav>', 1)[0]
                 self.assertEqual(nav.count('class="tm-nav-link"'), 8)
-                for route in ("/run/", "/", "/research-plan/", "/workflow-stage-preview/", "/architecture/", "/services/", "/settings/"):
+                for route in ("/run/", "/task-console/", "/research-plan/", "/workflow-stage-preview/", "/architecture/", "/services/", "/settings/"):
                     self.assertIn(f'href="{route}"', nav)
                 self.assertIn("Task Console", nav)
                 self.assertNotIn("Codex Usage", nav)

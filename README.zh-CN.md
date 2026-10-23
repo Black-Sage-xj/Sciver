@@ -49,6 +49,8 @@ sciver quickstart
 
 `quickstart` 会校验 Test0 的原创布朗运动数据、初始化任务和 SQLite 图谱，然后启动本地服务，自动打开 **http://127.0.0.1:8787/**。默认工作区是 `~/Sciver-workspace`，Test0 任务在其 `test0/` 子目录；计算产物放在工作区内独立的 `.theory-master-tasks/`，不会写回源码。
 
+网页首先进入 **Workspace → Research Chat**。首次打开会弹出简短说明，可新建项目，也可选择已有目录中的 `research_plan.md`、笔记和数据。导入时自行勾选需要读取的文件；对话会依次询问科研目标、可核验的完成标准、资源或方法限制。检查并可编辑 Research Plan 草稿后，点击「确认建立项目」，项目随即出现在 **Task List**。建立项目不会自动开始研究，原目录保持不变。基础建项无需模型账号；模型辅助完善草稿是可选项，会消耗额度。
+
 这一步是离线安装自检，不会调用模型，也不会生成科研结论。首次创建的 Test0 最多运行 **1 个 Cycle**；重复执行会保留已有任务和设置。网页打开后，在任务控制台查看研究计划，再配置模型账号并显式启动研究。
 
 只做自检、不启动网页：
@@ -65,9 +67,12 @@ sciver web --port 8788             # 8787 被占用时换一个端口
 sciver web --no-open               # 无桌面/SSH 环境只打印网址
 sciver quickstart --workspace ~/my-sciver  # 指定独立工作区
 sciver web --workspace ~/my-sciver         # 再次打开同一工作区
+sciver web --workspace ~/new-sciver        # 新建空工作区并打开项目引导
 ```
 
 终端保持运行；按 `Ctrl+C` 停止网页服务，任务文件保留。以后打开新终端，先 `cd Sciver` 并执行 `source .venv/bin/activate`，再运行 `sciver web`。SSH 用户可用 `ssh -L 8787:127.0.0.1:8787 user@host` 转发端口，在本机打开打印的网址。
+
+本机网页默认**不需要密码**。需要登录时，可在 **Settings → 网页登录** 中设置用户名和密码，设置仅对应当前工作区。忘记密码时，先停止服务，运行 `sciver web --reset-login`；如果使用了自定义工作区，带上相同的 `--workspace`。网页会以关闭登录的状态重新打开，之后可设置新密码。
 
 也可以单独创建 Test0 并立即打开网页：
 
@@ -114,4 +119,3 @@ tm-observer serve --search-root /path/to/your/research/workspace --host 127.0.0.
 开发和 Pull Request 流程请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)；安全问题报告方式请参阅 [SECURITY.md](SECURITY.md)。开发期间请避免直接修改正式科研任务。
 
 本仓库的软件采用 MIT 许可证，详见 [LICENSE](LICENSE)。Sciver 品牌图稿、商标及第三方材料可能另有权利或声明要求。MIT 软件许可证不代表自动授予商标使用权；复用或再分发这些材料前，请先核对适用条款。
-

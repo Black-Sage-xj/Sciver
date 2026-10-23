@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import ipaddress
 import json
 import sys
 from datetime import datetime, timezone
@@ -14,6 +15,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote
 
 from .archify_views import StaticViewManager, default_archify_root, default_state_dir
+from .access_settings import AccessSettings, AccessSettingsError, is_local_host
 from .auth import (
     SESSION_COOKIE,
     SESSION_TTL_S,
@@ -834,6 +836,7 @@ class StateCache:
         self.cold_wait_s = max(0.1, float(cold_wait_s))
         self._condition = threading.Condition()
         self._state: dict | None = None
+        self._state_epoch = 0
         self._at = 0.0
         self._refreshing = False
         self._retry_after = 0.0
@@ -859,17 +862,29 @@ class StateCache:
         self._git_refreshing = True
         threading.Thread(target=self._refresh_git, name="tm-observer-git-refresh", daemon=True).start()
 
+    def refresh_after_write(self) -> None:
+        """Publish newly created tasks before redirecting to Task List."""
+        with self._condition:
+            self._state_epoch += 1
+        self._refresh_state()
+
     def _refresh_state(self) -> None:
+        with self._condition:
+            epoch = self._state_epoch
         try:
             state = collect_state(self.search_root, include_git_info=False)
         except Exception as exc:
             with self._condition:
+                if epoch != self._state_epoch:
+                    return
                 self._last_error = type(exc).__name__
                 self._retry_after = time.monotonic() + 1.0
                 self._refreshing = False
                 self._condition.notify_all()
             return
         with self._condition:
+            if epoch != self._state_epoch:
+                return
             git_info = self._git_snapshot
             if git_info is None and self._state is not None:
                 previous_system = self._state.get("system", {})
@@ -967,6 +982,8 @@ def make_handler(
     # Shared, persisted quota history for ALL Run tabs. Reading this is fast;
     # a background Codex RPC is launched no more than once per five minutes.
     quota_history = QuotaHistory(notes_state_dir / 'codex-quota-last-good.json')
+    access = AccessSettings(notes_state_dir, cache.search_root, auth)
+    auth = access.current
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "TMObservatory/0.2"
@@ -1625,8 +1642,8 @@ def make_handler(
                           quota_snapshot=quota_history.snapshot(request_update=True)).encode("utf-8"),
                           "text/html; charset=utf-8")
                 return
-            if path == "/":
-                destination = _console_landing(self.headers.get("Cookie"), state)
+            if path in {"/", "/task-console/"}:
+                destination = "/research-chat/" if path == "/" else _console_landing(self.headers.get("Cookie"), state)
                 self.send_response(HTTPStatus.SEE_OTHER)
                 self.send_header("Location", destination)
                 self.send_header("Cache-Control", "no-store")
@@ -1657,7 +1674,7 @@ def make_handler(
                         self._send(b"task not found\n", "text/plain; charset=utf-8", HTTPStatus.NOT_FOUND)
                         return
                 payload = _page("Sciver Observatory — Workspace Settings",
-                                workspace_settings_body(state.get("runs", []), selected_run),
+                                workspace_settings_body(state.get("runs", []), selected_run, access=access.public()),
                                 active="settings").encode("utf-8")
             elif path.startswith("/run/"):
                 parts = path.strip("/").split("/")
@@ -1807,7 +1824,33 @@ def make_handler(
             self._send(payload, "text/html; charset=utf-8", set_cookie=remembered)
 
         def do_POST(self) -> None:
+            nonlocal auth
             path = self.path.split("?", 1)[0]
+            if path == "/api/settings/access":
+                if not self._authorized():
+                    self._send_unauthorized()
+                    return
+                host, origin = self.headers.get("Host", ""), self.headers.get("Origin", "")
+                if (origin not in {"http://" + host, "https://" + host}
+                        or self.headers.get("X-TM-Operator-Intent") != "1"
+                        or (auth is None and (not is_local_host(host)
+                            or not ipaddress.ip_address(self.client_address[0]).is_loopback))):
+                    self._send(b'{"error":"origin or local access rejected"}', "application/json", HTTPStatus.FORBIDDEN)
+                    return
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    if not self.headers.get("Content-Type", "").startswith("application/json") or not 2 <= size <= 16000:
+                        raise AccessSettingsError("登录设置请求格式无效")
+                    payload = json.loads(self.rfile.read(size))
+                    if not isinstance(payload, dict):
+                        raise AccessSettingsError("登录设置请求格式无效")
+                    result = access.save(payload)
+                    auth = access.current
+                    self._send(json.dumps(result).encode(), "application/json", set_cookie=f"{SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict")
+                except (ValueError, OSError) as exc:
+                    message = str(exc) if isinstance(exc, AccessSettingsError) else "登录设置未保存，请检查本地状态目录"
+                    self._send(json.dumps({"error": message}, ensure_ascii=False).encode(), "application/json", HTTPStatus.BAD_REQUEST)
+                return
             if path.startswith("/api/research-chat/"):
                 if not self._authorized():
                     self._send_unauthorized()
@@ -1843,7 +1886,10 @@ def make_handler(
                                    "text/plain; charset=utf-8", HTTPStatus.SERVICE_UNAVAILABLE, retry_after=1)
                         return
                     code = HTTPStatus.OK
-                    if parts == ["api", "research-chat", "session"]:
+                    if parts == ["api", "research-chat", "import-preview"]:
+                        from .project_setup import source_inventory
+                        result = source_inventory(str(data.get("source_directory") or ""))
+                    elif parts == ["api", "research-chat", "session"]:
                         result = create(notes_state_dir, state, data)
                     elif len(parts) == 4 and parts[:2] == ["api", "research-chat"] and parts[3] == "message":
                         result = begin_send(notes_state_dir, cache.search_root, state, parts[2], data)
@@ -1861,7 +1907,10 @@ def make_handler(
                         result = rename_session(notes_state_dir, parts[2], data.get("title"))
                     elif len(parts) == 4 and parts[:2] == ["api", "research-chat"] and parts[3] == "action":
                         result = apply_action(notes_state_dir, cache.search_root, state, parts[2], data)
-                        cache._at = 0.0
+                        if result.get("task_id"):
+                            cache.refresh_after_write()
+                        else:
+                            cache._at = 0.0
                     else:
                         raise ResearchChatError("API 不存在", 404)
                 except ResearchChatError as exc:
@@ -2269,7 +2318,9 @@ def make_handler(
             self.send_header("Location", "/")
             self.send_header(
                 "Set-Cookie",
-                f"{SESSION_COOKIE}={token}; Path=/; Max-Age={SESSION_TTL_S}; HttpOnly; Secure; SameSite=Strict",
+                f"{SESSION_COOKIE}={token}; Path=/; Max-Age={SESSION_TTL_S}; HttpOnly; "
+                + ("Secure; " if access.externally_managed or not is_local_host(self.headers.get("Host", "")) else "")
+                + "SameSite=Strict",
             )
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", "0")

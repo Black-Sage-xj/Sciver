@@ -90,7 +90,7 @@ class SecondaryBackNavigationTests(unittest.TestCase):
         console = BeautifulSoup(dashboard_shell(
             "Task", "Body", active="run", back_href="/run/"), "html.parser")
         side = console.select_one("nav#tm-main-nav")
-        self.assertEqual(side.select_one('a[aria-current="page"]')["href"], "/")
+        self.assertEqual(side.select_one('a[aria-current="page"]')["href"], "/task-console/")
         self.assertEqual(side.select_one('a[aria-current="page"]').get_text(strip=True), "Task Console")
         self.assertIsNone(side.select_one('a[href="/run/"][aria-current]'))
         self.assertEqual(labels_and_links(dashboard_shell(

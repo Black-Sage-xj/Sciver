@@ -33,7 +33,8 @@ class ResearchChatLayoutTests(unittest.TestCase):
         self.assertIn("event.key === 'Enter' && !event.shiftKey", html)
         self.assertIn("/api/research-chat/", html)
         self.assertIn('推荐的聊天内容', html)
-        self.assertIn('从已有工作迁移初始化（高级功能）', html)
+        self.assertIn('建立科研项目', html)
+        self.assertIn('旧版目录内初始化（兼容入口）', html)
 
     def test_saved_session_exposes_escaped_manual_title_editor(self) -> None:
         html = page_body({

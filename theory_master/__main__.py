@@ -278,6 +278,8 @@ def main() -> int:
         command.add_argument("--workspace", type=Path, default=default_workspace())
         command.add_argument("--port", type=int, default=8787)
         command.add_argument("--no-open", action="store_true", help="print the URL without opening a browser")
+        if name == "web":
+            command.add_argument("--reset-login", action="store_true", help="disable the locally configured Web login if you forgot its password")
         if name == "quickstart":
             command.add_argument("--no-web", action="store_true", help="only initialize and verify Test0, then exit")
     for name in ("validate", "initialize", "cancel", "project"):
@@ -442,6 +444,11 @@ def main() -> int:
     if args.command in {"quickstart", "web"}:
         from .onboarding import launch_web, prepare_test0
         try:
+            if getattr(args, "reset_login", False):
+                from tm_observer.access_settings import reset_local_login
+                from tm_observer.archify_views import default_state_dir
+                reset_local_login(default_state_dir(), args.workspace.expanduser().resolve())
+                print("Local Web login disabled. You can set new credentials in Settings.")
             if args.command == "quickstart":
                 prepare_test0(args.workspace.expanduser().resolve())
             if not getattr(args, "no_web", False):
@@ -464,6 +471,8 @@ def main() -> int:
         try:
             root = materialize_case(args.case, args.destination)
             binding = bootstrap(root / "research_plan.md")
+            from .onboarding import install_benchmark_inputs
+            install_benchmark_inputs(binding)
         except (RegressionCaseError, OSError, ValueError, json.JSONDecodeError) as exc:
             parser.error(str(exc))
         print(task_summary(binding))

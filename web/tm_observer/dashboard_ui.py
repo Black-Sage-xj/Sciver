@@ -1183,7 +1183,7 @@ _ICONS = {
 _VIEWS = (
     ("research_chat", "Research Chat", "/research-chat/"),
     ("run", "Task List", "/run/"),
-    ("console", "Task Console", "/"),
+    ("console", "Task Console", "/task-console/"),
     ("research_plan", "Research Plan", "/research-plan/"),
     ("workflow", "Workflow", "/workflow-stage-preview/"),
     ("architecture", "Architecture", "/architecture/"),

@@ -20,7 +20,7 @@ class BasicAuthCredentials:
 
 @dataclass(frozen=True)
 class ObservatoryAuth:
-    """One Observatory. Every account sees the same read-only data."""
+    """One Observatory. Every account has the same interface and operator controls."""
 
     accounts: tuple[BasicAuthCredentials, ...]
 
@@ -72,9 +72,23 @@ def auth_accounts(credentials: AuthRealm) -> tuple[BasicAuthCredentials, ...]:
     return (credentials,)
 
 
+def _password_matches(stored: str, supplied: str) -> bool:
+    if stored.startswith("$sciver-pbkdf2-sha256$"):
+        try:
+            _, _, rounds, salt, expected = stored.split("$")
+            count = int(rounds)
+            if not 100000 <= count <= 1000000 or len(salt) != 32 or len(expected) != 64:
+                return False
+            actual = hashlib.pbkdf2_hmac("sha256", supplied.encode(), bytes.fromhex(salt), count).hex()
+            return hmac.compare_digest(actual, expected)
+        except (ValueError, TypeError):
+            return False
+    return hmac.compare_digest(supplied.encode(), stored.encode())
+
+
 def match_account(credentials: AuthRealm, username: str, password: str) -> BasicAuthCredentials | None:
     for account in auth_accounts(credentials):
-        if hmac.compare_digest(username, account.username) and hmac.compare_digest(password, account.password):
+        if hmac.compare_digest(username.encode(), account.username.encode()) and _password_matches(account.password, password):
             return account
     return None
 

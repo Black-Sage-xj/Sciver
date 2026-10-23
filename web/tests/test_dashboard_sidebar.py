@@ -51,7 +51,7 @@ class SidebarCollapseTests(unittest.TestCase):
                 self.assertEqual(len(nav.select("a.tm-nav-link")), len(_VIEWS))
                 self.assertEqual([a.get("href") for a in nav.select("a.tm-nav-link")],
                                  [url for _key, _label, url in _VIEWS])
-                self.assertEqual(nav.select_one('a[href="/"]').get_text(strip=True), "Task Console")
+                self.assertEqual(nav.select_one('a[href="/task-console/"]').get_text(strip=True), "Task Console")
                 self.assertEqual(menu.get("aria-controls"),nav.get("id"))
                 self.assertEqual(menu.get("aria-expanded"),"false")
                 self.assertEqual(menu.get("aria-label"),"打开导航菜单")

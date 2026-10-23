@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from theory_master.onboarding import prepare_test0, launch_web
+from theory_master.onboarding import prepare_test0, launch_web, install_benchmark_inputs
 from theory_master.regression_cases import RegressionCaseError
 
 
@@ -21,7 +21,7 @@ class OnboardingTests(unittest.TestCase):
                 second = prepare_test0(workspace)
             self.assertEqual(first.config_path, second.config_path)
             self.assertEqual(first.config_path.read_bytes(), before)
-            self.assertTrue((workspace / "test0/benchmark/datasets/brownian_2d/trajectories.csv").is_file())
+            self.assertTrue((first.benchmark_root / "datasets/brownian_2d/trajectories.csv").is_file())
             self.assertFalse((workspace / "test0/expected.json").exists())
 
     def test_existing_unrelated_task_is_not_overwritten(self):
@@ -33,12 +33,31 @@ class OnboardingTests(unittest.TestCase):
                 prepare_test0(Path(temp))
             self.assertEqual((root / "research_plan.md").read_text(), "my research")
 
+    def test_import_recovery_does_not_overwrite_changed_scientific_input(self):
+        with tempfile.TemporaryDirectory() as temp:
+            binding = prepare_test0(Path(temp))
+            original = binding.benchmark_root / "datasets/brownian_2d/trajectories.csv"
+            before = original.read_bytes()
+            staged = binding.task_home / "benchmark/datasets/brownian_2d/trajectories.csv"
+            staged.parent.mkdir(parents=True)
+            staged.write_text("changed")
+            with self.assertRaisesRegex(ValueError, "not overwritten"):
+                install_benchmark_inputs(binding)
+            self.assertEqual(original.read_bytes(), before)
+
     def test_launcher_preserves_explicit_compute_environment(self):
         with tempfile.TemporaryDirectory() as temp, mock.patch.dict("os.environ", {"THEORYMASTER_COMPUTE_PYTHON": "/custom/python"}), mock.patch("tm_observer.web.serve") as serve:
             launch_web(Path(temp), port=8788, open_browser=False)
             serve.assert_called_once_with(Path(temp).resolve(), host="127.0.0.1", port=8788, open_browser=False)
             import os
             self.assertEqual(os.environ["THEORYMASTER_COMPUTE_PYTHON"], "/custom/python")
+
+    def test_web_command_can_open_a_new_empty_workspace(self):
+        with tempfile.TemporaryDirectory() as temp, mock.patch("tm_observer.web.serve") as serve:
+            workspace = Path(temp) / "fresh"
+            launch_web(workspace, open_browser=False)
+            self.assertTrue(workspace.is_dir())
+            serve.assert_called_once_with(workspace, host="127.0.0.1", port=8787, open_browser=False)
 
     def test_compute_interpreter_preserves_virtualenv_symlink(self):
         from theory_master.codex_backend import CodexBackend

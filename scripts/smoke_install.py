@@ -38,6 +38,9 @@ def main() -> None:
                     raise RuntimeError("Installed Web server did not become ready: " + output)
                 with urlopen(url + "healthz", timeout=5) as response:
                     assert json.load(response)["ok"]
+                with urlopen(url, timeout=5) as response:
+                    assert response.url.endswith('/research-chat/')
+                    assert 'data-setup-welcome' in response.read().decode('utf-8')
                 with urlopen(url + "observer_state.json", timeout=10) as response:
                     assert any("test0" in str(run) for run in json.load(response)["runs"])
                 with urlopen(url + "research-chat/assets/research-chat.js", timeout=5) as response:

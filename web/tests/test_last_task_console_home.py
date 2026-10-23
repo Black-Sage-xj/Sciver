@@ -110,7 +110,7 @@ class LastTaskConsoleHomeTests(unittest.TestCase):
             def landing(cookie=None):
                 headers={"Cookie":cookie} if cookie else {}
                 with self.assertRaises(HTTPError) as caught:
-                    no_redirect.open(Request(base+"/",headers=headers),timeout=7)
+                    no_redirect.open(Request(base+"/task-console/",headers=headers),timeout=7)
                 err=caught.exception
                 self.assertEqual(err.code,303)
                 self.assertEqual(err.headers["Cache-Control"],"no-store")
