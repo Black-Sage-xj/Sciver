@@ -10,6 +10,7 @@ import threading
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
@@ -767,7 +768,8 @@ class AuthTests(unittest.TestCase):
                 server.server_close()
                 thread.join(timeout=3)
 
-    def test_viewer_login_sees_the_same_run_as_primary(self):
+    @mock.patch("tm_observer.web.QuotaHistory.snapshot", return_value={})
+    def test_viewer_login_sees_the_same_run_as_primary(self, quota_snapshot):
         class NoRedirect(HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, headers, newurl):
                 return None
