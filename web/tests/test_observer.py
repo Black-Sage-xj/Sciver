@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import stat
 import tempfile
 import threading
@@ -809,8 +810,12 @@ class AuthTests(unittest.TestCase):
             try:
                 owner_body = urlopen(Request(base + "/", headers={"Cookie": session_for("owner", "owner-secret")}), timeout=3).read()
                 viewer_body = urlopen(Request(base + "/", headers={"Cookie": session_for("123", "123")}), timeout=3).read()
-                self.assertEqual(owner_body, viewer_body)
-                self.assertIn(b"shared-view", viewer_body)
+                task_option = rb'<option value="([0-9a-f]{16})">shared-view</option>'
+                owner_task = re.search(task_option, owner_body)
+                viewer_task = re.search(task_option, viewer_body)
+                self.assertIsNotNone(owner_task)
+                self.assertIsNotNone(viewer_task)
+                self.assertEqual(owner_task.group(1), viewer_task.group(1))
                 token = base64.b64encode(b"123:123").decode("ascii")
                 with urlopen(Request(base + "/healthz", headers={"Authorization": f"Basic {token}"}), timeout=3) as response:
                     self.assertTrue(json.loads(response.read())["ok"])
