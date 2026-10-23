@@ -22,6 +22,14 @@ This repository contains the maintained source for the engine, agent workflows, 
 - **Web Observatory** — inspect persisted runs, review progress, and explicitly control research runs through the SDK.
 - **Tests and design references** — regression tests and technical design documentation.
 
+## System architecture
+
+The diagram below summarizes Sciver's architecture and the lifecycle of a scientific Cycle, from candidate proposal and independent qualification through investigation, adjudication, and task-level completion.
+
+<p align="center">
+  <img src="docs/assets/architecture/sciver-system-architecture-en.svg" alt="Sciver system architecture and Cycle workflow" width="100%">
+</p>
+
 ### Agent status and model configuration
 
 The Web Observatory brings the six research stages together in one view, with each agent's current status, model selection, and reasoning effort.
