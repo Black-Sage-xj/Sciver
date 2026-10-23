@@ -27,7 +27,7 @@ This repository contains the maintained source for the engine, agent workflows, 
 The Web Observatory brings the six research stages together in one view, with each agent's current status, model selection, and reasoning effort.
 
 <p align="center">
-  <img src="docs/assets/screenshots/agent-status.svg" alt="Sciver Agent status page showing six research stages, model choices, effort levels, and statuses" width="100%">
+  <img src="docs/assets/screenshots/agent-status.svg" alt="Sciver Agent status page showing six research stages, model choices, effort levels, and statuses" width="720" style="max-width: 100%; height: auto;">
 </p>
 
 ## Repository layout
