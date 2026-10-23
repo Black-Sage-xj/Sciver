@@ -22,6 +22,14 @@ Sciver 是一个持久化、多 Agent 协作的科学研究工作流引擎，并
 - **Web Observatory**：查看已持久化的运行记录、审查进度，并通过 SDK 显式控制科研运行。
 - **测试与设计资料**：回归测试和技术设计文档。
 
+## 系统架构
+
+下图概览 Sciver 的系统分层与科研 Cycle 生命周期：从提出候选命题、独立资格审查，到开展研究、形成裁决，以及独立判断任务是否完成。
+
+<p align="center">
+  <img src="docs/assets/architecture/sciver-system-architecture-zh-CN.svg" alt="Sciver 系统架构与科研 Cycle 流程图" width="100%">
+</p>
+
 ### Agent 状态与模型配置
 
 Web Observatory 将六个科研阶段集中展示，并呈现各 Agent 的当前状态、模型选择和推理强度。
