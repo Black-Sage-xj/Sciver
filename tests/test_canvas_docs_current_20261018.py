@@ -38,11 +38,13 @@ def test_agent_identities_and_packaged_skills_have_no_canvas_reader_or_writer_sk
 
 def test_primary_entrypoints_link_the_current_sqlite_graph_model():
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    chinese_readme = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
     plan = (ROOT / "design" / "ResearchPlan设计文档.md").read_text(encoding="utf-8")
     research = (ROOT / "design" / "ResearchGraph设计文档.md").read_text(encoding="utf-8")
     sdk = (ROOT / "design" / "SDK设计文档.md").read_text(encoding="utf-8")
     assert "README.zh-CN.md" in readme
-    assert "personal Canvas graphs" in readme
+    assert "SQLite graph" in readme
+    assert "SQLite 图谱" in chinese_readme
     assert "每个已裁决 Cycle 唯一 Outcome" in plan
     assert "[Canvas设计文档.md](./Canvas设计文档.md)" in research
     assert "当前 Canvas 权威" in sdk or "SQLite 是唯一科研数据权威层" in sdk
