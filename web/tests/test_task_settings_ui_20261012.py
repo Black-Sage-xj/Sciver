@@ -51,7 +51,7 @@ class TaskSettingsTests(unittest.TestCase):
             self.assertNotIn("window.location.reload()",html)
 
     def test_real_web_task_route_and_top_right_navigation(self):
-        from tool.tm_observer.tests.test_observer import make_task
+        from test_observer import make_task
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
             make_task(root,'settings-task',status='RUNNING',master_id=1)

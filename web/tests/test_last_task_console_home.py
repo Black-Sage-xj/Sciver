@@ -93,7 +93,7 @@ class LastTaskConsoleHomeTests(unittest.TestCase):
         self.assertEqual(_console_landing(None,state),'/run/')
 
     def test_home_returns_last_browser_task_else_task_list_without_redirect_loop(self):
-        from tool.tm_observer.tests.test_observer import make_task
+        from test_observer import make_task
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
             make_task(root,"home-task-alpha",status="RUNNING",master_id=1)

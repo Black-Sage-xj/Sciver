@@ -50,4 +50,4 @@ class CompactOverviewCardsTests(unittest.TestCase):
         self.assertIn('setInterval(loadCodexQuota,300000)',page)
         self.assertIn('paintCodexQuota();',page)
         self.assertIn('Codex 1',page)
-        self.assertIn("const weekText='7 天剩余：'",page)
+        self.assertIn("const weekText=windows.length>1?windowLabel(windows[1])",page)

@@ -122,6 +122,8 @@ class NextCycleRouteReloadTests(unittest.TestCase):
 
             initial = resolver()
             backend = CodexBackend.__new__(CodexBackend)
+            # Route reload is independent of the operator-selected account ceiling.
+            backend.prepare_cycle_account = Mock(side_effect=lambda routes: dict(routes))
             backend.routes = dict(initial)
             original_semantic = AgentSemanticBackend(backend, model=initial["research_lead"].model,
                                                      provider=initial["research_lead"].provider)
@@ -231,6 +233,8 @@ class NextCycleRouteReloadTests(unittest.TestCase):
                 return resolve_routes(profile="test", env={}, task_route_override_root=root)
             future = resolver()
             backend = CodexBackend.__new__(CodexBackend)
+            # Route reload is independent of the operator-selected account ceiling.
+            backend.prepare_cycle_account = Mock(side_effect=lambda routes: dict(routes))
             backend.routes = dict(future)
             collector = Mock()
             wf = Workflow.__new__(Workflow)

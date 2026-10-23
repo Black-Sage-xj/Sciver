@@ -16,46 +16,24 @@ from theory_master.supervisor import _handle_failed_state
 
 
 class ErrorRelayTest(unittest.TestCase):
-    def test_repo_root_and_origin_relay_entrypoint_are_canonical(self):
+    def test_legacy_relay_locations_are_metadata_only(self):
         expected = Path(__file__).resolve().parents[3]
         self.assertEqual(error_relay.REPO_ROOT, expected)
         self.assertEqual(error_relay.RELAY_STARTER, expected / "tool/python_script/start_origin_tmux_relay.py")
-        self.assertEqual(error_relay.RESUME_STARTER, expected / "tool/theory_master/scripts/start_recovery_resume.py")
-        self.assertTrue(error_relay.RELAY_STARTER.is_file())
-        self.assertTrue(error_relay.RESUME_STARTER.is_file())
+        # Optional operator launchers are not bundled with the public SDK.
+        import inspect
+        source = inspect.getsource(error_relay.spawn_repair_agent)
+        self.assertNotIn("subprocess", source)
+        self.assertNotIn("RELAY_STARTER", source)
+        self.assertNotIn("RESUME_STARTER", source)
 
-    def test_origin_relay_entrypoint_imports_and_exposes_cli(self):
-        proc = subprocess.run([sys.executable, str(error_relay.RELAY_STARTER), "--help"],
-                              cwd=error_relay.REPO_ROOT, text=True, capture_output=True, check=False)
-        self.assertEqual(proc.returncode, 0, proc.stderr)
-        self.assertIn("--relay-file", proc.stdout)
-        self.assertIn("--tmux-target", proc.stdout)
-
-    def test_origin_relay_can_start_fresh_codex_without_session_id(self):
-        spec = importlib.util.spec_from_file_location("theorymaster_start_origin_relay", error_relay.RELAY_STARTER)
-        self.assertIsNotNone(spec)
-        self.assertIsNotNone(spec.loader)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[spec.name] = module
-        spec.loader.exec_module(module)
-        command = module.build_shell_cmd(
-            origin="codex", workdir=error_relay.REPO_ROOT, prompt="repair now",
-            codex_session_id=None, model="gpt-6-luna", reasoning_effort="medium",
-        )
-        self.assertIn("codex --no-alt-screen", command)
-        self.assertNotIn("codex resume", command)
-        self.assertIn("gpt-6-luna", command)
-        self.assertIn("model_reasoning_effort", command)
-        self.assertIn("medium", command)
-        self.assertIn("repair now", command)
-
-        with patch.object(module, "_run_tmux") as run_tmux:
-            run_tmux.return_value = SimpleNamespace(returncode=0, stdout="0|node\n", stderr="")
-            self.assertTrue(module.pane_has_live_origin_process("tmux", "agent:test.0", "codex"))
-            run_tmux.return_value = SimpleNamespace(returncode=0, stdout="1|node\n", stderr="")
-            self.assertFalse(module.pane_has_live_origin_process("tmux", "agent:test.0", "codex"))
-            run_tmux.return_value = SimpleNamespace(returncode=0, stdout="0|bash\n", stderr="")
-            self.assertTrue(module.pane_has_live_origin_process("tmux", "agent:test.0", "codex"))
+    def test_legacy_repair_never_executes_an_external_launcher(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state = {"run_dir": temp, "run_id": "fixture", "status": "FAILED"}
+            with patch("subprocess.run", side_effect=AssertionError("external launch forbidden")), \
+                 patch("subprocess.Popen", side_effect=AssertionError("external launch forbidden")):
+                target = error_relay.spawn_repair_agent(state, {"error": "fixture failure"})
+            self.assertTrue(target.endswith(":sdk_internal_hold"))
 
     def test_failed_relay_compatibility_records_internal_hold_no_tmux(self):
         with tempfile.TemporaryDirectory() as temp:

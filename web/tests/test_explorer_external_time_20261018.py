@@ -70,10 +70,10 @@ ADDITIONAL = r"""
   latestGraph.events['node:click']({target:{id:'external-dated'}});await tick();await tick();
   assert(elements['ex-reader'].innerHTML.includes('按最近的明确 Cycle 时间锚点估算'),
     'clicking External explains timestamp-based placement');
-  latestGraph.camera.zoom=.35;latestGraph.events.aftertransform();
+  latestGraph.camera.zoom=.60;latestGraph.events.aftertransform();
   assert.equal(elements['ex-compact-labels'].hidden,false);
   assert.equal(elements['ex-source-rail'].hidden,true);
-  latestGraph.camera.zoom=.351;latestGraph.events.aftertransform();
+  latestGraph.camera.zoom=.601;latestGraph.events.aftertransform();
   assert.equal(elements['ex-compact-labels'].hidden,true);
   assert.equal(elements['ex-source-rail'].hidden,false);
 """

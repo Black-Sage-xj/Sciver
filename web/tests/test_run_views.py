@@ -236,7 +236,7 @@ class WebTuiMonitoringTests(unittest.TestCase):
         self.assertEqual(page.count('data-codex-quota aria-label='), 1)
         self.assertIn('class="tm-run-quota-card-link" href="/services/"', page)
         self.assertNotIn('tm-run-quota-detail', page)
-        self.assertIn('role="progressbar" aria-label="5 小时剩余额度"', page)
+        self.assertIn('role="progressbar" aria-label="额度窗口剩余额度"', page)
         self.assertIn('setInterval(loadCodexQuota,300000)', page)
         self.assertIn('setInterval(refresh,8000)', page)
         fragment = run_detail_body({
@@ -277,10 +277,10 @@ const document = {hidden:false,addEventListener(){},
 const window = {addEventListener(){}};
 const now=Math.floor(Date.now()/1000);
 let payload = {active_account:'account-2',refreshing:false,accounts:[
-  {account_home:'account-1',ok:true,primary:{used_percent:92,remaining_percent:8},
-   secondary:{used_percent:9,remaining_percent:91},queried_at:now},
-  {account_home:'account-2',ok:true,primary:{used_percent:27,remaining_percent:73},
-   secondary:{used_percent:34,remaining_percent:66},queried_at:now}
+  {account_home:'account-1',ok:true,primary:{window_duration_mins:300,used_percent:92,remaining_percent:8},
+   secondary:{window_duration_mins:10080,used_percent:9,remaining_percent:91},queried_at:now},
+  {account_home:'account-2',ok:true,primary:{window_duration_mins:300,used_percent:27,remaining_percent:73},
+   secondary:{window_duration_mins:10080,used_percent:34,remaining_percent:66},queried_at:now}
 ]};
 let offline = false;
 const fetch = async (url, options={}) => {
@@ -310,8 +310,8 @@ const {loadCodexQuota,paintCodexQuota}=window.__quotaTest;
   assert.equal(requests.length,beforeConcurrent+1,'concurrent polling must never duplicate provider RPC');
   // Services displays remaining_percent directly, including decimals.
   payload = {active_account:'account-2',accounts:[{
-    account_home:'account-2',ok:true,primary:{used_percent:35.2,remaining_percent:64.8},
-    secondary:{used_percent:64,remaining_percent:36},queried_at:now
+    account_home:'account-2',ok:true,primary:{window_duration_mins:300,used_percent:35.2,remaining_percent:64.8},
+    secondary:{window_duration_mins:10080,used_percent:64,remaining_percent:36},queried_at:now
   }]};
   await loadCodexQuota();
   assert.equal(elements.value.textContent,'5 小时剩余：64.8%');
@@ -332,7 +332,7 @@ const {loadCodexQuota,paintCodexQuota}=window.__quotaTest;
   assert.equal(fill.style.width,'64.8%');
   payload = {active_account:'account-2',accounts:[{
     account_home:'account-2',ok:true,
-    primary:{used_percent:null,remaining_percent:null},secondary:{used_percent:-10,remaining_percent:-10}
+    primary:{window_duration_mins:300,used_percent:null,remaining_percent:null},secondary:{window_duration_mins:10080,used_percent:-10,remaining_percent:-10}
   }]};
   await loadCodexQuota();
   assert.equal(elements.value.textContent,'5 小时剩余：64.8%');
@@ -341,7 +341,7 @@ const {loadCodexQuota,paintCodexQuota}=window.__quotaTest;
   assert.equal(progress.attrs['aria-valuenow'],'64.8');
   assert.match(elements.status.textContent,/上次成功/);
   payload = {active_account:'unknown',accounts:[{
-    account_home:'account-1',ok:true,primary:{used_percent:81,remaining_percent:19}
+    account_home:'account-1',ok:true,primary:{window_duration_mins:300,used_percent:81,remaining_percent:19}
   }]};
   await loadCodexQuota();
   assert.equal(elements.account.textContent,'Codex 2');

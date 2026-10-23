@@ -127,7 +127,7 @@ class SecondaryBackNavigationTests(unittest.TestCase):
 
     def test_services_back_uses_last_task_console_cookie(self):
         from urllib.request import Request
-        from tool.tm_observer.tests.test_observer import make_task
+        from test_observer import make_task
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             make_task(root, "nav-task", status="RUNNING", master_id=1)
@@ -174,7 +174,7 @@ class SecondaryBackNavigationTests(unittest.TestCase):
 
     def test_http_run_route_parent_is_correct_for_nested_research_events(self):
         # Integration: test routing rather than only independently calling shell.
-        from tool.tm_observer.tests.test_observer import make_task
+        from test_observer import make_task
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
             make_task(root, "nav-task", status="RUNNING", master_id=1)

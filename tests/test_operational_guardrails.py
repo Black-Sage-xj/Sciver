@@ -426,13 +426,10 @@ class OperationalGuardrailTest(unittest.TestCase):
 
     def test_frontier_proposal_prioritizes_remaining_goal_gap_over_open_science(self):
         lead = stage_card_text("research_lead", "frontier_proposal")
-        self.assertIn("Goal completion has priority over frontier expansion", lead)
-        self.assertNotIn("remaining_goal_gap", lead)
-        self.assertNotIn("remaining_gap", lead)
-        self.assertIn("unmet Goal, Research Contract, or Final Gate", lead)
-        self.assertIn("logically necessary prerequisite", lead)
-        self.assertIn("purely interesting open science", lead)
-        self.assertIn("frontier_status: active does not mean the next Cycle must select", lead)
+        self.assertIn("advancing an unmet Goal, Research Contract, Final Gate or necessary prerequisite", lead)
+        self.assertIn("Prioritize expected information and Goal relevance", lead)
+        self.assertIn("or treat an active label as a command for the next Cycle", lead)
+        self.assertIn("Local, negative, high-risk or otherwise credible work remains eligible without completing the Final Gate", lead)
         self.assertNotIn("unresolved questions are the default frontier", lead)
 
     def test_agent_prompts_treat_injected_runtime_state_as_authoritative_without_tool_blacklists(self):
@@ -444,8 +441,9 @@ class OperationalGuardrailTest(unittest.TestCase):
             self.assertIn("不要重新发现 SDK 已经提供的 workflow/runtime state", text)
             self.assertNotIn("rg --files", text)
             self.assertNotIn("git rev-parse", text)
-        self.assertIn("authoritative", lead)
-        self.assertIn("authoritative", challenger)
+        self.assertIn("SQLite graph as scientific authority", lead)
+        self.assertIn("SQLite-derived source_hypotheses and typed lineage", challenger)
+        self.assertIn("never open or parse exploration.canvas", challenger)
 
 
 if __name__ == "__main__":

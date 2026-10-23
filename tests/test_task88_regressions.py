@@ -182,7 +182,7 @@ class Task88RegressionTest(unittest.TestCase):
         judge_card = stage_card_text("judge", "terminal_assessment")
         self.assertNotIn("independent correctness check", investigator)
         self.assertNotIn("canary", investigator)
-        self.assertIn("Omit findings[].provenance unless claiming a strong evidence identity", investigator)
+        self.assertIn("Include provenance only for strong evidence-identity claims", investigator)
         self.assertIn("compact scientific result", judge_card)
         self.assertIn("Do not reopen or request raw files", judge_card)
         self.assertIn("do not perform a second investigation", judge_card)
@@ -191,7 +191,7 @@ class Task88RegressionTest(unittest.TestCase):
         self.assertNotIn("do not reopen", judge.lower())
         skill = (
             Path(__file__).resolve().parents[1]
-            / "skills" / "numerical-investigation" / "SKILL.md"
+            / "theory_master" / "resources" / "skills" / "numerical-investigation" / "SKILL.md"
         ).read_text(encoding="utf-8")
         self.assertIn("独立正确性检查", skill)
         self.assertIn("canary", skill)
@@ -204,7 +204,7 @@ class Task88RegressionTest(unittest.TestCase):
     def test_numerical_skill_gates_downstream_work_on_decisive_provenance(self):
         skill = (
             Path(__file__).resolve().parents[1]
-            / "skills" / "numerical-investigation" / "SKILL.md"
+            / "theory_master" / "resources" / "skills" / "numerical-investigation" / "SKILL.md"
         ).read_text(encoding="utf-8")
         self.assertIn("决定性输入/provenance gate", skill)
         self.assertIn("source-recoverability audit", skill)

@@ -104,7 +104,10 @@ class FiveCycleSupervisorTests(unittest.TestCase):
         executable.write_text("#!/bin/sh\n", encoding="utf-8")
         executable.chmod(0o755)
         fake = SimpleNamespace(research_root=self.root, max_cycles=5)
-        with patch.object(loop.TaskSpec, "from_task_root", return_value=fake):
+        skill = self.root / "audit-skill.md"
+        skill.write_text("# Offline fixture audit skill\n", encoding="utf-8")
+        with (patch.object(loop.TaskSpec, "from_task_root", return_value=fake),
+              patch.object(loop, "AUDIT_SKILL", skill)):
             supervisor = loop.Supervisor(self.root, executable)
             locations = supervisor.check()
             self.assertEqual(locations["reports"], str(self.root / ".theory-master/audit_batches/<batch-id>"))

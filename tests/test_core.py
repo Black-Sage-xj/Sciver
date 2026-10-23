@@ -1173,9 +1173,16 @@ class TheoryMasterTest(unittest.TestCase):
             self.assertNotEqual(state['hypothesis_lock']['candidate_id'], parent_id)
             self.assertTrue(state['hypothesis_lock']['candidate_id'].startswith('cand-'))
             self.assertEqual(len(backend.challenger_threads), 2)
-            self.assertEqual(state['hypothesis_lock']['decisive_test'], 'certify the predicate protocol only')
+            expected_test = (
+                'certify the predicate protocol only\n\n'
+                'Binding hypothesis clarification:\n'
+                'the parent predicate claim remains unchanged\n\n'
+                'Binding operational definition:\n'
+                'define the parent predicate certification procedure explicitly'
+            )
+            self.assertEqual(state['hypothesis_lock']['decisive_test'], expected_test)
             self.assertNotIn('cycle_milestone', state['hypothesis_lock'])
-            self.assertEqual(state['branches'][-1]['decisive_test'], 'certify the predicate protocol only')
+            self.assertEqual(state['branches'][-1]['decisive_test'], expected_test)
             self.assertNotIn('cycle_milestone', state['branches'][-1])
             self.assertEqual(state['hypothesis_lock']['hypothesis'], 'smoke-h')
             repaired_candidate = next(

@@ -28,7 +28,6 @@ class CycleAuditRelayTest(unittest.TestCase):
         expected = Path(__file__).resolve().parents[3]
         self.assertEqual(cycle_audit_relay.REPO_ROOT, expected)
         self.assertEqual(cycle_audit_relay.AUDIT_SKILL, expected / "tool/.codex/skills/tm-audit-review/SKILL.md")
-        self.assertTrue(cycle_audit_relay.AUDIT_SKILL.is_file())
         with tempfile.TemporaryDirectory() as temp:
             cycle = Path(temp) / "cycle-0025"
             cycle.mkdir()
@@ -36,7 +35,10 @@ class CycleAuditRelayTest(unittest.TestCase):
                 "run_dir": str(cycle), "run_id": "cycle-0025", "goal_id": "g",
                 "status": "OVER", "phase": "complete",
             }
-            with mock.patch("theory_master.observability.cycle_audit_relay.subprocess.run") as run:
+            skill = Path(temp) / "audit-skill.md"
+            skill.write_text("# Offline audit fixture\n", encoding="utf-8")
+            with (mock.patch("theory_master.observability.cycle_audit_relay.subprocess.run") as run,
+                  mock.patch.object(cycle_audit_relay, "AUDIT_SKILL", skill)):
                 run.return_value = SimpleNamespace(returncode=0, stdout="agent:TM审计-cycle-0025.0", stderr="")
                 target = cycle_audit_relay.spawn_cycle_audit_agent(state)
             self.assertEqual(target, "agent:TM审计-cycle-0025.0")
@@ -46,7 +48,7 @@ class CycleAuditRelayTest(unittest.TestCase):
             self.assertNotIn("--codex-session-id", command)
             self.assertEqual(command[command.index("--window-name") + 1], "TM审计-cycle-0025")
             prompt = command[command.index("--prompt") + 1]
-            self.assertIn(str(cycle_audit_relay.AUDIT_SKILL), prompt)
+            self.assertIn(str(skill), prompt)
             self.assertIn(str(cycle), prompt)
             self.assertIn(str(cycle / "audit" / "cycle_audit.md"), prompt)
             self.assertNotIn("audi_list", prompt)
@@ -61,11 +63,14 @@ class CycleAuditRelayTest(unittest.TestCase):
                 "run_dir": str(cycle), "run_id": "cycle-0099", "goal_id": "g",
                 "status": "OVER", "phase": "complete",
             }
-            with mock.patch("theory_master.observability.cycle_audit_relay.subprocess.run") as run:
+            skill = Path(temp) / "audit-skill.md"
+            skill.write_text("# Offline audit fixture\n", encoding="utf-8")
+            with (mock.patch("theory_master.observability.cycle_audit_relay.subprocess.run") as run,
+                  mock.patch.object(cycle_audit_relay, "AUDIT_SKILL", skill)):
                 run.return_value = SimpleNamespace(returncode=0, stdout="agent:TM审计-cycle-0099.0", stderr="")
                 cycle_audit_relay.spawn_cycle_audit_agent(state)
             prompt = run.call_args.args[0][run.call_args.args[0].index("--prompt") + 1]
-            self.assertIn(str(cycle_audit_relay.AUDIT_SKILL), prompt)
+            self.assertIn(str(skill), prompt)
             self.assertNotIn("task_end", prompt)
             self.assertNotIn("A. 长期", prompt)
 

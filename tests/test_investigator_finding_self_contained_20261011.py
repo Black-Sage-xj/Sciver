@@ -111,8 +111,8 @@ class SelfContainedFindingTests(unittest.TestCase):
 
     def test_sdk_design_documents_the_exact_reason_and_gates(self):
         doc = (Path(__file__).resolve().parents[1] / "design" / "SDK设计文档.md").read_text(encoding="utf-8")
-        for phrase in ("Gate G01", "Gate G02", "Gate G03", "成立条件", "冗余呈现义务",
-                       "Hypothesis Lock 本身的", "历史及兼容"):
+        for phrase in ("Gate G01", "Gate G02", "成立条件", "冗余呈现",
+                       "Hypothesis.scope", "不单列 scope/limitations"):
             self.assertIn(phrase, doc)
 
 

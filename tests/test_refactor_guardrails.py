@@ -65,6 +65,7 @@ class RefactorGuardrailsTest(unittest.TestCase):
             ("research_lead", {"mode": "hypothesis_display"}, None, "hypothesis_display"),
             ("research_lead", {"mode": "frontier_maintenance"}, None, "frontier_maintenance"),
             ("challenger", {}, None, "candidate_review"),
+            ("challenger", {"mode": "repair_verification"}, None, "repair_verification"),
             ("investigator", {"round": 1}, None, "investigate"),
             ("investigator", {"mode": "preserve_research"}, None, "preserve_research"),
             ("investigator", {"round": 2, "routing_source": "literature"}, None, "integrate_literature"),
@@ -90,6 +91,7 @@ class RefactorGuardrailsTest(unittest.TestCase):
                     ("research_lead", "frontier_proposal"),
                     ("research_lead", "frontier_maintenance"),
                     ("challenger", "candidate_review"),
+                    ("challenger", "repair_verification"),
                     ("judge", "goal_completion"),
                 }:
                     projection_context["agent_graph"] = {

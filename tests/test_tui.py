@@ -512,6 +512,7 @@ class TextualAppTest(unittest.TestCase):
             exit_mock.assert_called_once()
 
 
+    @patch.dict("os.environ", {"THEORYMASTER_WEB_URL": "http://127.0.0.1:8787/"})
     def test_deprecation_notice_shows_on_every_new_tui_launch(self):
         try:
             import textual  # noqa: F401
@@ -682,8 +683,8 @@ class DemoSourceTest(unittest.TestCase):
         workflow = render_workflow(state)
         self.assertIn("Investigator", workflow)
         self.assertIn("STATE", workflow)
-        self.assertIn("GPT-5.6 Sol", workflow)
-        self.assertIn("GPT-5.6 Terra", workflow)
+        self.assertIn("GPT-6 Sol", workflow)
+        self.assertIn("GPT-6 Luna", workflow)
         self.assertTrue(_workflow_columns_share_starts(workflow))
         self.assertIn("[h] full current hypothesis", render_hypothesis(state))
         self.assertGreater(len(render_hypothesis(state, full=True)), 200)

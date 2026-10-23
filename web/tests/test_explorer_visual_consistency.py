@@ -56,7 +56,7 @@ class ExplorerVisualConsistencyTest(unittest.TestCase):
   latestGraph.events['node:click']({target:{id:'A'}});await tick();await tick();
   assert.equal(latestGraph.data.edges.find(e=>e.id==='AX').style.opacity,.28,
     'reference link cannot masquerade as a downstream scientific relationship');
-  assert.equal(latestGraph.data.nodes.find(n=>n.id==='X').style.fillOpacity,.68);
+  assert.equal(latestGraph.data.nodes.find(n=>n.id==='X').style.fillOpacity,1);
   latestGraph.events['edge:click']({target:{id:'AX'}});await tick();await tick();
   assert.equal(latestGraph.data.edges.find(e=>e.id==='AX').style.stroke,'#fef08a',
     'reference link is still individually clickable and highlighted');

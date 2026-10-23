@@ -127,9 +127,10 @@ def test_challenger_search_surface_has_no_global_view_and_prompts_stay_bounded()
         "challenger", "candidate_review")
     assert len(proposal) < 6000
     assert len(review) < 4500
-    assert "science_graph_tools search" in proposal
-    assert "Do not call view" in review
-    assert "same discriminating question" in review
+    assert "search formal research history across H, Outcomes and External records" in proposal
+    assert "SQLite-derived source_hypotheses and typed lineage" in review
+    assert "never open or parse exploration.canvas" in review
+    assert "adjudicability alone is not sufficient for qualification" in review
 
 
 def test_hypothesis_detail_text_is_bounded_and_annotated(tmp_path: Path):

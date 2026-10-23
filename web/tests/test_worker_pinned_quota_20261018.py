@@ -10,10 +10,10 @@ SNAPSHOT = {
     "active_account": "account-1",
     "accounts": [
         {"account_home": "account-1", "ok": True,
-         "primary": {"remaining_percent": 90}, "secondary": {"remaining_percent": 87},
+         "primary": {"window_duration_mins": 300, "remaining_percent": 90}, "secondary": {"window_duration_mins": 10080, "remaining_percent": 87},
          "queried_at": 1792320000},
         {"account_home": "account-2", "ok": True,
-         "primary": {"remaining_percent": 0}, "secondary": {"remaining_percent": 84},
+         "primary": {"window_duration_mins": 300, "remaining_percent": 0}, "secondary": {"window_duration_mins": 10080, "remaining_percent": 84},
          "queried_at": 1792320000},
     ],
 }

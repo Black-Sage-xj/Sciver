@@ -160,17 +160,20 @@ class StaticReviewFixesTest(unittest.TestCase):
 
     def test_lead_and_challenger_redundancy_reduction_keeps_scientific_guards(self):
         from theory_master.stage_registry import procedure_card_text
+        from theory_master.contracts import role_contract
         lead = stage_card_text("research_lead", "frontier_proposal")
         procedure = procedure_card_text("research_lead", "frontier_proposal")
         challenger = stage_card_text("challenger", "candidate_review")
         self.assertLess(len(lead) + len(procedure), 10500)
-        for phrase in ("Goal completion has priority over frontier expansion", "a logically necessary prerequisite",
+        for phrase in ("unmet Goal, Research Contract, Final Gate or necessary prerequisite",
                        "add discriminating information", "A matching local result may advance the Cycle",
-                       "new source of uncertainty exists", "novelty_check"):
+                       "new source of uncertainty exists", "external novelty/priority review"):
             self.assertIn(phrase, lead)
-        for phrase in ("active/parked/closed", "Unmarked means unknown, not closed",
-                       "lineage_anchor_node_ids", "science_graph.sqlite3"):
+        for phrase in ("explicit frontier states independently of graph leaves", "unmarked means unknown, not closed",
+                       "search formal research history across H, Outcomes and External records"):
             self.assertIn(phrase, procedure)
+        self.assertIn("lineage_anchor_node_ids", str(role_contract(
+            "research_lead", phase="frontier_proposal").prompt_schema))
         self.assertIn("treat it as Investigation work rather than a revise blocker", challenger)
 
     def test_lead_second_literature_request_gets_one_correction_no_new_search(self):

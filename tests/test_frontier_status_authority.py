@@ -11,32 +11,33 @@ class LeadFrontierStatusPromptTest(unittest.TestCase):
         self.stage = stage_card_text("research_lead", "frontier_proposal")
 
     def test_frontier_is_independent_of_graph_leaf(self):
-        self.assertIn("independent of graph leaves", self.stage)
-        self.assertIn("A descendant does not make its parent ineligible", self.stage)
-        self.assertIn("focused-H recent Outcomes", self.procedure)
+        self.assertIn("Frontier labels are opportunity metadata, not graph leaves or verdicts", self.stage)
+        self.assertIn("descendants do not disqualify parents", self.stage)
+        self.assertIn("Read explicit frontier states independently of graph leaves", self.procedure)
 
     def test_outcome_and_frontier_are_different(self):
-        self.assertIn("one scientific Outcome", self.stage)
-        self.assertIn("active/parked/closed", self.stage)
-        self.assertIn("supported/rejected/open", self.stage)
+        self.assertIn("not graph leaves or verdicts", self.stage)
+        self.assertIn("adjudicated Outcomes and SQLite graph as scientific authority", self.stage)
+        self.assertIn("without supporting the whole hypothesis", self.stage)
 
     def test_parked_continuation_requires_trigger(self):
-        self.assertIn("reconsideration_trigger", self.stage)
-        self.assertIn("Terminal supported/rejected H", self.stage)
+        self.assertIn("Do not reopen a closed hypothesis or continue a parked one unchanged", self.stage)
+        self.assertIn("same-claim retesting needs a scientific revision or new uncertainty", self.stage)
 
     def test_closed_can_derive_new_h_without_reopening(self):
-        self.assertIn("closed H cannot be silently continued as same H", self.stage)
-        self.assertIn("historical origin of a genuinely new H", self.stage)
-        self.assertIn("typed evolution_operator", self.stage)
+        self.assertIn("Closed/parked history may inform a new proposition without being reopened", self.stage)
+        contract = role_contract("research_lead", phase="frontier_proposal")
+        self.assertIn("evolution_operator", str(contract.prompt_schema))
 
     def test_history_not_a_second_outcome(self):
-        self.assertIn("Historical Cycle decisions/Evidence", self.procedure)
-        self.assertIn("one scientific Outcome", self.stage)
+        self.assertIn("search formal research history across H, Outcomes and External records", self.procedure)
+        self.assertIn("adjudicated Outcomes and SQLite graph as scientific authority", self.stage)
 
     def test_goal_aligned_historical_pivot(self):
-        self.assertIn("historical H pivot", self.stage)
-        self.assertIn("historical H pivot", self.stage)
-        self.assertIn("lineage_anchor_node_ids", self.stage)
+        self.assertIn("justify historical pivots by Goal impact", self.stage)
+        self.assertIn("Do not force continuation along an active branch", self.procedure)
+        self.assertIn("lineage_anchor_node_ids", str(role_contract(
+            "research_lead", phase="frontier_proposal").prompt_schema))
 
     def test_frontier_proposal_contract_pairs_operator_and_anchor(self):
         contract = role_contract("research_lead", phase="frontier_proposal")
