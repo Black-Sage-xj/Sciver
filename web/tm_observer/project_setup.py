@@ -69,7 +69,7 @@ def new_setup(payload: dict) -> dict:
     name = str(payload.get('name') or '').strip()
     if not re.fullmatch(r'[\w][\w -]{0,59}', name, re.UNICODE):
         raise ResearchChatError('项目名须为 1–60 个字母、汉字、数字、空格、下划线或连字符')
-    setup = {'name': name, 'slug': re.sub(r' +', '-', name), 'answers': {},
+    setup = {'name': name, 'slug': re.sub(r' +', '-', name), 'answers': {}, 'onboarding_version': 2,
              'use_model': payload.get('use_model') is True, 'source_files': []}
     raw = str(payload.get('source_directory') or '').strip()
     if raw:
@@ -95,7 +95,8 @@ def _quote(text: str) -> str:
 def handle_turn(row: dict, content: str, search_root: Path, state_dir: Path, backend, **callbacks) -> None:
     setup = row['setup']
     answers = setup['answers']
-    fields = ('goal', 'completion', 'constraints')
+    fields = (('goal', 'contract', 'completion', 'constraints') if setup.get('onboarding_version') == 2
+              else ('goal', 'completion', 'constraints'))
     if row.get('completed_action'):
         _message(row, 'assistant', '项目已建立，可在 Task List 查看。需要另建项目时，使用「建立科研项目」。')
         return
@@ -116,6 +117,7 @@ def handle_turn(row: dict, content: str, search_root: Path, state_dir: Path, bac
             extra.append(content.strip())
     questions = {
         'goal': '这个项目最终想回答什么科学问题？请说明研究对象和你希望得到的结果。',
+        'contract': '研究必须遵守哪些长期边界？例如可用的数据、研究方法、证据标准或不能改变的科学定义。暂不确定的部分可以说明。',
         'completion': '怎样才算完成目标？请给出可核验的指标、对照或交付物；还不确定也可以直接说明。',
         'constraints': '有哪些数据、计算资源、时间或方法限制？请说明已有结论中哪些仍需验证。没有额外限制可回复「暂无」。',
     }
@@ -140,6 +142,10 @@ def handle_turn(row: dict, content: str, search_root: Path, state_dir: Path, bac
     context = '\n\n'.join(excerpts)[:16000]
     goal = _quote(answers['goal'])
     draft = _plan(goal, destination, context)
+    contract_note = ('用户定义的研究边界与证据要求：\n\n' + _quote(answers['contract'])
+                     if answers.get('contract') else '')
+    if contract_note:
+        draft = draft.replace('# Research Contract\n\n', '# Research Contract\n\n' + contract_note + '\n\n')
     completion_note = '用户定义的完成标准：\n\n' + _quote(answers['completion'])
     draft = draft.replace('# Final Gate\n\n', '# Final Gate\n\n' + completion_note + '\n\n')
     manifest_text = '\n'.join('- benchmark/source/' + item['path'] for item in entries)
@@ -158,11 +164,13 @@ def handle_turn(row: dict, content: str, search_root: Path, state_dir: Path, bac
             draft = draft.split('# Scientific Model\n', 1)[0] + '# Scientific Model\n\n' + prior_note + '\n'
     model_drafted = False
     if setup['use_model']:
-        assisted, model_drafted = _draft_plan(goal, context + required + '\n完成标准：' + answers['completion'], state_dir, backend,
+        assisted, model_drafted = _draft_plan(goal, context + required + ('\n研究边界与证据要求：' + answers['contract'] if contract_note else '') + '\n完成标准：' + answers['completion'], state_dir, backend,
             model=str(row.get('model') or 'gpt-6-sol'), reasoning_effort=str(row.get('reasoning_effort') or 'medium'), **callbacks)
         if model_drafted:
             from theory_master.specification import scientific_sections
             if scientific_sections(assisted)[0].strip() == goal.strip():
+                if contract_note and answers['contract'] not in assisted:
+                    assisted = assisted.replace('# Research Contract\n', '# Research Contract\n\n' + contract_note + '\n', 1)
                 if answers['completion'] not in assisted:
                     assisted = assisted.replace('# Final Gate\n', '# Final Gate\n\n' + completion_note + '\n', 1)
                 if (answers['constraints'] not in assisted or any(item['path'] not in assisted for item in entries)):

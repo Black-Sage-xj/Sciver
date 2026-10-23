@@ -256,7 +256,7 @@ def create(state_dir: Path, state: dict[str, Any], payload: dict[str, Any]) -> d
         row["setup"] = new_setup(payload)
         row["title"] = "建立项目 · " + row["setup"]["name"]
         row["title_source"] = "manual"
-        greeting = "先明确研究目标：这个项目最终想回答什么科学问题？请说明研究对象和希望得到的结果。接下来我们会梳理完成标准和资源限制，预览计划，最后由你确认建立项目。\n\n此时不会创建项目或启动研究；可用 /back 返回上一步。"
+        greeting = "先明确研究目标：这个项目最终想回答什么科学问题？请说明研究对象和希望得到的结果。接下来会逐步梳理研究边界、完成标准和已有资料，再预览 Research Plan，由你确认后才建立项目。\n\n此时不会创建项目或启动研究；可用 /back 返回上一步。"
     _message(row, "assistant", greeting)
     _write(_store(state_dir), row)
     return {"session_id": ident}

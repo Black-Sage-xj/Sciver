@@ -23,7 +23,7 @@ Loquix 页面 → 受认证保护的 Workspace API → 独立会话与工作草�
 
 ## 迁移已有工作
 
-默认提示先询问已有工作目录和长期科研目标，再有界读取既有资料，为方法/数据边界、最终完成判据和稳定上下文入口起草内容。资料不足时在草稿中标出待确认之处，不能编造已有结论。生成的 `research_plan.md` 必须恰好具有 `Goal`、`Research Contract`、`Final Gate`、`Required Context`、`Scientific Model` 五个一级标题，先通过 SDK `scientific_sections` 校验并展示可修订预览；修订后重新校验并要求再次确认。用户确认后写入新任务目录，调用 `task.bootstrap`，刷新任务索引使它出现在 Task List；不自动运行任务。
+默认提示先询问已有工作目录和长期科研目标，再有界读取既有资料。建项对话依次收集四项由用户确认的内容：长期目标、研究边界与证据要求、最终完成判据、资源与必要背景；无需用户预先写好 Research Plan。第五节 `Scientific Model` 由系统给出待核对初稿，已有计划中的模型只作为待验证内容带入。资料不足时在草稿中标出待确认之处，不能编造已有结论。生成的 `research_plan.md` 必须恰好具有 `Goal`、`Research Contract`、`Final Gate`、`Required Context`、`Scientific Model` 五个一级标题，先通过 SDK `scientific_sections` 校验并展示可修订预览；修订后重新校验并要求再次确认。用户确认后写入新任务目录，调用 `task.bootstrap`，刷新任务索引使它出现在 Task List；不自动运行任务。
 
 ## 项目前沿与方向
 

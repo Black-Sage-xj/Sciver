@@ -43,7 +43,7 @@ Inspect task status, research stages, and agent activity from desktop and mobile
 Copy this prompt into your coding Agent:
 
 ```text
-Please install and start Sciver for me. First check that Git and Python 3.11+ are available; on Windows, work inside WSL2. If a Sciver checkout already exists, preserve its changes, enter the checkout, and continue at the virtual-environment step. Otherwise run these commands in order:
+Please install and start Sciver from scratch. First check that Git and Python 3.11+ are available; on Windows, work inside WSL2. Then run these commands in order:
 
 git clone https://github.com/Black-Sage-xj/Sciver.git
 cd Sciver
@@ -72,13 +72,26 @@ sciver quickstart
 
 The browser opens in **Workspace → Research Chat** and shows a short guide on the first visit. To inspect the Test0 task just created, close the guide and open **Task List → test0**. You can view the task and its research plan without creating another project.
 
-To create your own project, start from scratch or select an existing directory containing a `research_plan.md`, notes, or data. Choose the files to import. If you select an existing plan, Sciver uses it as input for a new draft and preserves the original directory and files. The conversation asks for your research goal, checkable completion criteria, and resource or method limits. Review or edit the Research Plan draft, then choose **Confirm project creation**. Only then does the project appear in **Task List**; research does not start automatically. Basic setup needs no model account. If you choose model-assisted drafting, excerpts from selected plans and notes are sent to the model and may consume quota.
-
 To verify setup without starting the Web server:
 
 ```bash
 sciver quickstart --no-web
 ```
+
+### Start with your own research
+
+A research task needs only one input: `research_plan.md`. You do not need to write it first. Open **Workspace → Research Chat → Create research project**, describe these four parts through the conversation, and review the resulting draft:
+
+| Part | What to tell Sciver |
+| --- | --- |
+| `Goal` | The long-term scientific question and research subject. |
+| `Research Contract` | Research boundaries, such as usable data, method limits, and evidence requirements. |
+| `Final Gate` | The evidence or deliverables that would establish completion of the whole task. |
+| `Required Context` | Existing knowledge, source locations, and resource limits needed across research cycles. |
+
+The saved Research Plan also has a fifth section, `Scientific Model`, for current scientific understanding and hypotheses that still need testing. Sciver drafts it during setup; an existing plan's model can be brought in as provisional content. You can edit all five sections in the Web preview before confirming. Sciver initializes the configuration, graph, and runtime directories for you.
+
+For an existing research project, expand **I have an existing research plan or project materials** in the setup form. Enter the absolute path to that directory **on the computer running Sciver**, choose **Check directory and select materials**, then select the `research_plan.md`, notes, or data to import and allow reading them. The old plan informs a new draft; the source directory and files are preserved. You can also create a plan through conversation if the old project has none. Answer the questions about your goal, research boundaries, completion criteria, and context; review the draft and selected materials, then choose **Confirm project creation**. The new task appears in **Task List** without starting research. Basic setup needs no model account. If you enable model-assisted drafting, text excerpts from selected plans and notes are sent to the model and may consume quota.
 
 ### Start, stop, and reopen
 

@@ -33,7 +33,7 @@ class ProjectSetupTests(unittest.TestCase):
         if source:
             payload.update(source_directory=str(self.original), source_files=['research_plan.md', 'measurements.csv'], read_source=True)
         ident = create(self.state_dir, {'runs': []}, payload)['session_id']
-        for answer in ('检验扩散系数是否随温度变化', '报告估计值与置信区间', '只使用已授权数据'):
+        for answer in ('检验扩散系数是否随温度变化', '只比较同一种测量方法的结果', '报告估计值与置信区间', '只使用已授权数据'):
             send(self.state_dir, self.workspace, {'runs': []}, ident, {'content': answer})
         row = snapshot(self.state_dir, {'runs': []}, ident)['session']
         return ident, row['pending_action']
@@ -43,6 +43,7 @@ class ProjectSetupTests(unittest.TestCase):
         self.assertFalse((self.workspace / 'projects').exists())
         self.assertIn('旧模型猜想仍需检验', action['details'])
         self.assertIn('报告估计值与置信区间', action['details'])
+        self.assertIn('只比较同一种测量方法的结果', action['details'])
         with self.assertRaises(ResearchChatError):
             apply_action(self.state_dir, self.workspace, {'runs': []}, ident,
                          {'action_id': action['id'], 'decision': 'confirm', 'details': action['details'] + 'unsaved'})
@@ -69,6 +70,17 @@ class ProjectSetupTests(unittest.TestCase):
             apply_action(self.state_dir, self.workspace, {'runs': []}, ident,
                          {'action_id': action['id'], 'decision': 'confirm'})
         self.assertFalse((self.workspace / 'projects' / 'changed').exists())
+
+    def test_existing_three_question_setup_session_remains_usable(self):
+        ident = create(self.state_dir, {'runs': []}, {'mode': 'setup', 'name': 'older-session'})['session_id']
+        session_path = self.state_dir / 'research-chat' / f'{ident}.json'
+        session = json.loads(session_path.read_text(encoding='utf-8'))
+        session['setup'].pop('onboarding_version')
+        session_path.write_text(json.dumps(session, ensure_ascii=False), encoding='utf-8')
+        for answer in ('研究目标', '可核验的完成标准', '暂无额外限制'):
+            send(self.state_dir, self.workspace, {'runs': []}, ident, {'content': answer})
+        action = snapshot(self.state_dir, {'runs': []}, ident)['session']['pending_action']
+        self.assertIn('可核验的完成标准', action['details'])
 
     def test_secret_and_symlink_files_are_not_imported(self):
         (self.original / 'api_token.txt').write_text('sensitive')
@@ -114,13 +126,14 @@ class ProjectSetupTests(unittest.TestCase):
         ident = create(self.state_dir, {'runs': []}, {'mode': 'setup', 'name': 'assisted',
             'source_directory': str(self.original), 'source_files': ['research_plan.md', 'measurements.csv'],
             'read_source': True, 'use_model': True})['session_id']
-        for answer in ('检验扩散系数是否随温度变化', '报告估计值与置信区间', '只使用已授权数据'):
+        for answer in ('检验扩散系数是否随温度变化', '只比较同一种测量方法的结果', '报告估计值与置信区间', '只使用已授权数据'):
             send(self.state_dir, self.workspace, {'runs': []}, ident, {'content': answer}, backend=backend)
         details = snapshot(self.state_dir, {'runs': []}, ident)['session']['pending_action']['details']
         self.assertIn('模型初稿', details)
         self.assertIn('旧模型猜想仍需检验', details)
         self.assertIn('报告估计值与置信区间', details)
         self.assertIn('只使用已授权数据', details)
+        self.assertIn('只比较同一种测量方法的结果', details)
         self.assertIn('measurements.csv', details)
         self.assertIn('Do not ask whether to start research', backend.prompts[0])
 
@@ -152,7 +165,7 @@ class ProjectSetupTests(unittest.TestCase):
                 return json.loads(response.read())
 
         ident = post('/api/research-chat/session', {'mode': 'setup', 'name': 'http-project'})['session_id']
-        for answer in ('研究目的', '验收标准', '暂无'):
+        for answer in ('研究目的', '证据需可复核', '验收标准', '暂无'):
             send(self.state_dir, self.workspace, {'runs': []}, ident, {'content': answer})
         action = snapshot(self.state_dir, {'runs': []}, ident)['session']['pending_action']
         result = post(f'/api/research-chat/{ident}/action', {'decision': 'confirm', 'action_id': action['id']})

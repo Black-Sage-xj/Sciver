@@ -18,13 +18,13 @@ def setup_panel(workspace: str) -> str:
 </style>
 <dialog class="tm-setup-welcome" data-setup-welcome aria-labelledby="setup-welcome-title">
 <h2 id="setup-welcome-title">欢迎来到 Sciver Workspace</h2>
-<p>先把想解决的问题整理成一份可确认的初始研究计划。</p>
-<ol><li>新建项目，或选择已有目录中的计划、笔记、数据。</li><li>通过对话明确目标、完成标准和资源限制。</li><li>检查并确认草稿，项目才会加入 Task List。</li></ol>
+<p>启动科研任务只需要一份 Research Plan；不必预先写好，可在这里通过对话建立。</p>
+<ol><li>从空白开始，或选择已有目录中的计划、笔记、数据。</li><li>逐步说明目标、研究边界、完成标准和必要背景；系统会整理成草稿。</li><li>检查包含初始 Scientific Model 的完整计划，确认后项目才会加入 Task List。</li></ol>
 <p>建项过程不会启动研究。基础引导无需模型账号；模型辅助完善草稿可自行开启。</p>
 <button type="button" data-setup-welcome-close>开始建立项目</button><button type="button" data-setup-welcome-skip>先看看</button>
 </dialog>
 <form class="tm-setup-panel" data-project-setup aria-label="建立科研项目">
-<h3>建立科研项目</h3><p>可以从空白开始，也可以导入已有 research_plan.md 和相关资料。原项目保持不变。</p>
+<h3>建立科研项目</h3><p>只需一份 Research Plan：目标、研究边界、完成标准和必要背景都可在后续对话中整理。已有计划或资料也可导入；原项目保持不变。</p>
 <label>项目名称<input name="name" type="text" required maxlength="60" placeholder="例如：布朗运动扩散系数研究" autocomplete="off"></label>
 <details><summary>我已有研究计划或项目资料</summary>
 <p>填写运行 Sciver 的电脑上的目录；浏览器所在电脑的路径无法直接读取。</p>
@@ -34,7 +34,7 @@ def setup_panel(workspace: str) -> str:
 <label class="tm-setup-check"><input name="read_source" type="checkbox">允许读取选中资料以整理草稿；最终确认后复制到新任务。不会修改原文件。</label>
 </details>
 <label class="tm-setup-check"><input name="use_model" type="checkbox">使用已配置的模型完善草稿（会发送选中资料的文本摘录并消耗额度；不开启也能完成建项）</label>
-<p>下一步先讨论科研目标。项目只会在最后确认后创建。</p>
+<p>下一步从科研目标开始，逐项形成计划草稿。项目只会在最后确认后创建。</p>
 <button type="submit">进入目标引导</button><p class="tm-setup-error" data-setup-error role="alert"></p>
 </form>
 <script>(function(){
