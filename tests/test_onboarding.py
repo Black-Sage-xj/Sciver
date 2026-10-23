@@ -40,6 +40,19 @@ class OnboardingTests(unittest.TestCase):
             import os
             self.assertEqual(os.environ["THEORYMASTER_COMPUTE_PYTHON"], "/custom/python")
 
+    def test_compute_interpreter_preserves_virtualenv_symlink(self):
+        from theory_master.codex_backend import CodexBackend
+        import sys
+        with tempfile.TemporaryDirectory() as temp:
+            interpreter = Path(temp) / "bin/python"
+            interpreter.parent.mkdir()
+            interpreter.symlink_to(sys.executable)
+            with mock.patch.dict("os.environ", {"THEORYMASTER_COMPUTE_PYTHON": str(interpreter)}):
+                environment = CodexBackend._sdk_environment()
+            self.assertEqual(environment["PYTHON"], str(interpreter))
+            self.assertEqual(environment["THEORYMASTER_COMPUTE_PYTHON"], str(interpreter))
+            self.assertTrue(environment["PATH"].startswith(str(interpreter.parent) + ":"))
+
     def test_browser_waits_for_http_readiness(self):
         from tm_observer.web import _open_ready_browser
         from urllib.error import URLError

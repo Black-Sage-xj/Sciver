@@ -372,7 +372,9 @@ class CodexBackend:
                 "TheoryMaster compute interpreter is unavailable: "
                 f"{path}. Set THEORYMASTER_COMPUTE_PYTHON to an executable scientific Python."
             )
-        return path.resolve()
+        # Resolving a venv bin/python symlink selects its base interpreter and
+        # loses that environment's installed scientific dependencies.
+        return path.absolute()
 
     @classmethod
     def _sdk_environment(cls, routes: dict[str, RoleRoute] | None = None) -> dict[str, str]:

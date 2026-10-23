@@ -349,10 +349,10 @@ class SkillInjectionTest(unittest.TestCase):
         compute_python = __import__("sys").executable
         with unittest.mock.patch.dict("os.environ", {"THEORYMASTER_COMPUTE_PYTHON": compute_python}, clear=False):
             environment = CodexBackend._sdk_environment()
-        resolved = str(Path(compute_python).resolve())
+        resolved = str(Path(compute_python).absolute())
         self.assertEqual(environment["THEORYMASTER_COMPUTE_PYTHON"], resolved)
         self.assertEqual(environment["PYTHON"], resolved)
-        self.assertTrue(environment["PATH"].startswith(str(Path(compute_python).resolve().parent) + ":"))
+        self.assertTrue(environment["PATH"].startswith(str(Path(compute_python).absolute().parent) + ":"))
 
     @unittest.mock.patch.dict("os.environ", {"THEORYMASTER_COMPUTE_PYTHON": sys.executable})
     def test_backend_initializes_once_for_direct_and_precreated_threads(self):
