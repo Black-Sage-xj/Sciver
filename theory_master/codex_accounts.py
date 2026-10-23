@@ -342,6 +342,7 @@ def ensure_layout() -> dict[str, Path]:
     root.mkdir(parents=True, exist_ok=True)
     root.chmod(0o700)
     legacy = _legacy_home()
+    legacy.mkdir(parents=True, exist_ok=True, mode=0o700)
     current = root / "current"
     selected_before = _selector_number(current) or "1"
 

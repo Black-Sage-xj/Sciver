@@ -1,5 +1,6 @@
 from __future__ import annotations
-import io, json, os, re, subprocess, tempfile, unittest
+import io, json, os, re, subprocess, sys, tempfile, unittest
+from datetime import datetime
 from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
@@ -58,7 +59,7 @@ class TheoryMasterTest(unittest.TestCase):
             self.assertEqual(lines[0].split(), ["TASK_ID", "CYCLE", "STARTED", "STATE", "PHASE"])
             self.assertNotIn("PID", lines[0])
             self.assertNotIn("GOAL", lines[0])
-            self.assertIn("09-23 16:30", lines[1])
+            self.assertIn(datetime.fromisoformat("2026-09-23T16:30:45+08:00").astimezone().strftime("%m-%d %H:%M"), lines[1])
             self.assertNotIn("16:30:45", lines[1])
             self.assertNotIn("hidden-goal", lines[1])
 
@@ -2125,6 +2126,7 @@ class TheoryMasterTest(unittest.TestCase):
     def test_codex_sdk_environment_keeps_historical_incremental_behavior(self):
         routes = resolve_routes(model="gpt-6-luna@CodexHTTPS", env={})
         parent = {
+            "THEORYMASTER_COMPUTE_PYTHON": sys.executable,
             "HTTP_PROXY": "http://127.0.0.1:7890",
             "HTTPS_PROXY": "http://127.0.0.1:7890",
             "CODEX_PROXY": "http://127.0.0.1:7890",

@@ -21,6 +21,19 @@ class CodexAccountSwitchTests(unittest.TestCase):
             mock.patch.object(codex_accounts, "runtime_home", return_value=runtime),
         )
 
+    def test_layout_initializes_without_existing_daily_codex_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy, root, runtime, patches = self._patch_layout(Path(tmp))
+            legacy.rmdir()
+            with patches[0], patches[1], patches[2]:
+                layout = codex_accounts.ensure_layout()
+                repeated = codex_accounts.ensure_layout()
+            self.assertTrue(legacy.is_dir())
+            self.assertTrue((legacy / "auth.json").is_symlink())
+            self.assertFalse((legacy / "auth.json").exists())
+            self.assertEqual(layout, repeated)
+            self.assertTrue(runtime.is_dir())
+
     def test_layout_migrates_to_identity_only_accounts_and_shared_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
