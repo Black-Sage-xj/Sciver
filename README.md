@@ -38,7 +38,17 @@ Some package and CLI names retain historical `TheoryMaster`/`tm` naming. Those p
 Copy this prompt into your coding Agent:
 
 ```text
-Install and start Sciver from https://github.com/Black-Sage-xj/Sciver.git. Check the system and Python 3.11+ environment first (use WSL2 on Windows), then install the repository and Web dependencies; preserve changes in any existing checkout. Run sciver quickstart to complete the offline Test0 check and open the Web UI; fix any errors and retry. Confirm the page is reachable, keep the server running, and reply with a Web UI link I can click. If running remotely, set up secure port forwarding and provide the forwarded link. Do not start real research.
+Please install and start Sciver for me. First check that Git and Python 3.11+ are available; on Windows, work inside WSL2. If a Sciver checkout already exists, preserve its changes, enter the checkout, and continue at the virtual-environment step. Otherwise run these commands in order:
+
+git clone https://github.com/Black-Sage-xj/Sciver.git
+cd Sciver
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e '.[sdk]' -e ./web
+sciver quickstart
+
+sciver quickstart performs the offline Test0 check and opens the Web UI; diagnose and retry any dependency or startup errors. Confirm the page is reachable, keep the server running, and give me a clickable Web UI link. If running remotely, set up secure port forwarding and give me the forwarded link. Do not start real research.
 ```
 
 To do it yourself, use **Python 3.11+** on Linux, macOS, or Windows with WSL2:

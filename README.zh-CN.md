@@ -38,7 +38,17 @@ Sciver 是一个持久化、多 Agent 协作的科学研究工作流引擎，并
 复制下面这段给编程 Agent：
 
 ```text
-请从 https://github.com/Black-Sage-xj/Sciver.git 安装并启动 Sciver。先检查系统和 Python 3.11+ 环境（Windows 使用 WSL2），安装仓库及 Web 依赖；保留已有仓库中的改动。然后运行 sciver quickstart：完成离线 Test0 自检并打开网页；遇到错误请修复后重试。确认页面可访问，让服务保持运行，最后回复一个我能点击的 Web UI 链接；若在远程环境，请配置安全端口转发并给出转发后的链接。不要启动真实研究。
+请帮我实际安装并启动 Sciver。先检查 Git 和 Python 3.11+ 是否可用；Windows 请在 WSL2 中操作。若已有 Sciver 仓库，保留其中的改动，进入仓库并从建虚拟环境那一步继续；否则依次运行：
+
+git clone https://github.com/Black-Sage-xj/Sciver.git
+cd Sciver
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e '.[sdk]' -e ./web
+sciver quickstart
+
+sciver quickstart 会完成离线 Test0 自检并打开网页；遇到依赖或启动错误请排查后重试。确认网页能访问，让服务保持运行，最后给我一个可点击的 Web UI 链接；若在远程环境，请配置安全端口转发并给出转发后的链接。不要启动真实研究。
 ```
 
 自己动手时，在 Linux、macOS 或 Windows 的 WSL2 中使用 **Python 3.11+**：
