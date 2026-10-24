@@ -72,7 +72,7 @@ def page_body(runs: list[dict], selected_id: str = "") -> str:
 <section class="rp-history" id="rp-history" hidden>
 <label>历史类型 <select id="rp-history-scope"><option value="plan">Research Plan</option><option value="model">Scientific Model</option></select></label>
 <strong id="rp-history-title">Research Plan 版本历史</strong>
-<p class="muted">两套历史独立编号。Research Plan 记录目标、约束、完成标准与上下文；Scientific Model 记录科学认识。恢复只影响所选部分，旧记录全部保留。</p>
+<p class="muted">时间均为北京时间。两套历史独立编号。Research Plan 记录目标、约束、完成标准与上下文；Scientific Model 记录科学认识。恢复只影响所选部分，旧记录全部保留。</p>
 <div id="rp-history-list" class="rp-history-list"></div>
 <p id="rp-history-meta" class="muted"></p>
 <div class="rp-field-actions"><button type="button" id="rp-history-restore" hidden>恢复选中版本</button></div>
@@ -101,6 +101,17 @@ let current=null,editing=new Set(),selectedHistory=null;
 const chosen=()=>task.value;
 const historyName=()=>histScope.value==='model'?'Scientific Model':'Research Plan';
 const historyVersion=(data)=>histScope.value==='model'?data.model_version:data.version;
+function historyTime(raw,dateOnly=false){
+ const date=new Date(raw);
+ if(Number.isNaN(date.getTime()))return raw||'时间未知';
+ const options={timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',
+   hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'};
+ const parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA',options)
+   .formatToParts(date).map(p=>[p.type,p.value]));
+ const day=parts.year+'-'+parts.month+'-'+parts.day;
+ return dateOnly?day:day+' '+parts.hour+':'+parts.minute+':'+parts.second+'（北京时间）';
+}
+
 const endpoint=()=>'/api/run/'+chosen()+'/research-plan';
 const text=(node,str)=>{node.textContent=str;return node};
 const button=(caption)=>{const b=document.createElement('button');b.type='button';b.textContent=caption;return b};
@@ -155,14 +166,14 @@ async function loadHistory(){
   if(chosen()!==id||histScope.value!==scope)return;
   histList.replaceChildren();
   for(const entry of data.history){
-    const b=button('v'+entry.version+' · '+entry.recorded_at.slice(0,10)+' · '+entry.source);
+    const b=button('v'+entry.version+' · '+historyTime(entry.recorded_at,true)+' · '+entry.source);
     b.title=entry.reason;
     b.onclick=async()=>{
       try{
         const detail=await getData(endpoint()+'/history?scope='+scope+'&version='+entry.version);
         if(chosen()!==id||histScope.value!==scope)return;
         selectedHistory=entry.version;
-        text(histMeta,'v'+entry.version+' · '+entry.recorded_at+' · '+entry.source+' · '+entry.section+' | 更正说明：'+entry.reason);
+        text(histMeta,'v'+entry.version+' · '+historyTime(entry.recorded_at)+' · '+entry.source+' · '+entry.section+' | 更正说明：'+entry.reason);
         text(histDiff,detail.diff||'与当前版本内容一致');
         text(histContent,detail.content||'');
         histRestore.hidden=detail.current_revision===entry.sha256;

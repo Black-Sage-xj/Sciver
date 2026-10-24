@@ -176,6 +176,21 @@ class ResearchPlanEditorTests(unittest.TestCase):
         with self.assertRaises(ResearchPlanError):
             history_plan(self.repo, self.run, scope="invalid")
 
+    def test_history_time_crosses_utc_midnight_in_beijing(self):
+        import subprocess
+        import shutil
+        import os
+        from tm_observer.research_plan_ui import page_body
+        node = shutil.which("node") or os.environ.get("TM_OBSERVER_NODE")
+        if not node or not Path(node).is_file():
+            self.skipTest("Node is required for browser timestamp execution")
+        script = page_body([self.run])
+        start = script.index("function historyTime(")
+        end = script.index("const endpoint=", start)
+        program = script[start:end] + "\nconsole.log(JSON.stringify([historyTime('2026-10-23T19:36:36+00:00',true),historyTime('2026-10-23T19:36:36+00:00'),historyTime('2026-10-24T00:00:00+08:00',true)]));"
+        result = subprocess.run([node, "-e", program], text=True, capture_output=True, check=True)
+        self.assertEqual(json.loads(result.stdout), ["2026-10-24", "2026-10-24 03:36:36（北京时间）", "2026-10-24"])
+
     def test_http_page_auth_boundary_write_and_conflict(self):
         cache = StateCache(self.repo, ttl_s=500)
         cache._state = {"runs": [self.run]}
