@@ -12,6 +12,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from tm_observer.research_plan_editor import ResearchPlanError, read_plan, save_section, history_plan
+from tm_observer.research_plan_history import project
 from tm_observer.web import StateCache, ThreadingHTTPServer, make_handler
 
 PLAN = (
@@ -106,7 +107,7 @@ class ResearchPlanEditorTests(unittest.TestCase):
         history = history_plan(self.repo, self.run, 1)
         self.assertEqual(len(history["history"]), 2)
         self.assertEqual(history["history"][0]["reason"], "修正旧目标")
-        self.assertEqual(history["content"], PLAN)
+        self.assertEqual(history["content"], project(PLAN))
         self.assertIn("-Original goal", history["diff"])
         with self.assertRaises(ResearchPlanError) as stale:
             save_section(self.repo, self.run, {"operation": "restore", "version": 1,
@@ -121,6 +122,60 @@ class ResearchPlanEditorTests(unittest.TestCase):
         self.assertEqual(observed["version"], 4)
         self.assertEqual(history_plan(self.repo, self.run)["history"][0]["source"], "external-observed")
 
+    def test_model_updates_and_scoped_restore_preserve_other_stream(self):
+        initial = read_plan(self.repo, self.run)
+        model_edit = save_section(self.repo, self.run, {
+            "section": "Scientific Model", "text": "\nNew science\n",
+            "expected_revision": initial["sections"][-1]["revision"], "change_reason": "Cycle evidence"})
+        self.assertEqual(model_edit["version"], 1)
+        self.assertEqual(model_edit["model_version"], 2)
+        plan_edit = save_section(self.repo, self.run, {
+            "section": "Goal", "text": "\nRevised goal\n\n",
+            "expected_revision": initial["sections"][0]["revision"], "change_reason": "Human direction"})
+        self.assertEqual((plan_edit["version"], plan_edit["model_version"]), (2, 2))
+        restored_model = save_section(self.repo, self.run, {
+            "operation": "restore", "scope": "model", "version": 1,
+            "expected_revision": model_edit["scope_revisions"]["model"], "change_reason": "Restore science"})
+        self.assertEqual((restored_model["version"], restored_model["model_version"]), (2, 3))
+        self.assertIn("Revised goal", self.path.read_text())
+        restored_plan = save_section(self.repo, self.run, {
+            "operation": "restore", "scope": "plan", "version": 1,
+            "expected_revision": plan_edit["scope_revisions"]["plan"], "change_reason": "Restore plan"})
+        self.assertEqual((restored_plan["version"], restored_plan["model_version"]), (3, 3))
+        self.assertEqual(self.path.read_text(), PLAN)
+        model_history = history_plan(self.repo, self.run, 2, "model")
+        self.assertNotIn("# Goal", model_history["content"])
+        self.assertIn("New science", model_history["content"])
+        with self.assertRaises(ResearchPlanError) as caught:
+            save_section(self.repo, self.run, {
+                "operation": "restore", "scope": "model", "version": 2,
+                "expected_revision": model_edit["scope_revisions"]["model"], "change_reason": "Stale model"})
+        self.assertEqual(caught.exception.status, 409)
+
+    def test_legacy_full_history_is_projected_without_modifying_archive(self):
+        home = self.task / ".theory-master" / "research-plan-versions"
+        home.mkdir()
+        journal = []
+        for i, raw in enumerate([PLAN, PLAN.replace("$G=1$", "$G=2$"),
+                                 PLAN.replace("$G=1$", "$G=3$").replace("Original goal", "New goal")], 1):
+            sha = hashlib.sha256(raw.encode()).hexdigest()
+            (home / (sha + ".md")).write_text(raw)
+            journal.append({"version": i, "sha256": sha, "recorded_at": "2026-10-23",
+                            "source": "sdk-scientific-model" if i == 2 else "web-edit",
+                            "reason": "legacy change", "section": "Scientific Model" if i == 2 else "Goal"})
+        old = "".join(json.dumps(r) + "\n" for r in journal)
+        (home / "history.jsonl").write_text(old)
+        self.path.write_text(PLAN.replace("$G=1$", "$G=3$").replace("Original goal", "New goal"))
+        current = read_plan(self.repo, self.run)
+        self.assertEqual((current["version"], current["model_version"]), (2, 3))
+        self.assertEqual((home / "history.jsonl").read_text(), old)
+        self.assertEqual(history_plan(self.repo, self.run)["history"][0]["legacy_version"], 3)
+        # Repeat reads do not create versions or rerun migration.
+        self.assertEqual(read_plan(self.repo, self.run), current)
+        self.assertEqual(len(history_plan(self.repo, self.run, scope="model")["history"]), 3)
+        with self.assertRaises(ResearchPlanError):
+            history_plan(self.repo, self.run, scope="invalid")
+
     def test_http_page_auth_boundary_write_and_conflict(self):
         cache = StateCache(self.repo, ttl_s=500)
         cache._state = {"runs": [self.run]}
@@ -134,6 +189,8 @@ class ResearchPlanEditorTests(unittest.TestCase):
             page = response.read().decode("utf-8")
         self.assertIn("Research Plan", page)
         self.assertIn("rp-task", page)
+        self.assertIn("rp-history-scope", page)
+        self.assertIn("Scientific Model 记录科学认识", page)
         with urlopen(base + "/api/run/" + self.ident + "/research-plan", timeout=4) as response:
             data = json.load(response)
         self.assertEqual(len(data["sections"]), 5)
@@ -164,8 +221,12 @@ class ResearchPlanEditorTests(unittest.TestCase):
         self.assertEqual(journal["history"][0]["reason"], "调整终局门槛")
         with urlopen(url + "/history?version=1", timeout=4) as response:
             old = json.load(response)
-        self.assertEqual(old["content"], PLAN)
+        self.assertEqual(old["content"], project(PLAN))
         self.assertIn("Scientific acceptance criterion", old["diff"])
+        with urlopen(url + "/history?scope=model&version=1", timeout=4) as response:
+            model = json.load(response)
+        self.assertEqual(model["scope"], "model")
+        self.assertEqual(model["content"], project(PLAN, "model"))
 
 
 if __name__ == "__main__":

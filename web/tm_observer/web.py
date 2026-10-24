@@ -1560,10 +1560,12 @@ def make_handler(
                 try:
                     if run is None:
                         raise ResearchPlanError("task not found", 404)
-                    requested = (parse_qs(self.path.partition("?")[2], keep_blank_values=True).get("version") or [""])[0]
+                    query = parse_qs(self.path.partition("?")[2], keep_blank_values=True)
+                    requested = (query.get("version") or [""])[0]
                     if requested and (not requested.isdigit() or len(requested) > 12):
                         raise ResearchPlanError("invalid history version")
-                    result, code = history_plan(cache.search_root, run, int(requested) if requested else None), HTTPStatus.OK
+                    result, code = history_plan(cache.search_root, run, int(requested) if requested else None,
+                                                     scope=(query.get("scope") or ["plan"])[0]), HTTPStatus.OK
                 except ResearchPlanError as exc:
                     result, code = {"error": str(exc)}, HTTPStatus(exc.status)
                 except (OSError, ValueError):

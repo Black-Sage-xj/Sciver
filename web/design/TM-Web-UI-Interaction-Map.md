@@ -33,7 +33,7 @@
 | Console Events/Research | `?tab=events` / `?tab=research`；Stage 选择、复制、事件过滤、返回主屏 | `/api/run/<id>/conversation`、`/api/run/<id>/view` | `/run/<id>/` | URL 保留具体 tab；长文本阅读区不应被常规轮询清掉 |
 | Research Explorer（默认 G6） | `observer_id`、图谱模式、折叠、镜头、节点/文档阅读、图谱搜索、前后视图、重新读取 | `/api/canvas-md/tasks/<id>/{index,document,search}`；节点/文档点击修改 URL 浏览器历史 | 来自任务则 `/run/<id>/`；浏览器 Back/Forward 按访问记录 | 保留深链和浏览历史；关联 Markdown 为独立跳转；无权限/缺 Canvas 返回不可用而非空白科研结论 |
 | Research Explorer `view=legacy` | 旧 SVG 视图、同一任务和文档模型 | 相同 Canvas/Markdown API 与深链 | `/run/<id>/` | 保留向后兼容的阅读行为；不自动插入关联文档内容 |
-| /research-plan/ | Task Research Plan 五字段编辑、必填更正原因、历史版本/差异/完整快照/显式恢复 | `/api/run/<id>/research-plan` GET/POST；`/api/run/<id>/research-plan/history` GET，`?version=N` 查看差异和全文 | Task Console / Workspace | 按 observer_id 绑定且校验，冲突 409；每次保存新版本且旧版本不覆盖；恢复须再填写原因并产生新版本 |
+| /research-plan/ | Task Research Plan 五字段编辑、必填更正原因、Plan / Scientific Model 独立历史、范围内差异与显式恢复 | `/api/run/<id>/research-plan` GET/POST；`/api/run/<id>/research-plan/history` GET，`?scope=plan|model&version=N` 查看范围内差异和文本 | Task Console / Workspace | 按 observer_id 绑定且校验，冲突 409；只增长变化范围的版本；范围内恢复保留另一部分并校验并发修订 |
 | `/run/<id>/supervisor` | Supervisor 状态、Session、Review/trace 入口 | `/api/run/<id>/supervisor`、进入 `/supervisor-session/<sid>` | `/run/<id>/` | 无 Session 与服务端读失败需区别处理 |
 | `/supervisor-session/<sid>` | 审计对话、图片、待回复、关闭/解决按钮 | `/api/supervisor-session/<sid>/{message,resolve,close}`；图片 `/image/<id>` | 服务端定位的任务 Console / Supervisor / Explorer；未知归属回 `/run/` | 已关闭只读保留历史；等待回复短轮询；发送失败不消除草稿/假称成功 |
 | `/research-chat/` | 会话、模型选择、消息/停止、研究动作 | `/api/research-chat/{session,<sid>/message,<sid>/stop,<sid>/model,<sid>/action}`、`/progress` | Workspace 级导航（不是任意 task-cookie Back） | 草稿/会话与当前请求状态分开；API 错误须保留可见提示 |
@@ -42,12 +42,12 @@
 | `/services/` | Codex Usage、账户切换、重置卡、手动刷新；状态年龄 | `/codex-usage.json`、`/codex-account/switch`、`/codex-account/reset-credit` | 有已验证任务快捷入口则 Console，否则 Workspace | 明确缓存/Provider 查询年龄；失败仍展示 last-good 且标记 |
 | `/settings/` | Workspace 与任务设置，`observer_id` 选择、开关 | 相应 Settings 和 Run 控制 API | Workspace / 显式选择的任务 | 无效 observer_id：404，不静默映射到其他任务 |
 
-### Research Plan 版本保留边界（2026-10-21）
+### Research Plan / Scientific Model 独立版本边界（2026-10-24）
 
-- 每任务使用人类科研 Plan 同目录下的 `.theory-master/research-plan-versions/`：按内容 SHA-256 保存不可变完整 Markdown 快照，`history.jsonl` 逐次登记 version、上一个内容哈希、UTC 保存时刻、来源、字段和问题更正说明。相同内容连续保存不新建版本；恢复旧内容则追加一个新版本，不覆盖历史。
-- Web 每次保存必须附 `change_reason`，保留现有任务身份校验、Origin / Operator-Intent 门禁、节级乐观锁（恢复使用全文件哈希）。SDK 正常的 Scientific Model 更新和新任务初始化使用同一锁与快照协议，并自动注明科研流程来源。
-- 对没有通过受控入口的直接文件修改，只能在下一次 Web 读取或 SDK 写入时将**当时能观察到的文件状态**登记为 `external-observed`，原因标为未提供。若外部编辑器在两次观察之间多次覆盖同一文件，无法倒推每个中间版本；应使用 Web/API/SDK 受控写入，或者先主动归档再外部保存。不能把此机制误称为操作系统级全文件写入审计。
-- Research Plan 始终是唯一科学权威；版本历史只供恢复和审计，不把旧 Plan 的 Goal、Final Gate 或 Scientific Model 重新注入当前 Cycle。科研 Stage 的已冻结输入不追溯修改。网页代码镜像与 SDK 均保留对应测试。
+- Plan 四个人工字段与 Scientific Model 各自保存不可变内容快照、时间和原因，独立递增。SDK 更新 Scientific Model 不再生成新的 Plan 版本。
+- 历史窗口通过范围选择器切换；diff、文本、恢复与版本提示均属于所选范围。恢复只更改所选范围，另一范围保持当前内容，并按范围修订哈希处理冲突。
+- 原混合 `history.jsonl` 与完整快照不删除；首次读取按内容范围去重迁移，保留旧版本来源编号。直接文件编辑仅在下次受管访问被发现，未知原因不补造。
+- Markdown 五字段结构与科学权威不变，旧文本不重新注入已经冻结的 Cycle。机器 Scientific Model 元数据版本与这两套文本历史分别保留。
 
 ## 4. 按因果分组的缺陷及落地阶段
 

@@ -362,6 +362,18 @@ replace
 
 更新 Scientific Model 不授予修改 Goal Contract 的权限。
 
+### 9.1 Research Plan 与 Scientific Model 文本历史分离（2026-10-24）
+
+当前 Markdown 仍保留五字段，历史按内容范围独立编号：
+
+- `plan` 仅包含 Goal、Research Contract、Final Gate、Required Context；
+- `model` 仅包含 Scientific Model；SDK 科学认识更新只增长 model 文本历史，不增长 plan 历史；
+- 网页分别显示两套版本、原因、范围内差异和文本；恢复只替换所选范围，并保留另一范围的最新内容。并发冲突按所选范围校验；
+- 旧 `research-plan-versions/history.jsonl` 和完整快照保留不改。首次受锁访问时，按历史顺序投影为 `plan-history.jsonl` 与 `model-history.jsonl`，各自只记录内容变化，并保留 `legacy_version`、原时间和原因；
+- 两套文本历史与机器 `scientific_model_state.json` 的科学版本号各有职责；不改机器版本、Cycle 归属或历史科学裁决。网页的 model_version 表示此处的 Scientific Model 文本历史编号；
+- 保存相同内容不新增版本，直接文件修改仅在下次受管访问时记录，不能追认未观测到的中间编辑。
+
+
 ---
 
 ## 10. 维护原则

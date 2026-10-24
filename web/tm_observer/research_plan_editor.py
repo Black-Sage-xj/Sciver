@@ -14,7 +14,7 @@ import stat
 import tempfile
 from pathlib import Path
 from typing import Any
-from .research_plan_history import capture_current, compare, content, plan_lock, record, versions
+from .research_plan_history import capture_current, compare, content, plan_lock, record, versions, project, merge, SCOPES
 
 SECTIONS = ("Goal", "Research Contract", "Final Gate", "Required Context", "Scientific Model")
 OWNERS = ("Human", "Human", "Human", "Human / operator", "Research Lead / SDK; human editable")
@@ -92,7 +92,7 @@ def _sha(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def _response(run: dict[str, Any], raw: str, version: int) -> dict[str, Any]:
+def _response(run: dict[str, Any], raw: str, version: int, model_version: int) -> dict[str, Any]:
     parsed = _parse(raw)
     return {
         "observer_id": run["observer_id"],
@@ -100,6 +100,8 @@ def _response(run: dict[str, Any], raw: str, version: int) -> dict[str, Any]:
         "file": "research_plan.md",
         "revision": _sha(raw),
         "version": version,
+        "model_version": model_version,
+        "scope_revisions": {scope: _sha(project(raw, scope)) for scope in SCOPES},
         "sections": [
             {"name": name, "text": parsed[name], "revision": _sha(parsed[name]), "owner": OWNERS[i]}
             for i, name in enumerate(SECTIONS)
@@ -113,23 +115,26 @@ def read_plan(search_root: Path, run: dict[str, Any]) -> dict[str, Any]:
         raw = _read(path)
         _parse(raw)
         row = capture_current(path)
-        return _response(run, raw, row["version"])
+        return _response(run, raw, row["version"], row["model_version"])
 
 
-def history_plan(search_root: Path, run: dict[str, Any], version: int | None = None) -> dict[str, Any]:
+def history_plan(search_root: Path, run: dict[str, Any], version: int | None = None, scope: str = "plan") -> dict[str, Any]:
+    if scope not in SCOPES:
+        raise ResearchPlanError("历史类型无效", 400)
     path = _file(search_root, run)
     with plan_lock(path):
         raw = _read(path)
         _parse(raw)
         capture_current(path)
-        rows = versions(path)
-        result: dict[str, Any] = {"history": list(reversed(rows)), "current_revision": _sha(raw)}
+        rows = versions(path, scope)
+        result: dict[str, Any] = {"scope": scope, "history": list(reversed(rows)),
+                                  "current_revision": _sha(project(raw, scope))}
         if version is not None:
             if version < 1:
                 raise ResearchPlanError("历史版本号无效", 400)
             try:
-                result["content"] = content(path, version)
-                result["diff"] = compare(path, version, raw)
+                result["content"] = content(path, version, scope)
+                result["diff"] = compare(path, version, raw, scope)
             except ValueError as exc:
                 raise ResearchPlanError(str(exc), 404) from exc
         return result
@@ -166,6 +171,8 @@ def save_section(search_root: Path, run: dict[str, Any], payload: Any) -> dict[s
     restore = payload.get("operation") == "restore"
     allowed = ({"operation", "version", "expected_revision", "change_reason"} if restore
                else {"section", "text", "expected_revision", "change_reason"})
+    if restore and "scope" in payload:
+        allowed.add("scope")
     if set(payload) != allowed:
         raise ResearchPlanError("保存参数无效，请填写更正问题说明")
     reason = payload["change_reason"]
@@ -175,6 +182,9 @@ def save_section(search_root: Path, run: dict[str, Any], payload: Any) -> dict[s
     if not isinstance(expected, str) or re.fullmatch(r"[0-9a-f]{64}", expected) is None:
         raise ResearchPlanError("版本号无效")
     if restore:
+        scope = payload.get("scope", "plan")
+        if scope not in SCOPES:
+            raise ResearchPlanError("历史类型无效")
         version = payload["version"]
         if not isinstance(version, int) or isinstance(version, bool) or version < 1:
             raise ResearchPlanError("恢复版本号无效")
@@ -191,20 +201,20 @@ def save_section(search_root: Path, run: dict[str, Any], payload: Any) -> dict[s
         parsed = _parse(raw)
         current = capture_current(path)
         if restore:
-            if _sha(raw) != expected:
+            if expected not in {_sha(project(raw, scope)), _sha(raw)}:
                 raise ResearchPlanError("当前 Plan 已变化，请先刷新历史", 409)
             try:
-                updated = content(path, version)
+                updated = merge(raw, content(path, version, scope), scope)
                 _parse(updated)
             except ValueError as exc:
                 raise ResearchPlanError(str(exc), 404) from exc
-            section = "full-plan"
+            section = "Scientific Model" if scope == "model" else "plan"
             source = "web-restore"
         else:
             if _sha(parsed[name]) != expected:
                 raise ResearchPlanError("此字段已被其他窗口或科研进程修改。请重新读取后再编辑。", 409)
             if parsed[name] == value:
-                return _response(run, raw, current["version"])
+                return _response(run, raw, current["version"], current["model_version"])
             matches = list(HEADER.finditer(raw))
             idx = SECTIONS.index(name)
             start, end = matches[idx].end(), (matches[idx + 1].start() if idx + 1 < len(matches) else len(raw))
@@ -214,7 +224,7 @@ def save_section(search_root: Path, run: dict[str, Any], payload: Any) -> dict[s
             updated = raw[:start] + replacement + raw[end:]
             section, source = name, "web-edit"
         if updated == raw:
-            return _response(run, raw, current["version"])
+            return _response(run, raw, current["version"], current["model_version"])
         _write_updated(path, before, updated)
         row = record(path, updated, reason=reason, source=source, section=section)
-        return _response(run, updated, row["version"])
+        return _response(run, updated, row["version"], row["model_version"])
