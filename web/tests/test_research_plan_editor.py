@@ -204,8 +204,11 @@ class ResearchPlanEditorTests(unittest.TestCase):
             page = response.read().decode("utf-8")
         self.assertIn("Research Plan", page)
         self.assertIn("rp-task", page)
-        self.assertIn("rp-history-scope", page)
-        self.assertIn("Scientific Model 记录科学认识", page)
+        self.assertNotIn("rp-history-scope", page)
+        self.assertIn("sm-history-template", page)
+        self.assertIn("mountHistory('model',pane,historyButton)", page)
+        self.assertIn("head.after(fragment)", page)
+        self.assertIn("此处只记录 Scientific Model", page)
         with urlopen(base + "/api/run/" + self.ident + "/research-plan", timeout=4) as response:
             data = json.load(response)
         self.assertEqual(len(data["sections"]), 5)

@@ -4,6 +4,18 @@ from __future__ import annotations
 import html
 
 
+def _history_panel(prefix: str, name: str) -> str:
+    return f"""<section class="rp-history" id="{prefix}-history" hidden>
+<strong>{name} 版本历史</strong>
+<p class="muted">时间均为北京时间。此处只记录 {name}；恢复只影响这一部分，旧记录保留。</p>
+<div id="{prefix}-history-list" class="rp-history-list"></div>
+<p id="{prefix}-history-meta" class="muted"></p>
+<div class="rp-field-actions"><button type="button" id="{prefix}-history-restore" hidden>恢复选中版本</button></div>
+<pre id="{prefix}-history-diff"></pre>
+<details><summary>查看此版 Markdown</summary><pre id="{prefix}-history-content"></pre></details>
+</section>"""
+
+
 def page_body(runs: list[dict], selected_id: str = "") -> str:
     available = sorted(
         (r for r in runs if isinstance(r.get("observer_id"), str)
@@ -67,18 +79,9 @@ def page_body(runs: list[dict], selected_id: str = "") -> str:
 <label class="rp-picker">科研任务<select id="rp-task">""" + options + r"""</select></label></div>
 <div class="rp-toolbar">
 <span>Goal / Research Contract / Final Gate / Required Context / Scientific Model</span>
-<div><button type="button" id="rp-history-toggle">版本历史</button> <button type="button" id="rp-refresh">刷新文件</button> <a id="rp-console" href="/run/">Task Console →</a></div>
+<div><button type="button" id="rp-history-toggle">Research Plan 历史</button> <button type="button" id="rp-refresh">刷新文件</button> <a id="rp-console" href="/run/">Task Console →</a></div>
 </div>
-<section class="rp-history" id="rp-history" hidden>
-<label>历史类型 <select id="rp-history-scope"><option value="plan">Research Plan</option><option value="model">Scientific Model</option></select></label>
-<strong id="rp-history-title">Research Plan 版本历史</strong>
-<p class="muted">时间均为北京时间。两套历史独立编号。Research Plan 记录目标、约束、完成标准与上下文；Scientific Model 记录科学认识。恢复只影响所选部分，旧记录全部保留。</p>
-<div id="rp-history-list" class="rp-history-list"></div>
-<p id="rp-history-meta" class="muted"></p>
-<div class="rp-field-actions"><button type="button" id="rp-history-restore" hidden>恢复选中版本</button></div>
-<pre id="rp-history-diff"></pre>
-<details><summary>查看所选部分 Markdown</summary><pre id="rp-history-content"></pre></details>
-</section>
+""" + _history_panel("rp", "Research Plan") + '<template id="sm-history-template">' + _history_panel("sm", "Scientific Model") + '</template>' + r"""
 <p class="rp-status" id="rp-status" role="status">正在读取 Research Plan…</p>
 <div class="rp-fields" id="rp-fields"></div>
 <p class="muted">编辑后点击该字段的“保存”。保存会修改原始 MD，供后续读取使用；不会改变当前 Cycle 已冻结的科研输入。Scientific Model 也可能由科研流程更新，出现冲突时需要重新审阅。</p>
@@ -92,15 +95,10 @@ def page_body(runs: list[dict], selected_id: str = "") -> str:
 const task=document.getElementById('rp-task'),fieldBox=document.getElementById('rp-fields'),
   status=document.getElementById('rp-status'),refresh=document.getElementById('rp-refresh'),
   consoleLink=document.getElementById('rp-console'),
-  histToggle=document.getElementById('rp-history-toggle'),histPane=document.getElementById('rp-history'),
-  histList=document.getElementById('rp-history-list'),histMeta=document.getElementById('rp-history-meta'),
-  histDiff=document.getElementById('rp-history-diff'),histContent=document.getElementById('rp-history-content'),
-  histRestore=document.getElementById('rp-history-restore'),
-  histScope=document.getElementById('rp-history-scope'),histTitle=document.getElementById('rp-history-title');
-let current=null,editing=new Set(),selectedHistory=null;
+  histToggle=document.getElementById('rp-history-toggle'),histPane=document.getElementById('rp-history');
+let current=null,editing=new Set();
+const histories=new Map();
 const chosen=()=>task.value;
-const historyName=()=>histScope.value==='model'?'Scientific Model':'Research Plan';
-const historyVersion=(data)=>histScope.value==='model'?data.model_version:data.version;
 function historyTime(raw,dateOnly=false){
  const date=new Date(raw);
  if(Number.isNaN(date.getTime()))return raw||'时间未知';
@@ -157,65 +155,76 @@ async function getData(path){
  if(!response.ok)throw Error(result.error||'读取失败');
  return result;
 }
-async function loadHistory(){
-  if(!current||!chosen())return;
-  selectedHistory=null;histRestore.hidden=true;histMeta.textContent='';histContent.textContent='';histDiff.textContent='';
-  const id=chosen(),scope=histScope.value;
-  text(histTitle,historyName()+' 版本历史');
-  const data=await getData(endpoint()+'/history?scope='+scope);
-  if(chosen()!==id||histScope.value!==scope)return;
-  histList.replaceChildren();
-  for(const entry of data.history){
-    const b=button('v'+entry.version+' · '+historyTime(entry.recorded_at,true)+' · '+entry.source);
-    b.title=entry.reason;
-    b.onclick=async()=>{
-      try{
-        const detail=await getData(endpoint()+'/history?scope='+scope+'&version='+entry.version);
-        if(chosen()!==id||histScope.value!==scope)return;
-        selectedHistory=entry.version;
-        text(histMeta,'v'+entry.version+' · '+historyTime(entry.recorded_at)+' · '+entry.source+' · '+entry.section+' | 更正说明：'+entry.reason);
-        text(histDiff,detail.diff||'与当前版本内容一致');
-        text(histContent,detail.content||'');
-        histRestore.hidden=detail.current_revision===entry.sha256;
-      }catch(e){note('历史版本读取失败：'+e.message,true)}
-    };
-    histList.append(b);
-  }
-  if(!data.history.length)text(histMeta,'暂无版本');
+function mountHistory(scope,pane,toggle){
+ const prefix=scope==='model'?'sm':'rp',name=scope==='model'?'Scientific Model':'Research Plan';
+ const view={scope,pane,toggle,selected:null,
+   list:pane.querySelector('#'+prefix+'-history-list'),meta:pane.querySelector('#'+prefix+'-history-meta'),
+   diff:pane.querySelector('#'+prefix+'-history-diff'),content:pane.querySelector('#'+prefix+'-history-content'),
+   restore:pane.querySelector('#'+prefix+'-history-restore')};
+ histories.set(scope,view);
+ view.load=async()=>{
+   if(!current||!chosen())return;
+   const id=chosen();view.selected=null;view.restore.hidden=true;
+   view.meta.textContent='';view.content.textContent='';view.diff.textContent='';view.list.replaceChildren();
+   const data=await getData(endpoint()+'/history?scope='+scope);
+   if(chosen()!==id||histories.get(scope)!==view)return;
+   for(const entry of data.history){
+     const b=button('v'+entry.version+' · '+historyTime(entry.recorded_at,true)+' · '+entry.source);
+     b.title=entry.reason;
+     b.onclick=async()=>{
+       try{
+         const detail=await getData(endpoint()+'/history?scope='+scope+'&version='+entry.version);
+         if(chosen()!==id||histories.get(scope)!==view)return;
+         view.selected=entry.version;
+         text(view.meta,'v'+entry.version+' · '+historyTime(entry.recorded_at)+' · '+entry.source+' · '+entry.section+' | 更正说明：'+entry.reason);
+         text(view.diff,detail.diff||'与当前版本内容一致');text(view.content,detail.content||'');
+         view.restore.hidden=detail.current_revision===entry.sha256;
+       }catch(e){note(name+' 历史读取失败：'+e.message,true)}
+     };
+     view.list.append(b);
+   }
+   if(!data.history.length)text(view.meta,'暂无版本');
+ };
+ toggle.onclick=async()=>{
+   pane.hidden=!pane.hidden;
+   if(!pane.hidden){try{await view.load()}catch(e){note(e.message,true)}}
+ };
+ view.restore.onclick=async()=>{
+   if(!current||view.selected==null)return;
+   if(editing.size){note('请先完成或取消未保存的编辑',true);return}
+   const change_reason=prompt('请说明恢复该版本要更正的问题（必填）');
+   if(!change_reason||!change_reason.trim())return;
+   if(!confirm('将 '+name+' 恢复为 v'+view.selected+'，另一部分保持当前内容。确定吗？'))return;
+   try{
+     const response=await fetch(endpoint(),{method:'POST',credentials:'same-origin',
+       headers:{'Content-Type':'application/json','X-TM-Operator-Intent':'1'},
+       body:JSON.stringify({operation:'restore',scope,version:view.selected,
+         expected_revision:current.scope_revisions[scope],change_reason})});
+     const result=await response.json();
+     if(!response.ok)throw Error(result.error||'恢复失败');
+     await load();
+     note(name+' 已恢复为新版本 v'+(scope==='model'?result.model_version:result.version));
+   }catch(e){note('恢复失败：'+e.message,true)}
+ };
+ return view;
 }
-histScope.onchange=()=>loadHistory().catch(e=>note(e.message,true));
-histToggle.onclick=async()=>{
-  histPane.hidden=!histPane.hidden;
-  if(!histPane.hidden){try{await loadHistory()}catch(e){note(e.message,true)}}
-};
-histRestore.onclick=async()=>{
-  if(!current||selectedHistory==null)return;
-  if(editing.size){note('请先完成或取消未保存的编辑',true);return}
-  const change_reason=prompt('请说明恢复该版本要更正的问题（必填）');
-  if(!change_reason||!change_reason.trim())return;
-  if(!confirm('将 '+historyName()+' 恢复为 v'+selectedHistory+'，另一部分保持当前内容。确定吗？'))return;
-  try{
-    const response=await fetch(endpoint(),{method:'POST',credentials:'same-origin',
-      headers:{'Content-Type':'application/json','X-TM-Operator-Intent':'1'},
-      body:JSON.stringify({operation:'restore',scope:histScope.value,version:selectedHistory,
-        expected_revision:current.scope_revisions[histScope.value],change_reason})});
-    const result=await response.json();
-    if(!response.ok)throw Error(result.error||'恢复失败');
-    await load();
-    note(historyName()+' 已恢复为新版本 v'+historyVersion(result));
-  }catch(e){note('恢复失败：'+e.message,true)}
-};
+mountHistory('plan',histPane,histToggle);
+async function refreshHistories(){
+ for(const view of histories.values())if(!view.pane.hidden)await view.load();
+}
 async function load(){
  const id=chosen(); if(!id){fieldBox.replaceChildren();note('暂无可选择的任务',true);return}
  if(editing.size&&!confirm('还有未保存的编辑，确定放弃并刷新吗？'))return;
- editing.clear();fieldBox.replaceChildren();note('正在读取原始 Markdown…');
+ const modelHistoryOpen=histories.has('model')&&!histories.get('model').pane.hidden;
+ histories.delete('model');editing.clear();fieldBox.replaceChildren();note('正在读取原始 Markdown…');
  consoleLink.href='/run/'+id+'/';
  try{
    const data=await getData(endpoint());if(chosen()!==id)return;
    current=data;
    for(const sec of data.sections)buildSection(sec);
-   if(!histPane.hidden)await loadHistory();
-   note('Research Plan v'+data.version+' · Scientific Model v'+data.model_version+' · 已读取 '+data.sections.length+' 个字段');
+   if(modelHistoryOpen&&histories.has('model'))histories.get('model').pane.hidden=false;
+   await refreshHistories();
+   note('Research Plan v'+data.version+' · 已读取当前文件');
  }catch(error){note(error.message,true)}
 }
 function buildSection(sec){
@@ -224,8 +233,11 @@ function buildSection(sec){
  const title=document.createElement('div');
  const name=document.createElement('div');name.className='rp-field-title';text(name,sec.name);
  const owner=document.createElement('div');owner.className='rp-field-owner';text(owner,'维护权：'+sec.owner);
- title.append(name,owner);
- const edit=button('编辑');head.append(title,edit);
+ const modelVersion=document.createElement('div');modelVersion.className='rp-field-owner';
+ if(sec.name==='Scientific Model')text(modelVersion,'当前版本：v'+current.model_version);
+ title.append(name,owner);if(sec.name==='Scientific Model')title.append(modelVersion);
+ const controls=document.createElement('div');controls.className='rp-field-actions';controls.style.marginTop='0';
+ const edit=button('编辑');controls.append(edit);head.append(title,controls);
  const warning=document.createElement('p');warning.className='rp-note';
  warning.textContent=sec.name==='Scientific Model'
    ? 'Scientific Model 可能在 Cycle 结束时由 SDK 更新；编辑前请核对当前科学认识。'
@@ -244,6 +256,12 @@ function buildSection(sec){
  reason.placeholder='必填：本次更正的问题、原因和预期效果（将留存在版本记录中）';
  actions.append(save,cancel,message);form.append(textarea,reason,actions);
  card.append(head,warning,view,form);fieldBox.append(card);
+ if(sec.name==='Scientific Model'){
+   const historyButton=button('历史版本');historyButton.id='sm-history-toggle';controls.prepend(historyButton);
+   const fragment=document.getElementById('sm-history-template').content.cloneNode(true);
+   const pane=fragment.querySelector('#sm-history');head.after(fragment);
+   mountHistory('model',pane,historyButton);
+ }
  function close(){editing.delete(sec.name);view.hidden=false;form.hidden=true;warning.hidden=true;edit.hidden=false}
  edit.onclick=()=>{editing.add(sec.name);view.hidden=true;form.hidden=false;warning.hidden=false;edit.hidden=true;textarea.focus()};
  cancel.onclick=()=>{textarea.value=sec.text;text(message,'');close()};
@@ -261,7 +279,7 @@ function buildSection(sec){
       if(!response.ok)throw Error(result.error||'保存失败');
       const updated=result.sections.find(x=>x.name===sec.name);
       sec.text=updated.text;sec.revision=updated.revision;current.revision=result.revision;current.version=result.version;current.model_version=result.model_version;current.scope_revisions=result.scope_revisions;
-      renderMd(view,sec.text);close();note(sec.name+' 已保存为 '+(sec.name==='Scientific Model'?'Scientific Model v'+result.model_version:'Research Plan v'+result.version));reason.value='';if(!histPane.hidden)await loadHistory();
+      renderMd(view,sec.text);close();note(sec.name+' 已保存为 '+(sec.name==='Scientific Model'?'Scientific Model v'+result.model_version:'Research Plan v'+result.version));reason.value='';if(sec.name==='Scientific Model')text(modelVersion,'当前版本：v'+result.model_version);await refreshHistories();
       text(message,'');
    }catch(e){text(message,e.message);note('保存失败：'+e.message,true)}
    finally{save.disabled=false;cancel.disabled=false}
