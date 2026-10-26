@@ -579,15 +579,17 @@ _DYNAMIC_CHOICE_SOURCES: dict[tuple[str, str, str], tuple[str, str]] = {
 def _source_evolution_operator_values(repo_root: Path | None = None) -> tuple[str, ...]:
     root = (repo_root or REPO_ROOT).resolve()
     path = _core_source_dir(root) / "contract_stages.py"
-    symbols = _assignment_map(path)
-    note_node = symbols.get("FRONTIER_PROPOSAL_PROMPT_NOTE")
-    if note_node is None:
-        return ()
-    note = str(_safe_source_value(note_node, symbols))
-    match = re.search(r"Allowed values:\s*([^.]*)\.", note)
-    if not match:
-        return ()
-    return tuple(part.strip() for part in match.group(1).split("|") if part.strip())
+    # The validator owns the enum; explanatory prompt prose may change freely.
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == "allowed_evolution_operators"
+                        for target in node.targets)
+                and isinstance(node.value, (ast.Set, ast.Tuple, ast.List))):
+            values = [ast.literal_eval(value) for value in node.value.elts]
+            if all(isinstance(value, str) for value in values):
+                return tuple(values)
+    return ()
 
 
 def _enum_values_from_hint(hint: str) -> tuple[str, ...]:
