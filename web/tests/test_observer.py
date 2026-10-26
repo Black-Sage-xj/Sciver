@@ -1181,7 +1181,8 @@ class WebTests(unittest.TestCase):
         self.assertIn("hypotheses[]", notes_by_key["research_lead::frontier_proposal::input::agent_graph"]["structure"])
         details = {item["node"]: item for item in stage_detail_catalog()}
         self.assertTrue(details["judge__terminal_assessment"]["contract_rules"])
-        self.assertTrue(details["investigator__investigate"]["role_guidance"])
+        self.assertIn("Native Goal", details["investigator__investigate"]["objective"])
+        self.assertTrue(details["investigator__investigate"]["may_do"])
         self.assertIn('id="stage-detail-popover"', body)
         self.assertIn("Contract 条件规则", body)
         self.assertIn("实际结构", body)
