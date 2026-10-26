@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import html
+import importlib.util
 import json
 import re
 from pathlib import Path
@@ -17,10 +18,16 @@ STAGE_PREVIEW_GUIDE = REPO_ROOT / "web" / "WORKFLOW_STAGE_PREVIEW_GUIDE.md"
 
 
 def _core_source_dir(root: Path) -> Path:
-    """Support standalone TheoryMaster or its original gel_network checkout."""
+    """Locate TheoryMaster source in a checkout or an installed wheel."""
     for candidate in (root / "theory_master", root / "tool" / "theory_master" / "theory_master"):
         if (candidate / "stage_registry.py").is_file():
             return candidate
+    spec = importlib.util.find_spec("theory_master")
+    if spec and spec.submodule_search_locations:
+        for location in spec.submodule_search_locations:
+            candidate = Path(location)
+            if (candidate / "stage_registry.py").is_file():
+                return candidate
     return root / "theory_master"
 
 
