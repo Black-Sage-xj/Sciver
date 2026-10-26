@@ -1,34 +1,29 @@
-# 路径解析（身份附件，不是 skill）
+# 路径锚点与访问边界
 
-你的 cwd 是 cycle_workspace（本 Cycle 的 Agent 写入区），Required Context 却是为**两个 Obsidian 库**写的，所以里面是库内相对写法。context 给了展开它们需要的锚点，禁止写死任何一个 clone 的路径。
+所有路径都从本次 Context 注入的锚点解析；锚点对应当前任务的实际位置，不得硬编码某个 clone 或 Obsidian vault 的路径。
 
 | 锚点 | 含义 |
 |---|---|
-| task_home | Task 科学根；research_plan.md 的 canonical 所在根 |
-| note_area | 人类可见文档区域；plan / exploration.canvas / notes 的稳定入口 |
-| research_root | TM runtime canonical root；新运行只写这里的 Cycle |
-| cycle_dir | 当前单个 Cycle runtime 目录 |
-| cycle_workspace | 当前 Agent 可写 workspace；也是 Agent cwd |
-| benchmark_root | 可选 task-local 冻结/参考科学输入目录；不存在时不注入 |
-| legacy_research_root | 仅历史迁移读取；不得作为新 runtime 写入根 |
-| branch_canvas | 探索 Canvas 绝对路径 |
-| notes_dir | 人类可见 notes 区域 |
-| notes_vault_root | 笔记库根（若可确定） |
-| repo_root | 仓库根 |
+| `task_home` | Task 科学根；`research_plan.md` 的 canonical 所在根 |
+| `note_area` | 人类可读、可能同步的文档区入口，含 plan、`exploration.canvas` 与 `notes/` |
+| `research_root` | TM runtime canonical root；新 runtime 的写入根 |
+| `cycle_dir` | 当前单个 Cycle 的 runtime 目录 |
+| `cycle_workspace` | 当前 Agent 的 cwd 与可写 workspace |
+| `benchmark_root` | 可选的 task-local 冻结/参考科学输入；未提供即不可用 |
+| `legacy_research_root` | 仅供历史迁移读取；不得用于新 runtime 写入 |
+| `notes_dir` | 人类可见的 `notes/` 目录 |
+| `notes_vault_root` | 可确定时提供的 Obsidian vault 根 |
+| `repo_root` | 仓库根 |
 
-缺某个锚点时它不会出现在 context 里，此时不要猜，在输出里说明缺什么。
+缺失的锚点不会出现在 Context 中；不得推测其值，应报告缺失的锚点。已提供的路径无法解析时，只能从已知锚点做聚焦查找；仍无法定位就报告具体缺口，不得猜测内容。
 
-## Required Context 与路径
+Required Context 是科学输入文本，SDK 不会从 prose 自动抽取路径、生成 `source_manifest` 或自动打开文件做字段/字面值核验。`[[nodes/某笔记|显示名]]` 中的显示名不是路径；裸节点名是图谱 ID，不是文件。
 
-Required Context 是 Research Task 的科学输入文本。SDK **不会**从其中的 prose 自动抽取文件路径、生成 `source_manifest`，也不会据此自动打开文件做字段/字面值核验。
+- 面向机器执行的命令和脚本参数使用绝对路径。
+- 写入 Markdown 正文的笔记引用使用库内相对路径，以便同一份内容可在两个库中打开。
 
-常见写法本身仍只是文本约定：
+## 同步笔记与科学计算数据隔离
 
-- `[[nodes/某笔记|显示名]]`：wikilink，竖线后面只是显示名，不是路径。
-- `` `gs_study/…/x.md` ``：仓库内路径文本；需要读取时由 Agent 基于当前明确上下文解析。
-- 裸节点名（如 `decision-Gg-handoff-20260916`）：Canvas **节点 id**，不是文件。
+`task_home`、`note_area` 与 `notes_dir` 属于人类可读、可能同步的笔记区。这里只能放轻量的 `research_plan.md`、`exploration.canvas` 与 `notes/` 投影；不得写入原始网络、CSV、NPZ、`.data`/`.pickle`、长 JSON rows、运行事件、计算脚本或 checkpoint。Agent 对这些同步区域只读。
 
-## 写路径时
-
-- 面向机器执行的命令、脚本参数：用绝对路径。
-- 写进 Markdown 正文的引用：用库内相对路径，因为同一份汇报要在两个库里打开。
+新计算、原始科学附件与机器产物写入非同步的 `research_root/cycle_workspace` 或 `benchmark_root`，并保留可审计的 Evidence 引用。`legacy_research_root` 仅用于读取既有历史来源，不能据此向 Vault 写入新大型文件。

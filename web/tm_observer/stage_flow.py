@@ -5,7 +5,6 @@ import html
 import json
 import re
 from pathlib import Path
-from importlib.util import find_spec
 from typing import Any, Mapping
 from urllib.parse import urlencode
 
@@ -13,9 +12,7 @@ from .field_notes import default_description, field_key
 from .workflow_versions import load_workflow_snapshots, workflow_snapshot
 
 
-_sdk_spec = find_spec("theory_master")
-REPO_ROOT = (Path(_sdk_spec.origin).resolve().parent.parent
-             if _sdk_spec is not None and _sdk_spec.origin else Path(__file__).resolve().parents[2])
+REPO_ROOT = Path(__file__).resolve().parents[2]
 STAGE_PREVIEW_GUIDE = REPO_ROOT / "web" / "WORKFLOW_STAGE_PREVIEW_GUIDE.md"
 
 
@@ -67,6 +64,19 @@ def _safe_source_value(node: ast.AST, symbols: dict[str, ast.AST], stack: tuple[
         return _safe_source_value(target, symbols, stack + (name,))
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         return _safe_source_value(node.left, symbols, stack) + _safe_source_value(node.right, symbols, stack)
+    if isinstance(node, ast.JoinedStr):
+        parts = []
+        for item in node.values:
+            if isinstance(item, ast.Constant) and isinstance(item.value, str):
+                parts.append(item.value)
+            elif isinstance(item, ast.FormattedValue) and item.conversion == -1 and item.format_spec is None:
+                value = _safe_source_value(item.value, symbols, stack)
+                if not isinstance(value, (str, int, float)):
+                    raise ValueError("schema interpolation must resolve to a scalar constant")
+                parts.append(str(value))
+            else:
+                raise ValueError("unsupported schema interpolation")
+        return "".join(parts)
     raise ValueError(f"unsupported source expression: {type(node).__name__}")
 
 
@@ -74,7 +84,11 @@ def _source_catalog(repo_root: Path | None = None) -> tuple[dict[tuple[str, str]
     root = (repo_root or REPO_ROOT).resolve()
     tm_root = _core_source_dir(root)
     stage_symbols = _assignment_map(tm_root / "stage_registry.py")
-    contract_symbols = _assignment_map(tm_root / "contract_stages.py")
+    display_source = tm_root / "hypothesis_display.py"
+    contract_symbols = {
+        **(_assignment_map(display_source) if display_source.is_file() else {}),
+        **_assignment_map(tm_root / "contract_stages.py"),
+    }
 
     cards_value = _safe_source_value(stage_symbols["STAGE_CARDS"], stage_symbols)
     labels_value = _safe_source_value(stage_symbols["ROLE_STAGE_LABELS"], stage_symbols)
@@ -169,19 +183,7 @@ STAGE_CONTEXT_FIELDS = _source_context_fields()
 def _source_stage_details(repo_root: Path | None = None) -> dict[tuple[str, str], dict[str, Any]]:
     root = (repo_root or REPO_ROOT).resolve()
     tm_root = _core_source_dir(root)
-    symbols = _assignment_map(tm_root / "stage_registry.py")
-    procedures = _safe_source_value(symbols["PROCEDURE_CARDS"], symbols)
     _contracts, cards, _labels = _source_catalog(root)
-    investigator_guidance = [
-        str(_safe_source_value(symbols[name], symbols))
-        for name in (
-            "INVESTIGATOR_SKILL_ROUTING",
-            "INVESTIGATOR_CONTENT_BOUNDARY",
-            "INVESTIGATOR_EXECUTION_PROTOCOL",
-            "INVESTIGATOR_COMPLETION_CONSISTENCY",
-        )
-        if name in symbols
-    ]
     result: dict[tuple[str, str], dict[str, Any]] = {}
     for pair in DISPLAYED_AGENT_STAGES:
         card = cards.get(pair) or {}
@@ -190,8 +192,8 @@ def _source_stage_details(repo_root: Path | None = None) -> dict[tuple[str, str]
             "may_do": str(card.get("may_do") or ""),
             "must_not": str(card.get("must_not") or ""),
             "exit": str(card.get("exit") or ""),
-            "procedure": list(procedures.get(pair, ()) or ()),
-            "role_guidance": investigator_guidance if pair[0] == "investigator" else [],
+            "procedure": list(card.get("procedure", ()) or ()),
+            "role_guidance": [],
         }
     return result
 
@@ -577,17 +579,15 @@ _DYNAMIC_CHOICE_SOURCES: dict[tuple[str, str, str], tuple[str, str]] = {
 def _source_evolution_operator_values(repo_root: Path | None = None) -> tuple[str, ...]:
     root = (repo_root or REPO_ROOT).resolve()
     path = _core_source_dir(root) / "contract_stages.py"
-    # The validator owns the enum; explanatory prompt prose may change freely.
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    for node in ast.walk(tree):
-        if (isinstance(node, ast.Assign)
-                and any(isinstance(target, ast.Name) and target.id == "allowed_evolution_operators"
-                        for target in node.targets)
-                and isinstance(node.value, (ast.Set, ast.Tuple, ast.List))):
-            values = [ast.literal_eval(value) for value in node.value.elts]
-            if all(isinstance(value, str) for value in values):
-                return tuple(values)
-    return ()
+    symbols = _assignment_map(path)
+    note_node = symbols.get("FRONTIER_PROPOSAL_PROMPT_NOTE")
+    if note_node is None:
+        return ()
+    note = str(_safe_source_value(note_node, symbols))
+    match = re.search(r"Allowed values:\s*([^.]*)\.", note)
+    if not match:
+        return ()
+    return tuple(part.strip() for part in match.group(1).split("|") if part.strip())
 
 
 def _enum_values_from_hint(hint: str) -> tuple[str, ...]:

@@ -26,6 +26,13 @@ class _BriefLeadFake(FakeBackend):
 
 
 class HypothesisDossierProjectionTest(unittest.TestCase):
+    def test_existing_graph_lineage_is_checked_in_the_output_contract(self):
+        candidate = {"hypothesis": "H", "scope": "S", "why_now": "W", "goal_advance": "G", "decisive_test": "T"}
+        _minimal_frontier_structure({"candidates": [candidate]}, {"_known_hypothesis_ids": []})
+        with self.assertRaisesRegex(ValueError, "requires evolution_operator"):
+            _minimal_frontier_structure({"candidates": [candidate]}, {"_known_hypothesis_ids": ["H-0001"]})
+        _minimal_frontier_structure({"candidates": [{**candidate, "evolution_operator": "derive", "lineage_anchor_node_ids": ["H-0001"]}]}, {"_known_hypothesis_ids": ["H-0001"]})
+
     def test_frontier_candidates_cannot_bypass_post_lock_display_stage(self):
         candidate = {
             "hypothesis": "H", "scope": "S", "why_now": "W",
@@ -95,12 +102,45 @@ class HypothesisDossierProjectionTest(unittest.TestCase):
             self.assertEqual(state["hypothesis_lock"]["hypothesis"], "smoke-h")
             canvas = json.loads(spec.branch_canvas.read_text(encoding="utf-8"))
             h = next(node for node in canvas["nodes"] if node.get("id") == "H-0001")
-            self.assertIn("摘要暂不可用", h["text"])
+            self.assertIn("完整命题（原文）：smoke-h", h["text"])
             self.assertIn("状态：待检验", h["text"])
             self.assertLessEqual(len(h["text"]), 600)
-            self.assertEqual(h["text"].count("smoke-h"), 1)  # title only; no full claim fallback
+            self.assertEqual(h["text"].count("smoke-h"), 2)  # short title plus frozen full hypothesis
             dossier = (spec.notes_mirror_dir / "hypotheses/H-0001.md").read_text(encoding="utf-8")
             self.assertIn("register deterministic smoke evidence", dossier)
+
+    def test_display_contract_exhaustion_falls_back_and_finishes_workflow(self):
+        from tests.test_core import TheoryMasterTest
+
+        class InvalidDisplay(FakeBackend):
+            def invoke(self, role, prompt, thread_id, model, provider):
+                if role == "research_lead" and (
+                    "Current task: hypothesis_display" in prompt
+                    or "Contract validation failed for stage hypothesis_display" in prompt
+                ):
+                    return self.ensure_thread(role, thread_id, model, provider), json.dumps({
+                        "canvas_title": "Diffusion from Increment Covariance",
+                        "canvas_claim": "D = [Var(ΔX) + 2 Cov(ΔX_t, ΔX_(t+1))] / (2 dt)",
+                        "canvas_conditions": "dt=0.10; zero-drift isotropic Brownian motion; independent Gaussian localization noise across all sampled coordinates and times",
+                    })
+                return super().invoke(role, prompt, thread_id, model, provider)
+
+        with tempfile.TemporaryDirectory() as temp:
+            spec, _ = TheoryMasterTest().make(Path(temp), reworks=0)
+            workflow = Workflow(spec, InvalidDisplay(reworks=0))
+            state = workflow.run()
+            self.assertIn(state["status"], {"over", "completed"})
+            self.assertEqual(state["hypothesis_display"]["status"], "fallback")
+            self.assertEqual(state["hypothesis_lock"]["hypothesis"], "smoke-h")
+            self.assertNotEqual((state.get("attention") or {}).get("code"), "contract_repair_failed")
+            artifacts = list(workflow.cycle_dir.glob("contract_repairs/*.json"))
+            self.assertEqual(len(artifacts), 1)
+            artifact = json.loads(artifacts[0].read_text())
+            self.assertEqual(artifact["stage"], "hypothesis_display")
+            self.assertEqual(len(artifact["raw_outputs"]), 4)
+            events = (workflow.cycle_dir / "events.jsonl").read_text()
+            self.assertIn("hypothesis.display_contract_failed", events)
+            self.assertIn("hypothesis.display_fallback", events)
 
     def test_display_contract_rejects_scientific_field_edits(self):
         from theory_master.contract_stages import _hypothesis_display_structure
@@ -113,7 +153,7 @@ class HypothesisDossierProjectionTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "exactly"):
             _hypothesis_display_structure({**good, "hypothesis": "changed!"}, {})
         with self.assertRaisesRegex(ValueError, "canvas_title"):
-            _hypothesis_display_structure({**good, "canvas_title": "a" * 49}, {})
+            _hypothesis_display_structure({**good, "canvas_title": "a" * 41}, {})
         with self.assertRaisesRegex(ValueError, "canvas_claim"):
             _hypothesis_display_structure({**good, "canvas_claim": "摘要暂不可用"}, {})
         with self.assertRaisesRegex(ValueError, "canvas_conditions"):

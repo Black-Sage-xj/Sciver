@@ -17,7 +17,7 @@ from theory_master.contract_closure import close_agent_output
 from theory_master.prompt_stages import stage_context
 from theory_master.science_graph_store import ScienceGraphStore
 from theory_master.specification import TaskSpec
-from theory_master.stage_registry import stage_card_text
+from theory_master.stage_registry import stage_card_text, stage_definition_text
 from theory_master.workflow import RecoveryStop, Workflow
 from theory_master.workflow_qualification import QualificationMixin
 
@@ -132,7 +132,7 @@ class BoundedRepairVerificationTest(unittest.TestCase):
             def invoke(self, role, prompt, thread_id, model, provider):
                 context = json.JSONDecoder().raw_decode(prompt.split("Context:\n", 1)[1])[0]
                 if role == "challenger" and "repaired_candidate" in context:
-                    self.verified_test = context["repaired_candidate"]["decisive_test"]
+                    self.verified_test = context["repaired_candidate"]["frozen_objective"]["decisive_test"]
                 thread, text = super().invoke(role, prompt, thread_id, model, provider)
                 if role == "research_lead" and context.get("repair_options"):
                     result = json.loads(text)
@@ -217,7 +217,7 @@ class BoundedRepairVerificationTest(unittest.TestCase):
             self.assertEqual(review["repair_review_protocol_version"], 2)
             self.assertIn("weak effect", review["reason"])
 
-    def test_legacy_repaired_prelock_checkpoint_runs_current_review_once(self):
+    def test_legacy_repaired_prelock_requires_explicit_recovery_without_model_calls(self):
         with tempfile.TemporaryDirectory() as temp:
             backend = RepairFixtureBackend()
             workflow = Workflow(make_spec(Path(temp)), backend)
@@ -258,13 +258,15 @@ class BoundedRepairVerificationTest(unittest.TestCase):
             state["hypothesis_lock"] = {"status": "unlocked"}
             state["hypothesis_locked"] = False
             workflow._persist(state)
-            self.assertFalse(workflow._lock_prequalified_checkpoint(state))
-            workflow._qualify_and_lock(state, "1", {})
-            self.assertEqual(state["hypothesis_lock"]["status"], "locked")
+            before = json.dumps(state, sort_keys=True)
+            for resume in (lambda: workflow._lock_prequalified_checkpoint(state),
+                           lambda: workflow._qualify_and_lock(state, "1", {})):
+                with self.assertRaisesRegex(RecoveryStop, "review binding missing or changed"):
+                    resume()
+            self.assertEqual(json.dumps(state, sort_keys=True), before)
             self.assertEqual(backend.initial_reviews, 0)
             self.assertEqual(backend.repair_calls, 0)
-            self.assertEqual(backend.verification_calls, 1)
-            self.assertEqual(state["hypothesis_lock"]["qualification"]["review"]["repair_review_protocol_version"], 2)
+            self.assertEqual(backend.verification_calls, 0)
 
     def test_repaired_checkpoint_preserves_frozen_estimand(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -353,8 +355,9 @@ class BoundedRepairVerificationTest(unittest.TestCase):
         self.assertEqual(projected["original_blockers"], [blocker])
         self.assertEqual(projected["workspace_access"]["research_root"], "/research")
         self.assertEqual(projected["repaired_candidate"]["estimand"], "P(d)")
-        card = stage_card_text("challenger", "repair_verification")
-        for required in ("non-empty", "matching/contrary/inconclusive", "weak/uncertain effect", "open result", "runs once"):
+        card = stage_definition_text("challenger", "repair_verification")
+        for required in ("non-empty comparison set only where required", "matching, contrary and inconclusive",
+                         "uncertain effect or eventual negative/open result", "runs once"):
             self.assertIn(required, card)
 
     def test_fault_after_repair_persist_resumes_one_verification(self):
@@ -458,7 +461,7 @@ class BoundedRepairVerificationTest(unittest.TestCase):
                                 "qualification_basis": "frozen_blocker_repair"},
             "finalized": {"decisive_test": "x"},
         }}
-        with self.assertRaisesRegex(Exception, "independent Challenger repair confirmation"):
+        with self.assertRaisesRegex(Exception, "scientific review binding missing or changed"):
             QualificationMixin._lock_prequalified_checkpoint(workflow, state)
         self.assertNotEqual(state.get("hypothesis_lock", {}).get("status"), "locked")
 

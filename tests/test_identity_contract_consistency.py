@@ -8,7 +8,9 @@ from pathlib import Path
 
 from theory_master.contracts import PHASE_CONTRACTS, role_contract
 from theory_master.identity import ROLES, identity_files, identities_root
-from theory_master.prompt_stages import STAGE_CARDS, STAGE_CONTEXT_FIELDS, stage_card_text
+from theory_master.prompt_stages import (
+    STAGE_CARDS, STAGE_CONTEXT_FIELDS, build_initial_prompt, stage_card_text, stage_context,
+)
 from theory_master.stage_registry import procedure_card_text
 from theory_master.reporting import ReportingMixin
 from theory_master.skills import developer_instructions, role_skills, skills_root, write_rule
@@ -74,18 +76,38 @@ class IdentityContractConsistencyTest(unittest.TestCase):
         self.assertIn("final_gate", fields)
         self.assertNotIn("required_context", fields)
 
-    def test_challenger_role_core_matches_candidate_review_navigation_contract(self):
+    def test_challenger_role_core_supports_both_qualification_stages(self):
         identity = (identities_root() / "challenger.md").read_text(encoding="utf-8")
         self.assertEqual(
             STAGE_CONTEXT_FIELDS[("challenger", "candidate_review")],
             ("goal", "research_contract", "final_gate", "candidate", "agent_graph", "agent_graph_reuse", "science_graph_tools", "workspace_access"),
         )
-        self.assertIn("`candidate`", identity)
+        self.assertIn("当前 Stage", identity)
+        self.assertIn("不选择 winner", identity)
+        self.assertIn("不修改、替换或自行生成 candidate", identity)
         self.assertIn("`agent_graph`", identity)
         self.assertNotIn("`canvas_access`", identity)
         self.assertIn("`workspace_access`", identity)
         self.assertNotIn("`canvas_focus`", identity)
         self.assertNotIn("`linked_reports`", identity)
+        candidate = {"id": "C-1", "hypothesis": "H", "scope": "S", "decisive_test": "T"}
+        blocker = {"id": "B-1", "reason": "Missing input definition"}
+        context = {
+            "agent_graph": {}, "candidate": [candidate],
+            "original_candidate": candidate, "repaired_candidate": candidate,
+            "original_review": {"blocking_issues": [blocker]},
+        }
+        review = stage_context("challenger", "candidate_review", context)
+        repair = stage_context("challenger", "repair_verification", context)
+        self.assertEqual(review["candidate"][0]["id"], "C-1")
+        self.assertNotIn("original_candidate", review)
+        self.assertEqual(repair["original_blockers"], [blocker])
+        self.assertIn("original_candidate", repair)
+        self.assertIn("repaired_candidate", repair)
+        self.assertNotIn("candidate", repair)
+        science = {key: candidate[key] for key in ("hypothesis", "scope", "decisive_test")}
+        for subject in (review["candidate"][0], repair["original_candidate"], repair["repaired_candidate"]):
+            self.assertEqual(subject["frozen_objective"], science)
 
     def test_investigator_core_uses_hypothesis_and_decisive_test_not_hidden_criteria(self):
         identity = (identities_root() / "investigator.md").read_text(encoding="utf-8")
@@ -145,13 +167,24 @@ class IdentityContractConsistencyTest(unittest.TestCase):
 
     def test_judge_role_core_is_stage_neutral_across_terminal_and_goal_gates(self):
         identity = (identities_root() / "judge.md").read_text(encoding="utf-8")
-        self.assertIn("当前 Stage Card 决定裁决层级", identity)
-        self.assertIn("`terminal_assessment`", identity)
-        self.assertIn("`goal_completion`", identity)
+        self.assertIn("当前 Stage 指定的科学对象", identity)
+        self.assertIn("一个层级的成功不自动升级", identity)
+        self.assertIn("不重做 Investigation", identity)
+        self.assertIn("不改变冻结的 Hypothesis", identity)
+        self.assertNotIn("terminal_assessment", identity)
+        self.assertNotIn("goal_completion", identity)
         self.assertNotIn("独立 Evidence adjudicator", identity)
         self.assertNotIn("默认只裁决当前冻结 Main Hypothesis", identity)
-        self.assertIn("frozen decisive test", stage_card_text("judge", "terminal_assessment"))
+        self.assertIn("frozen decisive", stage_card_text("judge", "terminal_assessment"))
         self.assertIn("task-level Goal Contract", stage_card_text("judge", "goal_completion"))
+        terminal = role_contract("judge", phase="terminal_assessment")
+        goal = role_contract("judge", phase="goal_completion")
+        terminal.validate({"verdict": "supported", "rationale": "The frozen test is resolved"}, {})
+        goal.validate({"verdict": "passed", "rationale": "The Final Gate is satisfied"}, {})
+        with self.assertRaises(ValueError):
+            goal.validate({"verdict": "supported", "rationale": "Local success"}, {})
+        with self.assertRaises(ValueError):
+            terminal.validate({"verdict": "passed", "rationale": "Task completion"}, {})
 
     def test_research_lead_thread_init_contains_role_core_not_stage_manuals(self):
         names = [path.name for path in identity_files("research_lead")]
@@ -181,10 +214,37 @@ class IdentityContractConsistencyTest(unittest.TestCase):
         developer = developer_instructions("investigator")
         self.assertNotIn("investigation_attempt", developer)
         self.assertNotIn("branch_canvas", developer)
-        self.assertIn("没有提前列出的文件清单不限制科学读取", developer)
+        self.assertIn("没有提前列出的文件清单不限制必要科学读取", developer)
         self.assertIn("Task scientific read root", developer)
         self.assertIn("空的 Cycle Evidence Registry", developer)
         self.assertIn("本 Cycle write root", developer)
+        self.assertIn("Native Goal 或 Stage", developer)
+        self.assertNotIn("完成条件只在 Native Goal", developer)
+        for schema_field in ("`statement`", "`method`", "`result`", "`provenance`", "frozen_before_current_cycle"):
+            self.assertNotIn(schema_field, developer)
+        contract = role_contract("investigator", phase="preserve_research")
+        context = stage_context("investigator", "preserve_research", {
+            "hypothesis_lock": {"hypothesis": "H", "scope": "S", "decisive_test": "Unfinished test"},
+            "blocked_reason": "Operator authorized preservation",
+        })
+        prompt = build_initial_prompt(
+            prefix="test", role="investigator", stage="preserve_research",
+            contract_ref=contract.ref, contract_schema=contract.prompt_projection(context),
+            context=context, write_rule="",
+        )
+        self.assertIn(contract.prompt_projection(context), prompt)
+        self.assertIn("unexecuted_test", prompt)
+        self.assertNotIn('"findings"', prompt)
+        self.assertIn("Do not run new experiments", prompt)
+        self.assertNotIn("Only after completing the frozen science", developer + prompt)
+
+    def test_scientific_role_identities_match_packaged_runtime_sources(self):
+        source_root = Path(__file__).resolve().parents[1] / "identities"
+        for role in ("research_lead", "challenger", "investigator", "literature", "judge", "reporter"):
+            for runtime in identity_files(role):
+                with self.subTest(role=role, attachment=runtime.name):
+                    self.assertEqual(runtime.read_text(encoding="utf-8"),
+                                     (source_root / runtime.name).read_text(encoding="utf-8"))
 
     def test_investigator_domain_policy_is_on_demand_skill_not_role_core(self):
         identity = (identities_root() / "investigator.md").read_text(encoding="utf-8")
@@ -215,9 +275,22 @@ class IdentityContractConsistencyTest(unittest.TestCase):
     def test_sqlite_frontier_authority_is_documented_without_canvas_read_rules(self):
         lead_card = stage_card_text("research_lead", "frontier_maintenance")
         lead_procedure = procedure_card_text("research_lead", "frontier_maintenance")
-        self.assertIn("independent of graph leaves", lead_card)
+        self.assertIn("independently of graph", lead_card)
+        self.assertIn("descendants or local supported/rejected/open Outcomes", lead_card)
         self.assertIn("active/parked/closed", lead_card)
-        self.assertIn("science_graph.sqlite3", lead_procedure)
+        lead_identity = developer_instructions("research_lead")
+        self.assertIn("SQLite 为唯一权威数据源", lead_identity)
+        self.assertIn("可视化投影，不是科研数据源", lead_identity)
+        self.assertIn("agent_graph", lead_procedure)
+        self.assertIn("science_graph_tools", lead_procedure)
+        # Runtime inputs must require the canonical graph even when Canvas is present.
+        with self.assertRaisesRegex(RuntimeError, "SQLite Agent graph context is missing"):
+            stage_context("research_lead", "frontier_maintenance", {"canvas_access": {"nodes": []}})
+        projected = stage_context("research_lead", "frontier_maintenance", {
+            "agent_graph": {"nodes": []}, "canvas_access": {"nodes": [{"id": "stale"}]},
+        })
+        self.assertEqual(projected["agent_graph"], {"nodes": []})
+        self.assertNotIn("canvas_access", projected)
         self.assertFalse((identities_root() / "_canvas_read.md").exists())
         self.assertFalse((identities_root() / "_canvas_renderer_policy.md").exists())
         for role in ROLES:

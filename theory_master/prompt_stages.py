@@ -6,11 +6,12 @@ from typing import Any, Mapping
 
 from .evidence import adjudicable_manifest_records
 from .cycle_criteria import criterion_rows
+from .scientific_objective import SCIENCE_FIELDS, frozen_science_view, locked_science_view
 
 
 from .stage_registry import (
-    PROCEDURE_CARDS, ROLE_STAGE_LABELS, STAGE_CARDS,
-    procedure_card_text, stage_card_text, stage_for,
+    ROLE_STAGE_LABELS, STAGE_CARDS, procedure_card_text,
+    stage_card_text, stage_definition_text, stage_for,
 )
 
 
@@ -168,16 +169,18 @@ def _candidate_digest(value: Any, *, limit: int | None = None) -> list[dict[str,
     for row in selected:
         if not isinstance(row, dict):
             continue
-        result.append({key: val for key, val in {
+        background = {key: val for key, val in {
             "id": row.get("id"), "title": row.get("title"),
-            "hypothesis": row.get("hypothesis"), "scope": row.get("scope"),
             "why_now": row.get("why_now"), "goal_advance": row.get("goal_advance"),
-            "decisive_test": row.get("decisive_test"),
             "lineage_anchor_node_id": row.get("lineage_anchor_node_id"),
             "evolution_operator": row.get("evolution_operator"), "status": row.get("status"),
             "evidence_refs": list(row.get("evidence_refs") or []),
             "rationale": row.get("rationale"),
-        }.items() if val not in (None, "", [], {})})
+        }.items() if val not in (None, "", [], {})}
+        candidate_id = background.pop("id", None)
+        result.append({**({"id": candidate_id} if candidate_id else {}),
+                       "frozen_objective": frozen_science_view(row),
+                       "proposal_context": background})
     return result
 
 
@@ -189,6 +192,15 @@ def _scientific_synthesis_view(value: Any) -> dict[str, Any]:
         key: val for key, val in value.items()
         if key != "next_frontier_recommendation"
     }
+
+
+def _repair_candidate_view(value: Mapping[str, Any]) -> dict[str, Any]:
+    # Preserve the bounded review's old inputs; history/motivation belong to
+    # candidate_review and must not reopen qualification during verification.
+    science = {key: value[key] for key in ("id", *SCIENCE_FIELDS, "goal_advance") if key in value}
+    return {**_candidate_digest([science])[0],
+            **{key: value[key] for key in ("estimand", "parent_candidate_id", "repair_details", "blocker_closures")
+               if key in value}}
 
 
 def _candidate_index(value: Any, *, limit: int | None = None) -> list[dict[str, Any]]:
@@ -411,13 +423,7 @@ def _investigator_objective_view(value: Any) -> dict[str, Any]:
     Stable IDs and criterion objects remain available to SDK validation/B/C
     closure but do not enter the Investigator A prompt.
     """
-    if not isinstance(value, dict):
-        return {}
-    return {key: val for key, val in {
-        "hypothesis": value.get("hypothesis"),
-        "scope": value.get("scope"),
-        "decisive_test": value.get("decisive_test") or value.get("cycle_milestone"),
-    }.items() if val not in (None, "", [], {})}
+    return locked_science_view(value)
 
 
 def _qualification_handoff_view(value: Any) -> dict[str, Any] | None:
@@ -437,13 +443,7 @@ def _qualification_handoff_view(value: Any) -> dict[str, Any] | None:
 
 def _judge_hypothesis_view(value: Any) -> dict[str, Any]:
     """Only the frozen scientific claim Judge must adjudicate."""
-    if not isinstance(value, dict):
-        return {}
-    return {key: val for key, val in {
-        "hypothesis": value.get("hypothesis"),
-        "scope": value.get("scope"),
-        "decisive_test": value.get("decisive_test") or value.get("cycle_milestone"),
-    }.items() if val not in (None, "", [], {})}
+    return locked_science_view(value)
 
 
 def _judge_investigation_result_view(value: Any) -> dict[str, Any]:
@@ -573,9 +573,7 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
         }.items() if value not in (None, "", [], {})}
     if role == "research_lead" and stage == "hypothesis_display":
         lock = context.get("frozen_hypothesis") if isinstance(context.get("frozen_hypothesis"), dict) else {}
-        return {"frozen_hypothesis": {
-            key: lock[key] for key in ("hypothesis", "scope", "decisive_test") if key in lock
-        }}
+        return {"frozen_hypothesis": locked_science_view(lock)}
     if role == "research_lead" and stage == "selection_repair":
         error = context.get("qualification_error") if isinstance(context.get("qualification_error"), dict) else {}
         return {
@@ -641,8 +639,8 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
             "goal": context.get("goal"),
             "research_contract": context.get("research_contract"),
             "final_gate": context.get("final_gate"),
-            "original_candidate": {key: original[key] for key in ("id", "hypothesis", "scope", "goal_advance", "decisive_test", "estimand") if key in original},
-            "repaired_candidate": {key: repaired[key] for key in ("id", "parent_candidate_id", "hypothesis", "scope", "goal_advance", "decisive_test", "estimand", "repair_details", "blocker_closures") if key in repaired},
+            "original_candidate": _repair_candidate_view(original),
+            "repaired_candidate": _repair_candidate_view(repaired),
             "original_blockers": list(review.get("blocking_issues") or []),
             **graph_access,
             "science_graph_tools": context.get("science_graph_tools"),
@@ -722,13 +720,11 @@ def build_initial_prompt(*, prefix: str, role: str, stage: str, contract_ref: st
                          contract_schema: str, context: Mapping[str, Any], write_rule: str,
                          process_guard: str = "") -> str:
     task = ROLE_STAGE_LABELS.get(stage, stage.replace("_", " "))
-    card = stage_card_text(role, stage)
-    procedure = procedure_card_text(role, stage)
+    card = stage_definition_text(role, stage)
     return (
         f"{prefix} Start the assigned TheoryMaster {role} task.\n"
         f"Current task: {stage} — {task}.\n"
         f"{card}"
-        f"{procedure}"
         f"Output contract: {contract_ref}. Return ONLY one JSON object matching this exact stage contract: {contract_schema}.\n"
         "Respect the frozen scientific state, evidence boundaries, and role authority. Do not add prose. "
         f"{' '.join(part for part in (write_rule, process_guard) if part)}\n"
@@ -739,13 +735,11 @@ def build_initial_prompt(*, prefix: str, role: str, stage: str, contract_ref: st
 def build_continuation_prompt(*, role: str, stage: str, contract_ref: str,
                               contract_schema: str, context: Mapping[str, Any]) -> str:
     task = ROLE_STAGE_LABELS.get(stage, stage.replace("_", " "))
-    card = stage_card_text(role, stage)
-    procedure = procedure_card_text(role, stage)
+    card = stage_definition_text(role, stage)
     return (
         f"Continue as TheoryMaster {role} in the existing thread.\n"
         f"Current task: {stage} — {task}.\n"
         f"{card}"
-        f"{procedure}"
         "Use only the new inputs below plus context already retained in this thread. Do not reopen completed stages, "
         "change a frozen hypothesis, or repeat prior-cycle material.\n"
         f"Output contract: {contract_ref}. Return one JSON object matching this exact {stage} contract: {contract_schema}.\n"
@@ -778,7 +772,7 @@ def build_contract_repair_prompt(
     context = context if isinstance(context, Mapping) else {}
     candidate_order: list[dict[str, Any]] = []
     if stage == "candidate_review":
-        candidates = context.get("candidates")
+        candidates = context.get("candidates", context.get("candidate"))
         if isinstance(candidates, list):
             candidate_order = [
                 {"index": index, "candidate_id": str(item.get("id"))}
@@ -794,14 +788,29 @@ def build_contract_repair_prompt(
             "Review array order may vary, but identities and rationales must remain associated.\n"
             "Do not substitute candidates from Frontier State, prior Cycles, thread history, or any other list.\n"
         )
+    established_guards: list[str] = []
+    locked_stages = {"hypothesis_display", "investigate", "integrate_literature", "judge_rework",
+                     "terminal_assessment", "cycle_synthesis", "frontier_maintenance", "report", "preserve_research"}
+    for key in ("hypothesis_lock", "frozen_hypothesis", "frozen_objective", "active_hypothesis") if stage in locked_stages else ():
+        frozen = context.get(key)
+        if isinstance(frozen, Mapping) and all(str(frozen.get(field) or "").strip()
+                                               for field in ("hypothesis", "scope", "decisive_test")):
+            established_guards.append("The supplied locked scientific object is established; preserve its hypothesis, scope and decisive_test.")
+            break
+    decision = context.get("judge_decision")
+    if stage in {"cycle_synthesis", "frontier_maintenance", "report"} and isinstance(decision, Mapping) and decision.get("verdict"):
+        established_guards.append("The supplied Judge decision is established source material; preserve it without emitting a new adjudication.")
     return (
         f"Contract validation failed for stage {stage}.\n"
         f"This is contract repair attempt {repair_attempt} of {repair_limit}.\n"
-        "Preserve the scientific conclusions, Judge verdict, frozen hypothesis, and evidence boundaries. "
+        "Preserve valid scientific content and decisions already established for this stage, within its current output authority. "
+        "Do not invent a Judge verdict or a hypothesis lock, import stale decisions from earlier stages or Cycles, "
+        "or turn a formatting correction into a new scientific decision. Preserve evidence boundaries. "
         "Correct only the contract violations below. Do not redo the scientific workflow. "
         "If a prior repair still failed, use the updated validation errors to make a concrete correction.\n"
         f"Validation errors:\n{json.dumps(errors, ensure_ascii=False, indent=2)}\n"
-        f"{identity_guard}"
+        + (" ".join(established_guards) + "\n" if established_guards else "")
+        + f"{identity_guard}"
         f"Required stage contract: {contract_schema}\n"
         "Re-emit the complete stage JSON object only."
     )

@@ -281,10 +281,8 @@ def turn_input(
 def write_rule(role: str) -> str:
     if role == "reporter":
         return (
-            "Return only the JSON required by the current Reporter stage. The SDK writes the canonical branch note and applies Canvas patches. "
-            "Do not write calculation scripts, data, plots, notes_dir, Canvas, or the Scientific Model projection yourself. "
-            "Keep note/Canvas narratives compact: report scientific conclusions, scope, limitations and evidence references only; "
-            "never embed raw experimental tables, trajectory events, numerical arrays or full dataset payloads."
+            "Return the current Reporter JSON without direct file writes. "
+            "The SDK persists the report and Cycle Outcome and regenerates the Canvas projection."
         )
     if role == "literature":
         return (

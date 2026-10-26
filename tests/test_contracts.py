@@ -219,14 +219,14 @@ class RoleContractTest(unittest.TestCase):
         maintenance = role_contract("research_lead", phase="frontier_maintenance")
         self.assertEqual(maintenance.prompt_note, "")
         self.assertNotIn("Unmarked means unknown, not closed", maintenance.prompt_projection())
-        from theory_master.stage_registry import procedure_card_text
-        self.assertIn("unmarked is not closed", procedure_card_text("research_lead", "frontier_maintenance"))
+        from theory_master.stage_registry import stage_definition_text
+        self.assertIn("Unmarked means unknown, not closed", stage_definition_text("research_lead", "frontier_maintenance"))
         assembled_frontier = build_initial_prompt(
             prefix="test", role="research_lead", stage="frontier_proposal",
             contract_ref=frontier.ref, contract_schema=frontier_projection,
             context={}, write_rule="",
         )
-        self.assertIn("Each Cycle should pursue a scientifically distinct, independently adjudicable claim", assembled_frontier)
+        self.assertIn("one coherent, independently adjudicable scientific claim", assembled_frontier)
         self.assertIn("Use evolution_operator only from:", assembled_frontier)
 
         challenger = role_contract("challenger", phase="candidate_review")
@@ -237,7 +237,7 @@ class RoleContractTest(unittest.TestCase):
             contract_ref=challenger.ref, contract_schema=challenger.prompt_projection(),
             context={"candidates": [{"id": "cand-1"}]}, write_rule="",
         )
-        self.assertIn("unmet Goal/Final Gate requirement", assembled_challenger)
+        self.assertIn("unmet Goal/Final Gate or a necessary prerequisite", assembled_challenger)
         self.assertIn("concise rationale for the verdict", assembled_challenger)
 
         repair = role_contract("research_lead", phase="selection_repair")
@@ -355,7 +355,7 @@ class RoleContractTest(unittest.TestCase):
             frontier.validate(noncanonical_source, known_context)
 
         missing_operator = {"candidates": [{**base, "lineage_anchor_node_ids": ["H-0007"]}]}
-        with self.assertRaisesRegex(ValueError, "lineage anchors require evolution_operator"):
+        with self.assertRaisesRegex(ValueError, "requires evolution_operator"):
             frontier.validate(missing_operator, known_context)
 
     def test_research_lead_minimal_qualification_contracts(self):

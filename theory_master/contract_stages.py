@@ -8,6 +8,8 @@ import json
 import re
 from typing import Any, Mapping
 
+from .hypothesis_display import TITLE_LIMIT, CLAIM_LIMIT, CONDITIONS_LIMIT
+
 from .cycle_criteria import criterion_rows
 
 from .contract_roles import (
@@ -88,23 +90,31 @@ MINIMAL_FRONTIER_PROPOSAL_VALIDATION_SCHEMA = {
 FRONTIER_PROPOSAL_PROMPT_NOTE = """Use evolution_operator only from: refine | specialize | generalize | alternative | combine | derive | counter_hypothesis. For a root H, omit all lineage fields. If revisiting a parked source, include that H in lineage_anchor_node_ids. Anchors are directly relevant lineage references, not evidence. The SDK owns H identity and creates lineage edges; do not infer identity from history. Closed/rejected H may source a distinct new H but is not reopened. Do not return canvas_title, canvas_summary, canvas_claim, or canvas_conditions; post-lock hypothesis_display owns display output."""
 
 MINIMAL_HYPOTHESIS_DISPLAY_SCHEMA = {
-    "canvas_title": "faithful scientific title, maximum 48 characters",
-    "canvas_claim": "the concrete claim to explain or predict, maximum 78 characters; do not add conclusions",
-    "canvas_conditions": "the indispensable scope/conditions, maximum 54 characters",
+    "canvas_title": f"faithful scientific title, maximum {TITLE_LIMIT} characters",
+    "canvas_claim": f"the concrete claim to explain or predict, maximum {CLAIM_LIMIT} characters; do not add conclusions",
+    "canvas_conditions": f"the indispensable scope/conditions, maximum {CONDITIONS_LIMIT} characters",
 }
 
-HYPOTHESIS_DISPLAY_PROMPT_NOTE = """Compress only the frozen Hypothesis, Scope, and Decisive Test into the three schema fields; do not change or adjudicate the proposition or imply support. The SDK appends the epistemic label. Do not use placeholders for the claim or conditions; if faithful compression is impossible, return the unavailable marker so the SDK uses its safe fallback."""
+HYPOTHESIS_DISPLAY_PROMPT_NOTE = """Keep each field below its schema character limit; return substantive claim and conditions, not placeholders. The SDK composes the summary and appends the epistemic label."""
 
 
 def _hypothesis_display_structure(output: dict[str, Any], _context: Mapping[str, Any]) -> None:
     expected = {"canvas_title", "canvas_claim", "canvas_conditions"}
     if set(output) != expected:
         raise ValueError("hypothesis_display must return exactly canvas_title, canvas_claim, and canvas_conditions")
-    limits = (("canvas_title", 48), ("canvas_claim", 78), ("canvas_conditions", 54))
+    limits = (("canvas_title", TITLE_LIMIT), ("canvas_claim", CLAIM_LIMIT), ("canvas_conditions", CONDITIONS_LIMIT))
     for key, limit in limits:
         value = output.get(key)
-        if not isinstance(value, str) or not value.strip() or len(" ".join(value.split())) > limit:
-            raise ValueError(f"hypothesis_display {key} must be nonempty and at most {limit} characters")
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"hypothesis_display {key} must be a nonempty string (limit {limit} characters)")
+        actual = len(" ".join(value.split()))
+        if actual > limit:
+            excess = actual - limit
+            unit = "character" if excess == 1 else "characters"
+            raise ValueError(
+                f"hypothesis_display {key} is {actual} characters; limit is {limit} "
+                f"(exceeds by {excess} {unit})"
+            )
     claim = " ".join(output["canvas_claim"].split())
     conditions = " ".join(output["canvas_conditions"].split())
     placeholders = {"摘要暂不可用", "见档案", "详见档案", "无法压缩", "unknown", "n/a"}
@@ -398,6 +408,14 @@ def _minimal_frontier_structure(output: dict[str, Any], context: Mapping[str, An
             if lineage_anchor:
                 raise ValueError(f"candidates[{index}] must not mix singular and plural lineage anchors")
         evolution_operator = candidate.get("evolution_operator")
+        known_h = _known_hypothesis_ids(context)
+        if known_h and evolution_operator in (None, ""):
+            raise ValueError(
+                f"candidates[{index}] requires evolution_operator and lineage_anchor_node_ids "
+                "because SQLite already contains Hypotheses. Author the relation using "
+                "refine|specialize|generalize|alternative|combine|derive|counter_hypothesis "
+                "and 1..3 relevant existing H IDs: " + ", ".join(sorted(known_h))
+            )
         if evolution_operator not in (None, ""):
             allowed_evolution_operators = {
                 "refine", "specialize", "generalize", "alternative",

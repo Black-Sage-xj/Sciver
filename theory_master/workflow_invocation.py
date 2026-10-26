@@ -31,6 +31,33 @@ from .workflow_support import RecoveryStop
 from .native_goal import NativeGoalIncomplete, NativeGoalBudgetExceeded, NativeGoalDeliveryError
 from .investigator_budget import budget_status, BUDGET_ATTENTION_CODE
 from .provider_errors import ProviderQuotaExhausted
+from .scientific_objective import frozen_science_view, review_binding, require_review_binding
+
+
+def _review_subjects(context: dict[str, Any], stage: str) -> dict[str, dict[str, Any]]:
+    rows = ([context.get("repaired_candidate", {})] if stage == "repair_verification"
+            else context.get("candidate", context.get("candidates", [])))
+    return {str(row.get("id") or ""): row.get("frozen_objective", frozen_science_view(row))
+            for row in rows if isinstance(row, dict)}
+
+
+def _bind_review_output(output: dict[str, Any], context: dict[str, Any], stage: str,
+                        *, verify: bool = False) -> dict[str, Any]:
+    subjects = _review_subjects(context, stage)
+    result = json.loads(json.dumps(output))
+    reviews = [result] if stage == "repair_verification" else result.get("reviews", [])
+    for review in reviews:
+        candidate_id = str(review.get("candidate_id") or "")
+        if candidate_id not in subjects:
+            raise RecoveryStop("scientific review subject is missing from its invocation")
+        if verify:
+            try:
+                require_review_binding(candidate_id, subjects[candidate_id], review.get("reviewed_science"))
+            except (KeyError, ValueError) as exc:
+                raise RecoveryStop(str(exc)) from exc
+        else:
+            review["reviewed_science"] = review_binding(candidate_id, subjects[candidate_id])
+    return result
 
 _LEGACY_INVESTIGATOR_ARTIFACT_FIELDS = frozenset({
     "artifacts", "artifact_pointers", "artifact_roles", "artifact_path", "path",
@@ -225,6 +252,15 @@ class InvocationMixin:
             "at": now(),
         }
         write_json(artifact, payload)
+        if role == "research_lead" and stage == "hypothesis_display":
+            # This optional view has no scientific authority. Keep its failed
+            # invocation evidence, then let the caller render the safe fallback.
+            invocation_ledger.transition(invocation_id, "failed", role=role, thread_id=thread_id,
+                                         error_type="ContractRepairFailed", error="optional display contract repair failed")
+            self._emit(state, "hypothesis.display_contract_failed", {
+                "role": role, "stage": stage, "artifact": str(artifact), "errors": errors,
+            })
+            raise ValueError("optional hypothesis display contract repair failed")
         state.update({
             "status": "needs_attention",
             "phase": f"{role}:{stage}:contract_repair_failed", "closure_reason": "contract_repair_failed",
@@ -286,25 +322,34 @@ class InvocationMixin:
     def _reuse_committed_invocation(
         self, state: dict[str, Any], *, invocation_ledger: InvocationLedger,
         logical_key: str, contract_ref: dict[str, Any], role: str, actual: str,
-        stage: str, output_key: str | None,
+        stage: str, output_key: str | None, context: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         snapshot = invocation_ledger.find_reusable(
             logical_key=logical_key, contract_ref=contract_ref, role=role, stage=stage,
         )
         if snapshot is None:
             return None
+        scientific_review = role == "challenger" and stage in {"candidate_review", "repair_verification"}
         invocation_id = str(snapshot.get("invocation_id") or "")
         expected_path = self.cycle_dir / "semantic_closure" / f"{invocation_id}.json"
         expected_hash = str(snapshot.get("closure_hash") or "")
         if not invocation_id or not expected_hash or not expected_path.is_file():
+            if scientific_review:
+                raise RecoveryStop("scientific review closure unavailable; explicit recovery required")
             return None
         try:
             closure = json.loads(expected_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            if scientific_review:
+                raise RecoveryStop("scientific review closure unreadable; explicit recovery required")
             return None
         if not isinstance(closure, dict) or stable_hash(closure) != expected_hash:
+            if scientific_review:
+                raise RecoveryStop("scientific review closure integrity changed; explicit recovery required")
             return None
         if closure.get("role") != role or closure.get("stage") != stage:
+            if scientific_review:
+                raise RecoveryStop("scientific review closure identity changed; explicit recovery required")
             return None
         rejected = [
             item for item in (closure.get("evidence_registration_audit") or [])
@@ -329,7 +374,13 @@ class InvocationMixin:
             return None
         output = closure.get("closed_output")
         if not isinstance(output, dict):
+            if scientific_review:
+                raise RecoveryStop("scientific review result unavailable; explicit recovery required")
             return None
+        if role == "challenger" and stage in {"candidate_review", "repair_verification"}:
+            # Do not rebind old results to a new body or silently spend a fresh
+            # model call when legacy closures lack this protocol's binding.
+            output = _bind_review_output(output, context or {}, stage, verify=True)
         agent_output = closure.get("agent_output")
         if isinstance(agent_output, dict):
             state.setdefault("agent_outputs", {})[output_key or role] = agent_output
@@ -409,7 +460,7 @@ class InvocationMixin:
         reused = self._reuse_committed_invocation(
             state, invocation_ledger=invocation_ledger, logical_key=logical_key,
             contract_ref=contract.descriptor(), role=role, actual=actual, stage=stage,
-            output_key=output_key,
+            output_key=output_key, context=context,
         )
         if reused is not None:
             return reused
@@ -769,12 +820,11 @@ class InvocationMixin:
                 json.dumps(prompt_context, ensure_ascii=False, default=str)
                 + "\n\nSDK DELIVERY INTERFACE (not scientific evaluation criteria): "
                 + f"Only after completing the frozen science, write {handoff_path} "
-                + 'as JSON: {"findings":[{"claim":"complete scientific conclusion, including essential '
-                + 'conditions and evidence boundaries"}]}. No other Finding fields are required. '
-                + "You may use statement instead of claim, or simple strings in findings. "
-                + "Optional scientific method (text) and result (any JSON data) fields are "
-                + "preserved verbatim for Judge review; include them whenever they add "
-                + "material scientific information. Do not invent placeholder values. "
+                + "as JSON following the current output contract:\n"
+                + contract.prompt_projection(prompt_context)
+                + "\nThe handoff also accepts claim as an alias for statement, or simple strings in findings. "
+                + "Only a complete self-contained statement is required for each Finding; method, result and provenance "
+                + "are optional authored content. Omit unused optional fields; do not invent placeholder values. "
                 + "Choose the count and content yourself; preserve distinct scientific claims. "
                 + "Put detailed proofs, scripts, numbers and other material in arbitrary research files, "
                 + "but make each submitted claim scientifically self-contained. "
@@ -1208,6 +1258,10 @@ class InvocationMixin:
             output, semantic_audit = annotate_literature(agent_output, semantic_context, self.semantic_backend)
         from .contract_closure import bind_registered_evidence, close_agent_output
         output = close_agent_output(role, stage, output, validation_context, state)
+        if role == "challenger" and stage in {"candidate_review", "repair_verification"}:
+            # Bind the actual delivered projection, not a model-provided claim
+            # or a candidate reconstructed after invocation/cache reuse.
+            output = _bind_review_output(output, initial_context, stage)
         state.setdefault("agent_outputs", {})[output_key or role] = agent_output
         if (actual == "research_lead" and stage in {"frontier_proposal", "frontier_maintenance"}
                 and graph_stamp and isinstance(initial_context.get("agent_graph"), dict)):

@@ -5,7 +5,6 @@ that a language model will follow a prompt in a future live research Cycle.
 """
 from __future__ import annotations
 
-import math
 import unittest
 
 from theory_master.contracts import role_contract
@@ -35,38 +34,51 @@ class DecisiveTestInferentialQualityPromptTests(unittest.TestCase):
             {"goal": "predict energy", "final_gate": "independent physical mechanism"},
         ):
             with self.subTest(prompt_kind=prompt.splitlines()[0]):
-                self.assertIn("scientifically distinct, independently adjudicable claim", prompt)
-                self.assertIn("Tests must add discriminating information beyond adjudicated outcomes", prompt)
-                self.assertIn("a contrary result refutes H only when its local prediction is necessary", prompt)
-                self.assertIn("relevant alternatives or limiting cases, not irrelevant baselines", prompt)
+                self.assertIn("substantive change from prior claims", prompt)
+                self.assertIn("simpler explanation", prompt)
+                self.assertIn("existing method", prompt)
+                self.assertIn("appropriate contrast", prompt)
+                self.assertIn("necessary local prediction", prompt)
+                self.assertIn("do not require irrelevant baselines", prompt)
                 self.assertIn("Current task: frontier_proposal", prompt)
                 self.assertIn("Context:", prompt)
 
     def test_lead_must_define_informative_precision_relative_to_inference(self):
         card = stage_card_text("research_lead", "frontier_proposal")
-        self.assertIn("Match uncertainty and proof precision to the claimed inference", card)
-        self.assertIn("do not impose universal thresholds", card)
-        self.assertIn("Indispensable premises need a credible in-scope route", card)
-        for other_role in ("investigator", "judge", "reporter"):
-            self.assertNotIn("Scientific incremental value", stage_card_text(other_role, "investigate"))
-            self.assertNotIn("Informative precision", stage_card_text(other_role, "investigate"))
+        self.assertIn("uncertainty and proof precision", card)
+        self.assertIn("the scientific distinction claimed", card)
+        self.assertIn("logically attainable", card)
+        self.assertIn("for statistical tests, statistically reachable", card)
+        self.assertIn("nonzero, finite or converged estimate", card)
+        self.assertIn("Avoid universal sample sizes or thresholds", card)
+        for other_role, other_stage in (
+            ("investigator", "investigate"), ("judge", "terminal_assessment"),
+            ("reporter", "report"),
+        ):
+            # Qualification's comparison of proposed directions must not be
+            # injected into execution, adjudication or reporting.
+            other = stage_card_text(other_role, other_stage)
+            self.assertNotIn("compare with a simpler explanation or existing method", other)
+            self.assertNotIn("substantive change from prior claims", other)
 
     def test_challenger_independent_capacity_audit_and_qualified_local_results(self):
         for prompt in self._turn_prompts(
             "challenger", "candidate_review",
             {"candidate": [{"hypothesis": "Prediction", "decisive_test": "Preplanned evaluation"}]},
         ):
-            for requirement in (
-                "Judge hypothesis–test alignment, inferential capacity and scope",
-                "a necessary local prediction is acceptable without settling the whole hypothesis",
-                "Numeric thresholds need a theoretical, prior or design basis",
-                "effect estimation with uncertainty instead of an invented cutoff",
-                "independent-unit sample size against the scientific distinction claimed",
-                "Matching, contrary and genuinely inconclusive results must be meaningful",
-                "An unresolved scientific prerequisite is not a qualification blocker",
+            for instruction in (
+                "relevant simpler explanations or existing methods",
+                "Check logical reachability of the claimed decision",
+                "for empirical designs also assess independent units",
+                "statistically unreachable outcomes under the stated design",
+                "informative estimate or bound with uncertainty",
+                "local result bears on a broader claim only within its actual logical implication",
+                "eventual negative/open result is not itself a blocker",
+                "credible in-scope route and meaningful test remain",
                 "Do not demand optional stronger claims, irrelevant baselines",
+                "purely theoretical or existence proofs need no data matching",
             ):
-                self.assertIn(requirement, prompt)
+                self.assertIn(instruction, prompt)
             self.assertNotIn("R_eff", prompt)
             self.assertNotIn("p=0.025", prompt)
 
@@ -78,7 +90,7 @@ class DecisiveTestInferentialQualityPromptTests(unittest.TestCase):
         self.assertIn("qualified", str(challenger_contract.prompt_schema).lower()
                       + stage_card_text("challenger", "candidate_review").lower())
         self.assertIn("revise", stage_card_text("challenger", "candidate_review"))
-        self.assertIn("reject", stage_card_text("challenger", "candidate_review").lower())
+        self.assertIn("reject", stage_card_text("challenger", "candidate_review"))
         sample = {
             "hypothesis": "A hard-to-prove exact statement",
             "scope": "finite deterministic domain",
@@ -92,19 +104,25 @@ class DecisiveTestInferentialQualityPromptTests(unittest.TestCase):
                             "current_frontiers": [], "lineage": [], "focus_details": [],
                             "external_sources": [], "external_references": [], "source_relations": []},
         })["candidate"][0]
-        self.assertEqual(candidate, sample)
+        # The current projection separates binding science from proposal
+        # rationale; all original scientific content must survive that split.
+        self.assertEqual(candidate["frozen_objective"], {
+            key: sample[key] for key in ("hypothesis", "scope", "decisive_test")
+        })
+        self.assertEqual(candidate["proposal_context"], {
+            key: sample[key] for key in ("why_now", "goal_advance")
+        })
         self.assertNotIn("power", candidate)
         self.assertNotIn("statistical_design", candidate)
         self.assertNotIn("baseline", candidate)
         self.assertNotIn("test_info_gain", candidate)
         # This change belongs to proposal/qualification, never native Goal or
         # the Judge's already-frozen terminal scientific criteria.
-        self.assertNotIn("Inferential capacity and incremental value",
-                         stage_card_text("investigator", "investigate"))
-        self.assertNotIn("Inferential capacity and incremental value",
-                         stage_card_text("judge", "terminal_assessment"))
+        for role, stage in (("investigator", "investigate"), ("judge", "terminal_assessment")):
+            self.assertNotIn("Independently qualify each supplied candidate",
+                             stage_card_text(role, stage))
 
-    def test_small_exact_design_cannot_reach_claimed_precision(self):
+    def test_cycle53_is_counterexample_to_unreachable_significance_exit(self):
         # A deliberately simple math fixture grounding the generic constraint.
         # It is NOT encoded in the stage prompt as a universal sample-size rule.
         n = 3
@@ -113,22 +131,24 @@ class DecisiveTestInferentialQualityPromptTests(unittest.TestCase):
         self.assertEqual(smallest_two_sided_p, .25)
         self.assertGreater(smallest_two_sided_p, asserted_alpha)
         challenger = stage_card_text("challenger", "candidate_review")
-        self.assertIn("independent-unit sample size against the scientific distinction claimed", challenger)
-        self.assertIn("the decisive outcome is unreachable", challenger)
+        self.assertIn("under the stated design", challenger)
+        self.assertIn("statistically unreachable outcomes", challenger)
         self.assertNotIn("0.025", challenger)
         self.assertNotIn("three networks", challenger)
         # Finite exact counterexamples, one-sided exploratory tests, and valid
         # uncertain results must remain viable without arbitrary universal bars.
-        self.assertIn("Matching, contrary and genuinely inconclusive results must be meaningful", challenger)
+        self.assertIn("Matching, contrary and inconclusive results must retain scientific meaning", challenger)
         self.assertIn("Do not demand optional stronger claims", challenger)
 
     def test_cannot_repair_and_investigator_duties_are_unchanged(self):
         repair = stage_card_text("research_lead", "selection_repair")
         self.assertIn("cannot_repair", repair)
-        self.assertIn("does not enter Investigator", repair)
+        self.assertIn("cannot_repair remains unqualified, does not lock H and does not enter Investigator", repair)
         scientific = stage_card_text("investigator", "investigate")
-        self.assertIn("Complete the full frozen decisive research", scientific)
-        self.assertNotIn("Scientific incremental value", scientific)
+        self.assertIn("Native Goal supplies the operative scientific completion conditions", scientific)
+        self.assertIn("combined findings must address the whole frozen test", scientific)
+        self.assertIn("Do not submit a partial theorem", scientific)
+        self.assertNotIn("Independently qualify each supplied candidate", scientific)
 
 
 if __name__ == "__main__":

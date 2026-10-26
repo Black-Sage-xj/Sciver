@@ -171,6 +171,12 @@ class GoalCompletionMixin:
             seal: dict[str, Any] | None = None
             if verdict == "passed":
                 seal = self._seal_goal_in_sqlite(plan_path, graph_path, receipt, rationale)
+            elif verdict == "not_passed":
+                from .science_graph_store import ScienceGraphStore
+                with ScienceGraphStore(graph_path) as store:
+                    store.record_goal_gate_not_passed(
+                        cycle_id=str(self.cycle_dir.name), rationale=rationale,
+                    )
         return self._apply_goal_completion(state, result, verdict, rationale, seal)
 
     def _seal_goal_in_sqlite(self, plan_path: Path, graph_path: Path, receipt: Path,

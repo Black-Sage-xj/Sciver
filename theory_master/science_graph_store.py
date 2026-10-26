@@ -217,6 +217,13 @@ class ScienceGraphStore:
                 cycle_id TEXT NOT NULL, verdict TEXT NOT NULL,
                 source_json TEXT NOT NULL, recorded_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS goal_gate_assessments(
+                cycle_id TEXT PRIMARY KEY,
+                outcome_id TEXT NOT NULL UNIQUE REFERENCES cycle_evaluations(id),
+                verdict TEXT NOT NULL CHECK(verdict IN ('passed','not_passed')),
+                rationale TEXT NOT NULL,
+                recorded_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS cycle_preservations(
                 cycle_id TEXT PRIMARY KEY,
                 hypothesis_id TEXT NOT NULL REFERENCES hypotheses(id),
@@ -389,6 +396,40 @@ class ScienceGraphStore:
         record["detail"] = json.loads(row["detail_json"])
         return record
 
+    def _goal_gate_outcome(self, cycle_id: str) -> sqlite3.Row:
+        row = self.db.execute(
+            "SELECT id,verdict FROM cycle_evaluations WHERE cycle_id=?", (cycle_id,)
+        ).fetchone()
+        if row is None or row["verdict"] != "supported":
+            raise ValueError("Goal Gate assessment requires a supported Cycle Outcome")
+        return row
+
+    def _record_goal_gate_assessment(self, cycle_id: str, verdict: str, rationale: str) -> None:
+        if verdict not in {"passed", "not_passed"} or not rationale.strip():
+            raise ValueError("Goal Gate assessment requires verdict and rationale")
+        outcome = self._goal_gate_outcome(cycle_id)
+        prior = self.db.execute(
+            "SELECT outcome_id,verdict,rationale FROM goal_gate_assessments WHERE cycle_id=?",
+            (cycle_id,),
+        ).fetchone()
+        if prior is not None:
+            if (prior["outcome_id"], prior["verdict"], prior["rationale"]) != (
+                outcome["id"], verdict, rationale
+            ):
+                raise ValueError("Goal Gate assessment replay conflicts")
+            return
+        self.db.execute(
+            "INSERT INTO goal_gate_assessments(cycle_id,outcome_id,verdict,rationale,recorded_at) "
+            "VALUES (?,?,?,?,?)",
+            (cycle_id, outcome["id"], verdict, rationale, _timestamp()),
+        )
+        self._event("goal.assessed", cycle_id, {"verdict": verdict, "outcome_id": outcome["id"]})
+
+    def record_goal_gate_not_passed(self, *, cycle_id: str, rationale: str) -> None:
+        """Attach a failed task-level Gate to its immutable supported Cycle Outcome."""
+        with self.transaction():
+            self._record_goal_gate_assessment(str(cycle_id), "not_passed", rationale)
+
     def seal_goal(self, *, goal_id: str, source_cycle: str, research_plan_sha256: str,
                   judge_receipt_ref: str | None, detail: dict[str, Any]) -> dict[str, Any]:
         """Persist Goal PASS once and close every open frontier in the same transaction.
@@ -438,6 +479,12 @@ class ScienceGraphStore:
                     (goal_id, "passed", source_cycle, _timestamp(), research_plan_sha256,
                      judge_receipt_ref, _json(detail)),
                 )
+                if self.db.execute(
+                    "SELECT 1 FROM cycle_evaluations WHERE cycle_id=?", (source_cycle,)
+                ).fetchone():
+                    self._record_goal_gate_assessment(
+                        source_cycle, "passed", str(detail.get("rationale") or "")
+                    )
                 self._event("goal.sealed", goal_id, {
                     "source_cycle": source_cycle, "closed_frontier_ids": closed,
                     "goal_completed_stop_ids": stopped,
@@ -947,6 +994,16 @@ class ScienceGraphStore:
 
     def graph_view(self) -> dict[str, Any]:
         """Only Hypothesis/External appear as GRAPH nodes; Outcomes stay embedded."""
+        goal_gate_by_outcome = {}
+        if self.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_gate_assessments'"
+        ).fetchone():
+            goal_gate_by_outcome = {
+                row["outcome_id"]: {"verdict": row["verdict"], "rationale": row["rationale"]}
+                for row in self.db.execute(
+                    "SELECT outcome_id,verdict,rationale FROM goal_gate_assessments"
+                )
+            }
         hypotheses = []
         for h in self.db.execute("SELECT * FROM hypotheses ORDER BY id"):
             item = dict(h)
@@ -960,12 +1017,21 @@ class ScienceGraphStore:
                 outcome[name] = json.loads(outcome.pop(name+"_json"))
             item["whole_h_assessment"] = outcome
             item["legacy_scientific_status"] = item["scientific_status"]
-            item["scientific_status"] = outcome["verdict"]
+            # The compatibility row starts as an empty open placeholder. It is
+            # not a whole-H adjudication and must not look like Judge open.
+            placeholder = (outcome["verdict"] == "open" and not outcome["cycle_id"]
+                           and not outcome["judge_rationale"]
+                           and not outcome["decisive_test"] and not outcome["summary"])
+            item["scientific_status"] = "none" if placeholder else outcome["verdict"]
             cycle_records = [dict(r) for r in self.db.execute(
                 "SELECT id,cycle_id,verdict,source_json FROM cycle_evaluations WHERE hypothesis_id=?",
                 (h["id"],),
             )]
             item["cycle_outcomes"] = self.cycle_outcomes(h["id"])
+            for cycle_outcome in item["cycle_outcomes"]:
+                assessment = goal_gate_by_outcome.get(cycle_outcome.get("id"))
+                if assessment is not None:
+                    cycle_outcome["goal_gate"] = assessment
             item["cycle_count"] = len(item["cycle_outcomes"])
             for cycle_outcome in item["cycle_outcomes"]:
                 cycle_id = str(cycle_outcome["cycle_id"])
@@ -975,10 +1041,6 @@ class ScienceGraphStore:
                         if re.fullmatch(r"[A-Za-z0-9_-]+", cycle_id) else None
                     )
             item["outcome"] = item["cycle_outcomes"][-1] if item["cycle_outcomes"] else None
-            # A legacy open whole-H placeholder is not an actual Judge verdict.
-            placeholder = (outcome["verdict"] == "open" and not outcome["cycle_id"]
-                           and not outcome["judge_rationale"]
-                           and not outcome["decisive_test"] and not outcome["summary"])
             # The epistemic label is SDK-owned and follows the current whole-H
             # assessment. The frozen claim/scope words themselves are untouched.
             from .hypothesis_display import summary_with_current_status
@@ -1118,6 +1180,7 @@ class ScienceGraphStore:
         compact_hypotheses: list[list[Any]] = []
         focus_details: list[dict[str, Any]] = []
         current_frontiers: list[dict[str, Any]] = []
+        goal_gate_attention: list[list[str]] = []
         hypothesis_columns = [
             "id", "title", "whole_h_status", "frontier_states", "cycle_count",
             "cycle_result_pattern",
@@ -1127,6 +1190,13 @@ class ScienceGraphStore:
         for node in sorted(hypotheses, key=h_order):
             node_id = str(node["id"])
             records = list(node.get("cycle_outcomes") or [])
+            for outcome in records:
+                gate = outcome.get("goal_gate") or {}
+                if gate.get("verdict") == "not_passed":
+                    goal_gate_attention.append([
+                        node_id, str(outcome.get("cycle_id") or ""),
+                        "not_passed", str(gate.get("rationale") or ""),
+                    ])
             statuses = frontier_states_for(node)
             # Non-focus H remain discoverable by ID and hypothesis-detail.
             dossier_ref = dossier_ref_for(node) if node_id in focus_ids else ""
@@ -1161,6 +1231,8 @@ class ScienceGraphStore:
                     report_ref = outcome.get("report_ref") or outcome.get("document_ref")
                     if report_ref:
                         row["detail_ref"] = str(report_ref)
+                    if outcome.get("goal_gate"):
+                        row["goal_gate"] = dict(outcome["goal_gate"])
                     compact_outcomes.append(row)
                 details: dict[str, Any] = {
                     "id": node_id,
@@ -1274,12 +1346,17 @@ class ScienceGraphStore:
             "semantics": {
                 "frontier_states": "unmarked=no stored label; never infer closed from topology",
                 "whole_h_status": "none=no whole-H Judge verdict; open=explicit whole-H verdict; Cycle outcomes are distinct",
+                "cycle_result_pattern": "aggregate of Cycle-local verdicts, not a whole-H or task Goal verdict",
                 "current_frontiers": "Active-only; nested frontier status is implicit; other states in H index; full detail via hypothesis-detail",
+                "focus_details": "empty means no H was selected for automatic detail expansion, not that Outcomes are absent",
+                "goal_gate_attention": "task-level not_passed assessments linked to supported Cycle Outcomes; closed H remains relevant",
                 "lineage": "Incoming typed edges to active H and edges incident to focus; omitted edges via hypothesis-detail",
                 "external": "Only relevant IDs/summaries; full source via external-detail",
             },
             "hypothesis_columns": hypothesis_columns,
             "hypotheses": compact_hypotheses,
+            "goal_gate_attention_columns": ["hypothesis_id", "cycle", "verdict", "rationale"],
+            "goal_gate_attention": goal_gate_attention,
             "current_frontiers": current_frontiers,
             "focus_details": focus_details,
             "lineage_columns": ["from", "to", "operator", "outcome_ref"],
@@ -1322,6 +1399,13 @@ class ScienceGraphStore:
             self.agent_hypothesis_detail(hypothesis_id, recent_outcomes=recent_outcomes)
             for hypothesis_id in source_ids
         ]
+        goal_gate_attention = [
+            [str(node["id"]), str(outcome.get("cycle_id") or ""), "not_passed",
+             str((outcome.get("goal_gate") or {}).get("rationale") or "")]
+            for node in graph["nodes"] if node.get("type") == "Hypothesis"
+            for outcome in node.get("cycle_outcomes") or []
+            if (outcome.get("goal_gate") or {}).get("verdict") == "not_passed"
+        ]
         relevant_ids = set(source_ids)
         lineage = [[
             str(edge["source_hypothesis"]), str(edge["target_hypothesis"]),
@@ -1336,6 +1420,8 @@ class ScienceGraphStore:
             "semantics": "SQLite-derived source-H dossiers and typed adjacent lineage for the current candidate shortlist; no Canvas geometry or file path is authoritative.",
             "candidate_sources": candidate_sources,
             "source_hypotheses": details,
+            "goal_gate_attention_columns": ["hypothesis_id", "cycle", "verdict", "rationale"],
+            "goal_gate_attention": goal_gate_attention,
             "lineage_columns": ["from", "to", "operator", "outcome_ref"],
             "lineage": lineage,
         }
@@ -1466,6 +1552,7 @@ class ScienceGraphStore:
             "summary", "decisive_test", "judge_rationale", "findings",
             "open_questions", "boundary", "evidence_refs", "report_ref",
             "document_ref",
+            "goal_gate",
         )
         lineage = [[
             str(edge["source_hypothesis"]), str(edge["target_hypothesis"]),
@@ -1526,12 +1613,16 @@ class ScienceGraphStore:
             raise ValueError("invalid Cycle ID")
         tables = {row["name"] for row in self.db.execute(
             "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name IN ('cycle_evaluations','cycle_preservations','cycle_memory_index')"
+            "AND name IN ('cycle_evaluations','cycle_preservations','cycle_memory_index','goal_gate_assessments')"
         )}
         judge = (self.db.execute(
             "SELECT hypothesis_id,verdict,source_json FROM cycle_evaluations WHERE cycle_id=?",
             (ident,),
         ).fetchone() if "cycle_evaluations" in tables else None)
+        goal_gate = (self.db.execute(
+            "SELECT verdict,rationale FROM goal_gate_assessments WHERE cycle_id=?",
+            (ident,),
+        ).fetchone() if "goal_gate_assessments" in tables else None)
         preserved = (self.db.execute(
             "SELECT hypothesis_id,source_json FROM cycle_preservations WHERE cycle_id=?",
             (ident,),
@@ -1600,6 +1691,8 @@ class ScienceGraphStore:
             "record_kind": record_kind,
             "adjudication_status": "adjudicated" if judge is not None else "unadjudicated",
             "judge_verdict": verdict if judge is not None else None,
+            "goal_gate": {"verdict": str(goal_gate["verdict"]),
+                          "rationale": str(goal_gate["rationale"])} if goal_gate is not None else None,
             "preserved": preserved is not None,
             "summary": preview(record.get("summary"), 520),
             "decisive_test": preview(record.get("decisive_test"), 300),

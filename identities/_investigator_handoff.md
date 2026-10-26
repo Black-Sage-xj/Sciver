@@ -1,5 +1,7 @@
-# Investigator · Native Goal Setup Contract
+# Investigator · SDK 调用与交付
 
-当前完成条件只在 Native Goal。短 Goal 内嵌完整冻结科学对象；超过 3800 字符安全预算时，完整 hypothesis、scope、decisive_test 留在紧邻 Setup，Goal 只保留哈希锚点。Setup 同时给出 Judge 原始请求、导航和机器交付路径。Setup 不是第二个科研命题，也不是旧 Stage Card。
+本次任务、允许动作和完成条件以 SDK 提供的当前任务入口为准：Native Goal 或 Stage。历史调用、旧 Stage 或额外接口说明不扩大当前授权，也不把未完成科研变成已完成结果。
 
-按当前科学问题有目的地检索本地数据、源码和 research artifact。没有提前列出的文件清单不限制科学读取。只在冻结科学真正完成后，按该 Setup 的小型 JSON 接口交付。不要因历史记录或旧 Stage Card 改写冻结目标。
+SDK 注入的冻结科学对象、当前任务入口及其完整引用共同界定本次工作。Setup 提供必要上下文、导航与本次交付接口，不另设科研目标或完成标准；交付必须使用当前接口，不从旧对话继承路径或字段协议。
+
+按当前授权有目的地检索本地数据、源码和 research artifact；没有提前列出的文件清单不限制必要科学读取。使用当前 Setup 或 Contract 指定的交付接口。不得从历史记录继承已失效的目标、路径、裁决或额外授权。

@@ -15,6 +15,7 @@ from theory_master.output_normalization import normalize_agent_output
 from theory_master.prompt_stages import ROLE_STAGE_LABELS, STAGE_CARDS, stage_context, stage_for
 from theory_master.reporting import ReportingMixin
 from theory_master.skills import ROLE_DISPLAY_NAMES, role_display_name
+from theory_master.stage_registry import stage_card_text, procedure_card_text, stage_definition_text
 
 
 class RefactorGuardrailsTest(unittest.TestCase):
@@ -26,8 +27,25 @@ class RefactorGuardrailsTest(unittest.TestCase):
             role, stage = role_stage
             with self.subTest(role=role, stage=stage):
                 card = STAGE_CARDS[role_stage]
-                self.assertEqual(set(card), {"objective", "may_do", "must_not", "exit"})
-                self.assertTrue(all(str(value).strip() for value in card.values()))
+                required = {"objective", "may_do", "must_not", "exit"}
+                self.assertLessEqual(required, set(card))
+                self.assertLessEqual(set(card), required | {"procedure"})
+                for key in required:
+                    self.assertIsInstance(card[key], str)
+                    self.assertTrue(card[key].strip())
+                if "procedure" in card:
+                    self.assertIsInstance(card["procedure"], (tuple, list))
+                    self.assertTrue(all(isinstance(step, str) and step.strip()
+                                        for step in card["procedure"]))
+                rendered = stage_definition_text(role, stage)
+                stage_text = stage_card_text(role, stage)
+                procedure = procedure_card_text(role, stage)
+                self.assertEqual(rendered, stage_text + procedure)
+                self.assertEqual(rendered.count(stage_text), 1)
+                if procedure:
+                    self.assertEqual(rendered.count(procedure), 1)
+                    for index, step in enumerate(card["procedure"], 1):
+                        self.assertIn(f"{index}. {step}\n", procedure)
 
     def test_every_runtime_stage_has_a_display_label(self):
         missing = {
@@ -65,7 +83,12 @@ class RefactorGuardrailsTest(unittest.TestCase):
             ("research_lead", {"mode": "hypothesis_display"}, None, "hypothesis_display"),
             ("research_lead", {"mode": "frontier_maintenance"}, None, "frontier_maintenance"),
             ("challenger", {}, None, "candidate_review"),
-            ("challenger", {"mode": "repair_verification"}, None, "repair_verification"),
+            ("challenger", {
+                "mode": "repair_verification",
+                "original_candidate": {"id": "parent", "hypothesis": "H", "scope": "S", "decisive_test": "T"},
+                "repaired_candidate": {"id": "repaired", "hypothesis": "H", "scope": "S", "decisive_test": "T clarified"},
+                "original_review": {"blocking_issues": [{"blocker_id": "B-1", "problem": "Ambiguous T", "required_change": "Clarify T"}]},
+            }, None, "repair_verification"),
             ("investigator", {"round": 1}, None, "investigate"),
             ("investigator", {"mode": "preserve_research"}, None, "preserve_research"),
             ("investigator", {"round": 2, "routing_source": "literature"}, None, "integrate_literature"),
@@ -101,6 +124,10 @@ class RefactorGuardrailsTest(unittest.TestCase):
                 projected = stage_context(role, stage, projection_context)
                 self.assertIsInstance(projected, dict)
                 json.dumps(projected, ensure_ascii=False)
+                if (role, stage) == ("challenger", "repair_verification"):
+                    self.assertEqual(projected["original_blockers"], context["original_review"]["blocking_issues"])
+                    self.assertEqual(projected["original_candidate"]["id"], "parent")
+                    self.assertEqual(projected["repaired_candidate"]["id"], "repaired")
                 reached.add((role, stage))
 
         self.assertEqual(reached, set(PHASE_CONTRACTS))

@@ -10,7 +10,6 @@ from unittest import mock
 from theory_master.identity import identity_block, identity_files, identities_root
 from theory_master.skills import developer_instructions
 from theory_master.stage_registry import (
-    PROCEDURE_CARDS,
     STAGE_CARDS,
     procedure_card_text,
     stage_card_text,
@@ -72,7 +71,8 @@ class IdentityLayerOptimizationTests(unittest.TestCase):
             "science_graph_tools",
             "exploration.canvas",
             "research_plan.md",
-            "存在性命题只能由合格实例支持",
+            "有效证明或合格实例支持",
+            "非构造性存在证明同样有效",
             "有限搜索无结果不能充当一般性反证",
         ):
             with self.subTest(phrase=phrase):
@@ -141,7 +141,7 @@ class IdentityLayerOptimizationTests(unittest.TestCase):
                     "Exit / handoff:",
                 ):
                     self.assertIn(label, card)
-                if ("research_lead", stage) in PROCEDURE_CARDS:
+                if STAGE_CARDS[("research_lead", stage)].get("procedure"):
                     self.assertTrue(procedure_card_text("research_lead", stage).startswith(
                         "Procedure for this stage only:\n"
                     ))

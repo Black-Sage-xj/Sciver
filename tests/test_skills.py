@@ -323,7 +323,9 @@ class SkillRegistryTest(unittest.TestCase):
         self.assertIn("cycle_workspace", investigator_rule)
         self.assertIn("Task scientific root as read/navigation only", investigator_rule)
         self.assertNotIn("task_root", investigator_rule)
-        self.assertIn("notes_dir", write_rule("reporter"))
+        self.assertIn("without direct file writes", write_rule("reporter"))
+        self.assertIn("regenerates the Canvas projection", write_rule("reporter"))
+        self.assertNotIn("Canvas patches", write_rule("reporter"))
         literature_rule = write_rule("literature")
         self.assertIn("cycle_workspace/literature/", literature_rule)
         self.assertIn("your cwd", literature_rule)
@@ -338,7 +340,7 @@ class SkillRegistryTest(unittest.TestCase):
         text = developer_instructions("investigator", extra="never pkill")
         self.assertIn("compute-dispatch", text)
         self.assertIn("never pkill", text)
-        self.assertIn("可在同一科学线程自由进行理论↔数值迭代", text)
+        self.assertIn("经本次调用授权时，可在同一科学线程进行理论↔数值迭代", text)
         self.assertNotIn("never pkill", developer_instructions("judge"))
 
 
@@ -505,10 +507,9 @@ class SkillInjectionTest(unittest.TestCase):
             agent_graph = lead_contexts[0]["agent_graph"]
             self.assertIn("Stage: frontier_proposal", research_lead)
             self.assertIn("Current objective:", research_lead)
-            self.assertIn("The SQLite-backed research graph is your scientific working surface", research_lead)
-            self.assertIn("Read explicit frontier states independently of graph leaves", research_lead)
-            self.assertIn("unmarked means unknown, not closed", research_lead)
-            self.assertIn("Frontier labels are opportunity metadata, not graph leaves or verdicts", research_lead)
+            self.assertIn("SQLite 为唯一权威数据源", developer_instructions("research_lead"))
+            self.assertIn("injected agent_graph or same-stage agent_graph_reuse", research_lead)
+            self.assertIn("Frontier labels describe opportunities independently of graph leaves", research_lead)
             self.assertEqual(lead_contexts[0]["goal"], "g")
             self.assertEqual(lead_contexts[0]["research_contract"], "c")
             self.assertIn("schema", agent_graph)
@@ -534,7 +535,8 @@ class SkillInjectionTest(unittest.TestCase):
             self.assertTrue(reporter.startswith(thread_cycle_prefix(cycle_dir.name, "reporter") + " "))
             # Identity and skill definitions are installed on the SDK thread;
             # they are intentionally absent from the user turn prompt.
-            self.assertNotIn("Hypothesis Lock", research_lead)
+            self.assertIn("Do not select or lock a Candidate before Challenger", research_lead)
+            self.assertIn("SDK owns identity, lineage persistence, qualification routing and Hypothesis Lock", research_lead)
             self.assertNotIn("禁止用 `x/y`", research_lead)
             self.assertNotIn("compute-dispatch", research_lead)
             self.assertIn("JSON only", research_lead)

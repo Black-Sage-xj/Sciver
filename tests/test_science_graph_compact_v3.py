@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from theory_master.prompt_stages import build_initial_prompt, stage_context
 from theory_master.science_graph_store import ScienceGraphStore
 from theory_master.science_graph_tools import execute
@@ -89,3 +91,27 @@ def test_v3_does_not_mutate_checkpoint_and_reuses_stage_contract(tmp_path: Path)
     }, continuation=True)
     assert resumed["agent_graph_reuse"] == reuse
     assert "agent_graph" not in resumed
+
+
+def test_goal_gate_failure_is_visible_on_closed_supported_outcome(tmp_path: Path) -> None:
+    db = tmp_path / "science_graph.sqlite3"
+    rationale = "A single D estimate is missing; the linked reproducibility detail cannot be opened."
+    with ScienceGraphStore(db) as store:
+        store.add_hypothesis("H-0001", title="Local result")
+        store.append_outcome(outcome_id="cycle-outcome-1", hypothesis_id="H-0001",
+                             cycle_id="1", verdict="supported")
+        store.set_frontier(branch_id="frontier:H-0001", hypothesis_id="H-0001",
+                           anchor_outcome=None, status="closed", reason="local test finished")
+        store.record_goal_gate_not_passed(cycle_id="1", rationale=rationale)
+        store.record_goal_gate_not_passed(cycle_id="1", rationale=rationale)
+        with pytest.raises(ValueError, match="replay conflicts"):
+            store.record_goal_gate_not_passed(cycle_id="1", rationale="different assessment")
+        graph = store.agent_view()
+        assert graph["hypotheses"][0][-1] == "supported"
+        assert graph["hypotheses"][0][3] == ["closed"]
+        assert graph["goal_gate_attention"] == [["H-0001", "1", "not_passed", rationale]]
+        assert store.agent_hypothesis_detail("H-0001")["cycle_outcomes"][0]["goal_gate"] == {
+            "verdict": "not_passed", "rationale": rationale,
+        }
+        challenger = store.agent_candidate_review_view([])
+        assert challenger["goal_gate_attention"] == graph["goal_gate_attention"]

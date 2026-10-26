@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from .scientific_objective import (
+    serialize_frozen_science as _compact_frozen_science, frozen_science_digest,
+)
+
 
 class NativeGoalIncomplete(RuntimeError):
     """A native Goal stopped without its complete status; never submit Findings."""
@@ -57,21 +61,6 @@ CODEX_GOAL_MAX_CHARS = 4000
 NATIVE_GOAL_SAFE_CHARS = 3800
 FROZEN_CONTEXT_SHA_MARKER = "FROZEN_OBJECTIVE_CONTEXT_SHA256="
 JUDGE_REQUESTS_SHA_MARKER = "JUDGE_REQUESTS_CONTEXT_SHA256="
-
-
-def _compact_frozen_science(objective: dict[str, Any]) -> str:
-    """One canonical serialization for Goal display and Setup integrity.
-
-    Only JSON syntax whitespace is removed; scientific field values are never
-    shortened, normalized, summarized, or rewritten.
-    """
-    canonical = {key: objective[key] for key in ("hypothesis", "scope", "decisive_test")}
-    return json.dumps(canonical, ensure_ascii=False, separators=(",", ":"))
-
-
-def frozen_science_digest(objective: dict[str, Any]) -> str:
-    """Digest the exact frozen science, using the same compact Goal serialization."""
-    return hashlib.sha256(_compact_frozen_science(objective).encode("utf-8")).hexdigest()
 
 
 def verify_native_goal_context_reference(goal: str, setup_context: str) -> None:

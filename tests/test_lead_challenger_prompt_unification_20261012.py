@@ -5,7 +5,8 @@ import unittest
 from theory_master.contracts import role_contract
 from theory_master.contract_closure import close_agent_output
 from theory_master.prompt_stages import build_initial_prompt, stage_context as _stage_context
-from theory_master.stage_registry import stage_card_text, procedure_card_text
+from theory_master.stage_registry import stage_card_text, procedure_card_text, stage_definition_text
+from theory_master.skills import developer_instructions
 
 
 _TEST_AGENT_GRAPH = {
@@ -14,7 +15,8 @@ _TEST_AGENT_GRAPH = {
 }
 _GRAPH_REQUIRED_STAGES = {
     ("research_lead", "frontier_proposal"), ("research_lead", "frontier_maintenance"),
-    ("challenger", "candidate_review"), ("judge", "goal_completion"),
+    ("challenger", "candidate_review"), ("challenger", "repair_verification"),
+    ("judge", "goal_completion"),
 }
 
 def stage_context(role, stage, context, *, continuation=False):
@@ -62,15 +64,25 @@ class QualificationIntegrity(unittest.TestCase):
                                {"reviews":[valid,dict(valid)]},self.context,{})
 
     def test_stage_context_preserves_exact_supplied_ids(self):
-        procedure = procedure_card_text("challenger", "candidate_review")
-        self.assertIn("SQLite-derived source_hypotheses and typed lineage", procedure)
-        self.assertIn("never open or parse exploration.canvas", procedure)
-        self.assertNotIn("opening relevant Canvas lineage", procedure)
+        # Data authority belongs to the always-loaded identity. The Stage
+        # separately defines how to examine the current scientific object.
+        identity = developer_instructions("challenger")
+        self.assertIn("科学图谱以 SQLite 为权威", identity)
+        self.assertIn("来源以 SDK 注入的 `agent_graph` 为准", identity)
+        self.assertIn("不得直接修改图谱或 Canvas", identity)
 
         projected = stage_context("challenger", "candidate_review", {
             "candidate": self.candidates,
         })
         self.assertEqual([r["id"] for r in projected["candidate"]], ["cand-A","cand-B"])
+        self.assertEqual(projected["agent_graph"], _TEST_AGENT_GRAPH)
+        for source, candidate in zip(self.candidates, projected["candidate"]):
+            self.assertEqual(candidate["frozen_objective"], {
+                key: source[key] for key in ("hypothesis", "scope", "decisive_test")
+            })
+            self.assertEqual(candidate["proposal_context"], {
+                key: source[key] for key in ("why_now", "goal_advance")
+            })
         self.assertNotIn("title", projected["candidate"][0])
         self.assertNotIn("status", projected["candidate"][0])
 
@@ -83,19 +95,22 @@ class QualificationIntegrity(unittest.TestCase):
                     context=ctx,write_rule="read only")
         self.assertIn("candidate_id",prompt)
         self.assertIn("hypothesis",prompt)
-        self.assertIn("Goal alignment",prompt)
+        self.assertIn("for an unmet Goal/Final Gate or a necessary prerequisite",prompt)
         self.assertIn("Output contract: theory-master/role/challenger/candidate-review/v5",prompt)
-        self.assertLess(len(stage_card_text("challenger","candidate_review")
-                            +procedure_card_text("challenger","candidate_review")),4500)
-        self.assertLess(len(stage_card_text("research_lead","frontier_proposal")
-                            +procedure_card_text("research_lead","frontier_proposal")),6000)
+        self.assertEqual(prompt.count(stage_definition_text("challenger", "candidate_review")), 1)
+        self.assertIn("Review frozen_objective as the binding science", prompt)
+        self.assertIn("proposal_context only explains priority and provenance", prompt)
+        self.assertIn("selection follows separately", prompt)
 
     def test_cannot_repair_prompt_never_qualifies_parent(self):
         card = stage_card_text("research_lead","selection_repair")
         self.assertIn("cannot_repair",card)
         self.assertIn("does not lock H",card)
         self.assertIn("does not enter Investigator",card)
-        self.assertIn("Investigation work",stage_card_text("challenger","candidate_review"))
+        review = stage_definition_text("challenger", "candidate_review")
+        self.assertIn("new derivation", review)
+        self.assertIn("not itself a blocker when a credible in-scope route and meaningful test remain", review)
+        self.assertIn("Do not demand the research answer at qualification", review)
 
 
 if __name__=="__main__":

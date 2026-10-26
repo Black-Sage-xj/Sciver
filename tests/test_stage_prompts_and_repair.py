@@ -11,9 +11,12 @@ from theory_master.contracts import role_contract
 from theory_master.output_validation import validate_agent_output, validate_references
 from theory_master.prompt_stages import (build_continuation_prompt, build_contract_repair_prompt,
     build_initial_prompt, stage_context as _stage_context, stage_for)
-from theory_master.scientific_model import commit_authored_model, empty_model
+from theory_master.scientific_model import (
+    MAX_SUMMARY_CHARS, commit_authored_model, empty_model, validate_authored_content,
+)
+from theory_master.skills import developer_instructions
 from theory_master.specification import TaskSpec
-from theory_master.stage_registry import procedure_card_text, stage_card_text
+from theory_master.stage_registry import procedure_card_text, stage_card_text, stage_definition_text
 from theory_master.workflow import RecoveryStop, Workflow
 
 
@@ -150,8 +153,8 @@ class StagePromptAndRepairTest(unittest.TestCase):
             "candidate": [candidate], "canvas_focus": {}, "linked_reports": [],
         })
         projected = challenger["candidate"][0]
-        self.assertEqual(projected["hypothesis"], long_text)
-        self.assertEqual(projected["decisive_test"], long_text)
+        self.assertEqual(projected["frozen_objective"]["hypothesis"], long_text)
+        self.assertEqual(projected["frozen_objective"]["decisive_test"], long_text)
         self.assertNotIn("required_evidence", projected)
         self.assertNotIn("evidence_requirements", projected)
 
@@ -268,43 +271,47 @@ class StagePromptAndRepairTest(unittest.TestCase):
     def test_challenger_review_must_exhaust_visible_blockers_before_handoff(self):
         stage = stage_card_text("challenger", "candidate_review")
         procedure = procedure_card_text("challenger", "candidate_review")
-        self.assertIn("every visible independent blocker", stage)
-        self.assertIn("Stop reading once the decision cannot change", procedure)
+        self.assertIn("all visible independent blockers", stage)
+        self.assertIn("Stop once the comparison needed for this decision is established", procedure)
         # Output fields and verdict enums belong to the Contract, not the Stage Card or Procedure.
         self.assertNotIn("problem + required_change", stage)
         self.assertNotIn("required_change", stage)
         self.assertNotIn("qualified/revise/reject", procedure)
         self.assertNotIn("exact candidate_id", procedure)
         lead_procedure = procedure_card_text("research_lead", "frontier_proposal")
-        self.assertIn("SQLite-backed research graph is your scientific working surface", lead_procedure)
+        self.assertIn("injected agent_graph or same-stage agent_graph_reuse", lead_procedure)
         self.assertIn("older defining or adverse results", lead_procedure)
-        self.assertIn("closest prior model or claim", lead_procedure)
+        self.assertIn("closest prior model/claim", lead_procedure)
         self.assertIn("one keyword miss or first page does not establish novelty", lead_procedure)
-        self.assertIn("without replaying the whole archive", lead_procedure)
-        self.assertIn("wording changes", lead_procedure.lower())
+        self.assertIn("stop once the relevant comparison is established", lead_procedure)
+        self.assertIn("renaming, reparameterizing", lead_procedure)
         lead_stage = stage_card_text("research_lead", "frontier_proposal")
         challenger_stage = stage_card_text("challenger", "candidate_review")
-        self.assertIn("add discriminating information", lead_stage)
-        self.assertIn("pure confidence strengthening", lead_stage)
-        self.assertIn("unless a new source of uncertainty exists", lead_stage)
-        self.assertIn("information beyond already terminal-adjudicated tests", challenger_stage)
-        self.assertIn("adjudicability alone is not sufficient for qualification", challenger_stage)
-        self.assertIn("not a qualification blocker merely because it has not yet been derived or operationalized", challenger_stage)
-        self.assertIn("treat it as Investigation work rather than a revise blocker", challenger_stage)
-        self.assertIn("Do not convert an Investigator-owned prerequisite", challenger_stage)
+        self.assertIn("discriminating consequence", lead_stage)
+        self.assertIn("not merely stronger confidence", lead_stage)
+        self.assertIn("new science or a new source of uncertainty", lead_stage)
+        self.assertIn("new information with the closest prior claim", challenger_stage)
+        self.assertIn("not a Goal restatement or deliverable list", challenger_stage)
+        self.assertIn("credible in-scope route and meaningful test remain", challenger_stage)
+        self.assertIn("Do not demand the research answer at qualification", challenger_stage)
+        self.assertIn("an essential route is demonstrably unavailable", challenger_stage)
 
 
     def test_lead_scientific_copy_and_model_synthesis_preserve_scientific_priority(self):
         frontier = stage_card_text("research_lead", "frontier_proposal")
         synthesis = stage_card_text("research_lead", "cycle_synthesis")
-        self.assertIn("Do not author Canvas display title or summary", frontier)
+        self.assertIn("Do not create display copy", frontier)
         display = stage_card_text("research_lead", "hypothesis_display")
-        self.assertIn("selected and frozen Hypothesis", display)
+        self.assertIn("locked Hypothesis", display)
         self.assertIn("Do not revise or reinterpret", display)
         self.assertIn("across relevant Cycles", synthesis)
-        self.assertIn("Preserve older still-valid premises", synthesis)
-        self.assertIn("2400-character validator limit is a ceiling", synthesis)
-        self.assertIn("Never strengthen a claim beyond its adjudicated evidence", synthesis)
+        self.assertIn("Preserve still-valid premises", synthesis)
+        # Numeric caps belong to the executable validator, not a second Stage rule.
+        self.assertNotIn(str(MAX_SUMMARY_CHARS), synthesis)
+        validate_authored_content({"summary": "x" * MAX_SUMMARY_CHARS})
+        with self.assertRaisesRegex(ValueError, "exceeds"):
+            validate_authored_content({"summary": "x" * (MAX_SUMMARY_CHARS + 1)})
+        self.assertIn("infer stronger support than adjudicated", synthesis)
         # Presentation changes cannot add required scientific fields or invent a B stage.
         proposal = role_contract("research_lead", phase="frontier_proposal").prompt_schema
         candidate = proposal["candidates"][0]
@@ -326,52 +333,54 @@ class StagePromptAndRepairTest(unittest.TestCase):
         projected = stage_context("challenger", "candidate_review", {
             "candidate": [candidate], "canvas_focus": {}, "linked_reports": [],
         })
-        self.assertEqual(projected["candidate"][0]["hypothesis"], hypothesis)
-        self.assertEqual(projected["candidate"][0]["decisive_test"], local_test)
+        self.assertEqual(projected["candidate"][0]["frozen_objective"]["hypothesis"], hypothesis)
+        self.assertEqual(projected["candidate"][0]["frozen_objective"]["decisive_test"], local_test)
 
         lead = stage_card_text("research_lead", "frontier_proposal")
         challenger = stage_card_text("challenger", "candidate_review")
         procedure = procedure_card_text("challenger", "candidate_review")
         judge = stage_card_text("judge", "terminal_assessment")
-        self.assertIn("matching, contrary, or inconclusive result", lead)
-        self.assertIn("A matching local result may advance the Cycle without supporting the whole hypothesis", lead)
-        self.assertIn("a necessary local prediction is acceptable without settling the whole hypothesis", challenger)
+        self.assertIn("Matching, contrary and inconclusive results", lead)
+        self.assertIn("a local contrary result refutes H only if it contradicts a necessary local prediction", lead)
+        self.assertIn("a local result bears on a broader claim only within its actual logical implication", challenger)
+        self.assertIn("not a Goal restatement or deliverable list", challenger)
         self.assertIn("Goal-unrelated", challenger)
-        self.assertIn("otherwise require effect estimation with uncertainty instead of an invented cutoff", challenger)
-        self.assertIn("every blocker is repairable inside the unchanged hypothesis/scope/estimand", challenger)
+        self.assertIn("otherwise use an informative estimate or bound with uncertainty", challenger)
+        self.assertIn("every blocker can be closed inside unchanged hypothesis/scope/estimand", challenger)
         self.assertNotIn("qualified/revise/reject", procedure)
-        self.assertIn("Use milestone_advanced only when the current decisive_test is resolved", judge)
+        self.assertIn("Use milestone_advanced only when the decisive_test is resolved", judge)
         self.assertIn("Do not promote a positive local result into whole-hypothesis support", judge)
 
     def test_investigator_prompt_bounds_unknown_size_content_without_format_specific_rules(self):
+        # This shared method boundary is sent once at thread initialization.
+        developer = developer_instructions("investigator")
+        for rule in ("内容大小未知时先核对大小/结构", "不得将无界原文注入上下文",
+                     "紧凑可复现摘要", "科学问题确需的小段", "Task scientific read root"):
+            self.assertIn(rule, developer)
         for stage_name in ("investigate", "integrate_literature", "judge_rework"):
             card = stage_card_text("investigator", stage_name)
-            self.assertIn("first inspect its scale, structure, and relevant boundaries", card)
-            self.assertIn("Do not inject unbounded raw content into context", card)
-            self.assertIn("compact reproducible summary", card)
-            self.assertIn("explore local files and directories as needed", card)
-            self.assertIn("follow new file paths or search", card)
+            self.assertNotIn("内容大小未知时先核对大小/结构", card)
             self.assertNotIn("source_manifest is the authoritative list", card)
             self.assertNotIn("head -3", card)
             self.assertNotIn("CSV", card)
-        self.assertNotIn(
-            "Investigator content boundary",
-            stage_card_text("judge", "terminal_assessment"),
-        )
+        self.assertNotIn("不得将无界原文注入上下文", developer_instructions("judge"))
 
     def test_investigator_prompt_routes_method_skills_before_execution_and_closes_generated_artifacts(self):
+        developer = developer_instructions("investigator")
+        for rule in ("首次相关工具执行前", "数据/统计/本地源检查使用 numerical-investigation",
+                     "非平凡理论推导使用 theory-investigation", "方法工具不能扩大当前阶段的权限"):
+            self.assertIn(rule, developer)
         for stage_name in ("investigate", "integrate_literature", "judge_rework"):
             card = stage_card_text("investigator", stage_name)
-            self.assertIn("Before the first related tool execution, load numerical-investigation", card)
-            self.assertIn("code execution, numerical calculation, statistical analysis, data checking", card)
-            self.assertIn("Load theory-investigation only when", card)
-            self.assertIn("nontrivial definitions, theoretical derivation, closure", card)
+            self.assertNotIn("首次相关工具执行前", card)
             self.assertNotIn("must cite the generated file(s) in artifacts", card)
             self.assertNotIn("do not return an empty artifacts list", card)
             self.assertNotIn("Filesystem readability is not Evidence authorization", card)
             self.assertNotIn("empty remaining_scientific_question asserts", card)
             self.assertNotIn("Report unresolved scientific prerequisites in findings[].limitations", card)
-            self.assertIn("findings[]", card)
+            # Stage defines research completion; Contract defines finding fields.
+            self.assertIn("Native Goal", card)
+            self.assertIn("findings", role_contract("investigator", phase=stage_name).prompt_schema)
         judge_card = stage_card_text("judge", "terminal_assessment")
         self.assertNotIn("Investigator skill routing", judge_card)
         self.assertNotIn("Investigator evidence closure", judge_card)
@@ -402,10 +411,10 @@ class StagePromptAndRepairTest(unittest.TestCase):
             "workspace_artifact_list": ["/tmp/hidden"],
         })
         self.assertEqual(set(projected), {"candidate", "agent_graph", "workspace_access"})
-        self.assertEqual(projected["candidate"], candidate)
+        self.assertEqual(projected["candidate"][0]["frozen_objective"], {k: candidate[0][k] for k in ("hypothesis", "scope", "decisive_test")})
         self.assertEqual(
             set(projected["candidate"][0]),
-            {"hypothesis", "scope", "why_now", "goal_advance", "decisive_test"},
+            {"frozen_objective", "proposal_context"},
         )
 
         prompt = build_initial_prompt(
@@ -472,10 +481,10 @@ class StagePromptAndRepairTest(unittest.TestCase):
             "candidate": seed, "canvas_focus": {}, "linked_reports": [],
         })
         seen = challenger["candidate"][0]
-        self.assertEqual(seen["hypothesis"], hypothesis)
-        self.assertEqual(seen["decisive_test"], decisive)
-        self.assertEqual(seen["why_now"], why_now)
-        self.assertEqual(seen["goal_advance"], candidate["goal_advance"])
+        self.assertEqual(seen["frozen_objective"]["hypothesis"], hypothesis)
+        self.assertEqual(seen["frozen_objective"]["decisive_test"], decisive)
+        self.assertEqual(seen["proposal_context"]["why_now"], why_now)
+        self.assertEqual(seen["proposal_context"]["goal_advance"], candidate["goal_advance"])
         self.assertNotIn("…[clipped]", json.dumps(seen, ensure_ascii=False))
 
         repair = stage_context("research_lead", "selection_repair", {
@@ -571,11 +580,12 @@ class StagePromptAndRepairTest(unittest.TestCase):
         self.assertNotIn("frontier_scientific_context", projected)
         card = stage_card_text("research_lead", "frontier_proposal")
         procedure = procedure_card_text("research_lead", "frontier_proposal")
-        self.assertNotIn("frontier_scientific_context", card + procedure)
-        self.assertNotIn("prior_cycle_state", card + procedure)
+        self.assertIn(procedure, stage_definition_text("research_lead", "frontier_proposal"))
+        self.assertNotIn("frontier_scientific_context", card)
+        self.assertNotIn("prior_cycle_state", card)
         self.assertNotIn("remaining_goal_gap", card)
-        self.assertIn("do not read remaining_goal_gap", procedure)
-        self.assertIn("do not force continuation along an active branch", procedure.lower())
+        self.assertIn("stop once the relevant comparison is established", procedure)
+        self.assertIn("without treating their labels as commands", procedure.lower())
         blob = json.dumps(projected, ensure_ascii=False)
         for forbidden in (
             "prediction generation is established",
@@ -611,7 +621,7 @@ class StagePromptAndRepairTest(unittest.TestCase):
         challenger = stage_context("challenger", "candidate_review", {
             "candidate": seed, "canvas_focus": {}, "linked_reports": [],
         })
-        self.assertEqual([row["hypothesis"] for row in challenger["candidate"]], [f"H{i}" for i in range(15)])
+        self.assertEqual([row["frozen_objective"]["hypothesis"] for row in challenger["candidate"]], [f"H{i}" for i in range(15)])
         self.assertNotIn("title", challenger["candidate"][0])
         self.assertNotIn("title", challenger["candidate"][0])
         self.assertNotIn("status", challenger["candidate"][0])
@@ -639,7 +649,7 @@ class StagePromptAndRepairTest(unittest.TestCase):
 
         decisive = "T " + ("full-procedure " * 260) + " T-END"
         candidate = {
-            "id": "cand-long", "hypothesis": "H", "why_now": "now", "goal_advance": "advance",
+            "id": "cand-long", "hypothesis": "H", "scope": "fixed test scope", "why_now": "now", "goal_advance": "advance",
             "decisive_test": decisive, "evidence_requirements": [], "status": "provisional",
         }
         with tempfile.TemporaryDirectory() as temp:
@@ -652,14 +662,15 @@ class StagePromptAndRepairTest(unittest.TestCase):
                 "mode": "candidate_review",
                 "candidates": [candidate],
                 "candidate": [{
+                    "id": candidate["id"], "scope": candidate["scope"],
                     "hypothesis": candidate["hypothesis"], "why_now": candidate["why_now"],
                     "goal_advance": candidate["goal_advance"], "decisive_test": decisive,
                 }],
                 "canvas_focus": {}, "linked_reports": [],
             }, fresh_thread=True)
             ctx = json.loads(backend.prompt.split("Context:\n", 1)[1])
-            self.assertEqual(ctx["candidate"][0]["decisive_test"], decisive)
-            self.assertNotIn("…[clipped]", ctx["candidate"][0]["decisive_test"])
+            self.assertEqual(ctx["candidate"][0]["frozen_objective"]["decisive_test"], decisive)
+            self.assertNotIn("…[clipped]", ctx["candidate"][0]["frozen_objective"]["decisive_test"])
 
     def test_investigator_prompt_uses_only_minimal_scientific_context(self):
         lock = {
@@ -766,6 +777,39 @@ class StagePromptAndRepairTest(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, serialized)
 
+    def test_unified_stage_definition_embeds_procedure_once_in_both_prompt_modes(self):
+        import theory_master.stage_registry as stage_registry
+        from theory_master.stage_registry import STAGE_CARDS, stage_definition_text
+
+        self.assertEqual(len(STAGE_CARDS), 18)
+        self.assertFalse(hasattr(stage_registry, "PROCEDURE_CARDS"))
+        for (role, stage), card in STAGE_CARDS.items():
+            with self.subTest(role=role, stage=stage):
+                rendered = stage_definition_text(role, stage)
+                procedure = procedure_card_text(role, stage)
+                self.assertTrue(rendered.startswith(stage_card_text(role, stage)))
+                self.assertIn(f"Current objective: {card['objective']}", rendered)
+                if procedure:
+                    self.assertEqual(rendered.count(procedure), 1)
+                    self.assertGreater(rendered.index("Procedure for this stage only:"), rendered.index("Exit / handoff:"))
+                else:
+                    self.assertEqual(rendered, stage_card_text(role, stage))
+                    self.assertNotIn("Procedure for this stage only:", rendered)
+
+        contract = role_contract("challenger", phase="candidate_review")
+        procedure = procedure_card_text("challenger", "candidate_review")
+        common = {
+            "role": "challenger", "stage": "candidate_review",
+            "contract_ref": contract.ref,
+            "contract_schema": contract.prompt_projection({}),
+            "context": {},
+        }
+        initial = build_initial_prompt(prefix="test", **common, write_rule="read only")
+        continued = build_continuation_prompt(**common)
+        for prompt in (initial, continued):
+            self.assertEqual(prompt.count(procedure), 1)
+            self.assertEqual(prompt.count("Procedure for this stage only:"), 1)
+
     def test_judge_prompt_states_terminal_vs_rework_modes_explicitly(self):
         contract = role_contract("judge", phase="terminal_assessment")
         prompt = build_continuation_prompt(
@@ -776,7 +820,11 @@ class StagePromptAndRepairTest(unittest.TestCase):
         self.assertIn("terminal verdicts omit objection", prompt)
         self.assertIn("requested_resolution", prompt)
         self.assertIn("needs_external_scholarship", prompt)
-        self.assertIn("Do not emit criterion IDs", prompt)
+        # Contract enforces output inventory; Stage owns the scientific decision.
+        self.assertIn("Do not output audit inventories", prompt)
+        with self.assertRaisesRegex(ValueError, "unsupported fields"):
+            contract.validate({"verdict": "supported", "rationale": "The frozen test resolves H.",
+                               "criterion_ids": ["M-F1"]}, {})
 
     def test_candidate_review_contract_repair_requires_sdk_id_instead_of_position(self):
         prompt = build_contract_repair_prompt(
@@ -919,7 +967,8 @@ class StagePromptAndRepairTest(unittest.TestCase):
             workflow = Workflow(spec, backend)
             workflow._ensure_cycle()
             state = workflow._new_state()
-            output = workflow._call(state, "challenger", {"candidates": [{"id": "c1", "hypothesis": "H", "scope": "test", "why_now": "Goal incomplete", "goal_advance": "Establish a reproducible scientific result for Final Gate", "decisive_test": "Test whether the result is reproducible"}]}, fresh_thread=True)
+            c = {"id": "c1", "hypothesis": "H", "scope": "test", "why_now": "Goal incomplete", "goal_advance": "Establish a reproducible scientific result for Final Gate", "decisive_test": "Test whether the result is reproducible"}
+            output = workflow._call(state, "challenger", {"candidates": [c], "candidate": [c]}, fresh_thread=True)
             self.assertEqual(output["reviews"][0]["verdict"], "qualified")
             self.assertEqual(backend.calls, 1)
             self.assertEqual(state["json_normalization_count"], 1)
@@ -955,7 +1004,7 @@ class StagePromptAndRepairTest(unittest.TestCase):
         self.assertIn("repair_options", prompt)
         self.assertIn("blocker_closures", prompt)
         self.assertIn("cannot_repair", prompt)
-        self.assertIn("unchanged H/scope/estimand", prompt)
+        self.assertIn("preserving the parent hypothesis, scientific scope and estimand", prompt)
         self.assertIn("cannot_repair remains unqualified", prompt)
         self.assertNotIn("repair_budget", prompt)
 
@@ -1421,11 +1470,11 @@ class StagePromptAndRepairTest(unittest.TestCase):
         self.assertEqual(stage_for("research_lead", {}, {"mode": "frontier_maintenance"}), "frontier_maintenance")
         card = stage_card_text("research_lead", "frontier_maintenance")
         procedure = procedure_card_text("research_lead", "frontier_maintenance")
-        self.assertIn("not a Canvas pruning operation", card)
-        self.assertIn("does not decide what to investigate next", card)
-        self.assertIn("frontier_proposal", card)
-        self.assertIn("Do not propose a Candidate", card)
-        self.assertIn("modify scientific_status", card)
+        self.assertIn("Maintain opportunity states of existing H", card)
+        self.assertIn("choose the next Cycle", card)
+        self.assertIn("Do not create H or Candidates", card)
+        self.assertIn("Do not create H or Candidates", card)
+        self.assertIn("change scientific_status", card)
         self.assertIn("Scientific Model", card)
         for forbidden in ("remaining_goal_gap", "remaining_gap"):
             self.assertNotIn(forbidden, card + procedure)

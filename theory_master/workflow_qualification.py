@@ -13,6 +13,17 @@ from .cycle_criteria import make_cycle_criteria
 from .display import direction_text
 from .runtime import canvas_ts, now
 from .workflow_support import RecoveryStop
+from .scientific_objective import frozen_science_view, require_review_binding
+
+
+def _require_reviewed_candidate(candidate: dict[str, Any], review: dict[str, Any]) -> None:
+    if review.get("candidate_id") != candidate.get("id"):
+        raise RecoveryStop("scientific review candidate identity changed")
+    try:
+        require_review_binding(str(candidate.get("id") or ""), frozen_science_view(candidate),
+                               review.get("reviewed_science"))
+    except (KeyError, ValueError) as exc:
+        raise RecoveryStop(str(exc)) from exc
 
 
 class NoQualifiedCandidate(Exception):
@@ -70,6 +81,9 @@ class QualificationMixin:
             return False
         selected = checkpoint.get("selected_candidate") or {}
         selected_review = checkpoint.get("selected_review") or {}
+        _require_reviewed_candidate(selected, selected_review)
+        if selected_review.get("verdict") != "qualified":
+            raise RecoveryStop("pre-H Lock requires a qualified scientific review")
         if selected.get("parent_candidate_id") or selected_review.get("qualification_basis") in {"frozen_blocker_repair", "repair_verified"}:
             confirmation = selected_review.get("repair_verification") or {}
             if (selected_review.get("qualification_basis") != "repair_verified"
@@ -84,6 +98,11 @@ class QualificationMixin:
                 return False
         finalized = checkpoint.get("finalized") or {}
         decisive_test = finalized.get("decisive_test") or finalized.get("cycle_milestone", "")
+        assembled = {"hypothesis": finalized.get("hypothesis"), "scope": selected.get("scope", ""),
+                     "decisive_test": decisive_test}
+        if (checkpoint.get("selected_candidate_id") != selected.get("id")
+                or assembled != frozen_science_view(selected)):
+            raise RecoveryStop("pre-H Lock science differs from the reviewed candidate")
         criteria = make_cycle_criteria(decisive_test)
         state["hypothesis_lock"] = {
             "status": "locked", "locked_at": now(),
@@ -219,6 +238,11 @@ class QualificationMixin:
 
         lock = state.get("hypothesis_lock") or {}
         h_id = str(lock.get("id") or "")
+        from .scientific_objective import locked_science_view
+        try:
+            locked_science_view(lock)
+        except (KeyError, ValueError) as exc:
+            raise RecoveryStop(str(exc)) from exc
         lock_status = lock.get("status")
         if lock_status not in {"locked", "committing"} or not h_id:
             raise ValueError("hypothesis_display requires a frozen Hypothesis")
@@ -306,11 +330,11 @@ class QualificationMixin:
         except RecoveryStop:
             raise
         except Exception as exc:
-            # Display failure is not a scientific failure. Never substitute the
-            # full frozen proposition for a short summary; preserve it in the dossier.
+            # Display failure is not a scientific failure. Fall back to the
+            # immutable frozen proposition instead of a placeholder summary.
             state["status"], state["phase"], state["attention"] = status_before, phase_before, attention_before
             title, summary = fallback_hypothesis_display(
-                h_id, preferred_title=fallback_title,
+                h_id, preferred_title=fallback_title, long_text=lock.get("hypothesis"),
             )
             claim = conditions = ""
             display_status = "fallback"
@@ -434,6 +458,15 @@ class QualificationMixin:
     def _qualify_and_lock(
         self, state: dict[str, Any], run_id: str, prior_cycle: dict[str, Any]
     ) -> tuple[dict[str, Any], dict[str, Any], str, str]:
+        # Stop legacy uncommitted recovery before migration or any model call.
+        checkpoint = state.get("checkpoint") or {}
+        if checkpoint.get("name") == "pre_hypothesis_lock":
+            _require_reviewed_candidate(checkpoint.get("selected_candidate") or {},
+                                        checkpoint.get("selected_review") or {})
+        working = state.get("qualification_working_set") or {}
+        stored_candidates = {str(c.get("id") or ""): c for c in working.get("candidates", [])}
+        for review in working.get("reviews", []):
+            _require_reviewed_candidate(stored_candidates.get(str(review.get("candidate_id") or ""), {}), review)
         if not getattr(self, "_in_proposal_gate", False):
             return self._qualify_under_proposal_gate(state, run_id, prior_cycle)
         from .scientific_model import load as load_scientific_model
@@ -951,6 +984,7 @@ class QualificationMixin:
                     "original_blocking_issues": json.loads(json.dumps(blockers)),
                     "repair_review_protocol_version": _REPAIR_REVIEW_PROTOCOL_VERSION,
                     "repair_verification": json.loads(json.dumps(result)),
+                    "reviewed_science": result["reviewed_science"],
                 }
                 persist_qualification_working_set()
                 continue
@@ -1128,6 +1162,7 @@ class QualificationMixin:
         selected_id = str(final_selection["selected_candidate_id"])
         selected = frontier_by_id[selected_id]
         selected_review = reviews_by_id[selected_id]
+        _require_reviewed_candidate(selected, selected_review)
         decision = str(final_selection.get("decision") or "").strip()
         decisive_test = str(selected["decisive_test"])
         hypothesis = str(selected["hypothesis"])

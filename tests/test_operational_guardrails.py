@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from theory_master.backends import FakeBackend
-from theory_master.prompt_stages import procedure_card_text, stage_card_text
+from theory_master.prompt_stages import procedure_card_text, stage_card_text, stage_definition_text
 from theory_master.skills import developer_instructions
 from theory_master.scholarly_transport import retrieve_scholarly
 from theory_master.specification import TaskSpec, latest_cycle_dir
@@ -425,11 +425,12 @@ class OperationalGuardrailTest(unittest.TestCase):
             self.assertNotIn("scholarly.transport_reused", event_types)
 
     def test_frontier_proposal_prioritizes_remaining_goal_gap_over_open_science(self):
-        lead = stage_card_text("research_lead", "frontier_proposal")
-        self.assertIn("advancing an unmet Goal, Research Contract, Final Gate or necessary prerequisite", lead)
-        self.assertIn("Prioritize expected information and Goal relevance", lead)
-        self.assertIn("or treat an active label as a command for the next Cycle", lead)
-        self.assertIn("Local, negative, high-risk or otherwise credible work remains eligible without completing the Final Gate", lead)
+        lead = stage_definition_text("research_lead", "frontier_proposal")
+        self.assertIn("consequential unmet Goal, Research Contract, Final Gate or necessary prerequisite", lead)
+        self.assertNotIn("remaining_goal_gap", lead)
+        self.assertNotIn("remaining_gap", lead)
+        self.assertIn("Avoid umbrella programs, filler, preparation-only work", lead)
+        self.assertIn("without treating their labels as commands", lead)
         self.assertNotIn("unresolved questions are the default frontier", lead)
 
     def test_agent_prompts_treat_injected_runtime_state_as_authoritative_without_tool_blacklists(self):
@@ -441,9 +442,8 @@ class OperationalGuardrailTest(unittest.TestCase):
             self.assertIn("不要重新发现 SDK 已经提供的 workflow/runtime state", text)
             self.assertNotIn("rg --files", text)
             self.assertNotIn("git rev-parse", text)
-        self.assertIn("SQLite graph as scientific authority", lead)
-        self.assertIn("SQLite-derived source_hypotheses and typed lineage", challenger)
-        self.assertIn("never open or parse exploration.canvas", challenger)
+        self.assertIn("SQLite 为唯一权威数据源", lead_identity)
+        self.assertIn("科学图谱以 SQLite 为权威", challenger_identity)
 
 
 if __name__ == "__main__":

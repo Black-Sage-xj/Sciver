@@ -49,7 +49,9 @@ def test_idempotent_replay_and_conflicting_replay_blocked(tmp_path: Path):
         store.add_hypothesis("H-0001")
         store.append_outcome(**args)
         store.append_outcome(**args)
-        assert len(store.graph_view()["nodes"][0]["outcome"]["summary"]) == 9001
+        node = store.graph_view()["nodes"][0]
+        assert len(node["outcome"]["summary"]) == 9001
+        assert node["scientific_status"] == "open"  # An actual open assessment stays open.
         with pytest.raises(ValueError, match="replay conflicts"):
             store.append_outcome(**{**args, "verdict": "supported"})
         assert store.db.execute("SELECT COUNT(*) FROM outcomes").fetchone()[0] == 1
@@ -73,7 +75,8 @@ def test_cycle_identity_is_unique_and_new_h_lock_is_one_to_one(tmp_path: Path):
         )
         view = store.graph_view()
         node = next(item for item in view["nodes"] if item["id"] == "H-0001")
-        assert node["scientific_status"] == "open"
+        assert node["scientific_status"] == "none"
+        assert node["whole_h_assessment"]["verdict"] == "open"
         assert node["cycle_outcomes"][0]["verdict"] == "rejected"
         with pytest.raises(ValueError, match="already has scientific Outcome"):
             store.append_outcome(

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import unittest
 
-from theory_master.stage_registry import INPUT_COMPARISON_BOUNDARY
 from tests import test_input_qualification_evidence_20261022 as input_fixtures
 
 
@@ -43,23 +42,33 @@ class JointInputComparison(unittest.TestCase):
 
     def test_production_initial_and_continuation_bind_evidence_to_inference(self):
         helper = input_fixtures.InputQualificationEvidence()
-        for role, stage in (("research_lead", "frontier_proposal"),
-                            ("challenger", "candidate_review"),
-                            ("challenger", "repair_verification")):
+        instructions = {
+            ("research_lead", "frontier_proposal"): (
+                "If decisive_test depends on comparison eligibility, matching or controls",
+                "joint/conditional support; marginal ranges and catalog counts do not establish it",
+                "Do not impose matching or joint-support tests on questions that do not require them",
+                "cite sources and observed results", "credible scoped route and informative failure outcome",
+                "do not fit responses, select samples from outcomes",
+            ),
+            ("challenger", "candidate_review"): (
+                "Joint/conditional support checks apply only to actual empirical comparisons needing those controls",
+                "do not impose matching on a design that does not require it",
+                "cite the source and observed result", "credible scoped route and an informative failure outcome",
+                "purely theoretical or existence proofs need no data matching or statistical sample requirement",
+                "no response fitting, outcome-based sample selection",
+            ),
+            ("challenger", "repair_verification"): (
+                "Apply full-sequence restrictions and joint/conditional support only when established",
+                "Purely theoretical or existence proofs need no empirical matching or statistical sample requirement",
+                "Apply frozen eligibility restrictions without relaxing them for coverage",
+                "cite source/observed result", "no response fitting, outcome-based sample selection",
+            ),
+        }
+        for (role, stage), rules in instructions.items():
             for prompt in helper.prompts(role, stage):
                 with self.subTest(role=role, stage=stage):
-                    self.assertEqual(prompt.count(INPUT_COMPARISON_BOUNDARY), 1)
-                    for text in ("actual comparison units", "input/control representation",
-                                 "Marginal ranges alone do not establish joint or conditional support",
-                                 "state only what the observed check establishes",
-                                 "Do not require universal exact matching",
-                                 "If eligibility needs new science",
-                                 "credible scoped route",
-                                 "scientifically informative insufficient-support outcome",
-                                 "not a check-later plan or claimed proof"):
-                        self.assertIn(text, prompt)
-                    self.assertIn("response fitting", prompt)
-                    self.assertIn("outcome-based sample selection", prompt)
+                    for rule in rules:
+                        self.assertIn(rule, prompt)
                     self.assertIn("Investigator", prompt)
 
     def test_empty_data_escape_is_not_a_blanket_qualification_license(self):
@@ -70,26 +79,26 @@ class JointInputComparison(unittest.TestCase):
                      "why_now": "No actual comparison supplied", "goal_advance": "unspecified"}
         helper = input_fixtures.InputQualificationEvidence()
         for prompt in helper.prompts("research_lead", "frontier_proposal", {"candidate": [candidate]}):
-            self.assertIn("Do not create filler or preparation-only candidates", prompt)
-            self.assertIn("scientifically informative insufficient-support outcome", prompt)
-            self.assertIn("not a check-later plan or claimed proof", prompt)
+            self.assertIn("Avoid umbrella programs, filler, preparation-only work", prompt)
+            self.assertIn("expose missing indispensable checks", prompt)
+            self.assertIn("credible scoped route and informative failure outcome", prompt)
         for prompt in helper.prompts("challenger", "candidate_review", {"candidate": [candidate]}):
             self.assertIn(candidate["decisive_test"], prompt)
-            self.assertIn("advances an unmet Goal with no material blocker", prompt)
-            self.assertIn("missing cheap necessary checks leave a qualification gap", prompt)
-            self.assertIn("not a check-later plan or claimed proof", prompt)
+            self.assertIn("without a material blocker", prompt)
+            self.assertIn("check-later plan do not establish necessary eligibility", prompt)
+            self.assertIn("unavailable material history is a qualification gap", prompt)
 
     def test_new_scientific_results_are_not_required_to_establish_input_qualification(self):
         helper = input_fixtures.InputQualificationEvidence()
         for prompt in helper.prompts("research_lead", "frontier_proposal"):
-            self.assertIn("Local, negative, high-risk or otherwise credible work remains eligible", prompt)
-            self.assertIn("new derivations and the full decisive test remain Investigator work", prompt)
-            self.assertIn("Do not create filler or preparation-only candidates", prompt)
+            self.assertIn("negative result or high-risk claim can advance the Goal", prompt)
+            self.assertIn("unknown derivations and the decisive experiment remain Investigator work", prompt)
+            self.assertIn("require the new scientific result", prompt)
         for prompt in helper.prompts("challenger", "candidate_review"):
-            self.assertIn("Bounded mechanisms, counterexamples and negative results can be valuable", prompt)
+            self.assertIn("eventual negative/open result is not itself a blocker", prompt)
             self.assertIn("Do not demand optional stronger claims", prompt)
-            self.assertIn("Do not demand the new research result at qualification", prompt)
-            self.assertIn("Omitted cheap input checks remain qualification gaps", prompt)
+            self.assertIn("Do not demand the research answer at qualification", prompt)
+            self.assertIn("verify cheap necessary input/metadata conditions", prompt)
 
 
 if __name__ == "__main__":

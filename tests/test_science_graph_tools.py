@@ -8,7 +8,8 @@ from theory_master.science_graph_tools import (
     CHALLENGER_REVIEW_OPERATIONS, LEAD_MAINTENANCE_OPERATIONS, LEAD_PROPOSAL_OPERATIONS,
     execute,
 )
-from theory_master.stage_registry import procedure_card_text, stage_card_text
+from theory_master.stage_registry import stage_definition_text
+from theory_master.skills import developer_instructions
 
 
 def test_hypothesis_detail_tool_returns_normalized_mult_parent_lineage_and_no_placeholder(tmp_path: Path):
@@ -115,22 +116,25 @@ def test_search_matches_outcome_text_and_caps_results(tmp_path: Path):
     assert execute(database, "search", "a")["status"] == "invalid_arguments"
 
 
-def test_challenger_search_surface_has_no_global_view_and_prompts_stay_bounded():
+def test_challenger_search_surface_has_no_global_view_and_decision_reads_are_bounded():
     assert "search" in CHALLENGER_REVIEW_OPERATIONS
     assert "global_view" not in CHALLENGER_REVIEW_OPERATIONS
     assert "view" not in " ".join(CHALLENGER_REVIEW_OPERATIONS.values())
     assert "search" in LEAD_PROPOSAL_OPERATIONS
     assert "search" not in LEAD_MAINTENANCE_OPERATIONS
-    proposal = stage_card_text("research_lead", "frontier_proposal") + procedure_card_text(
-        "research_lead", "frontier_proposal")
-    review = stage_card_text("challenger", "candidate_review") + procedure_card_text(
-        "challenger", "candidate_review")
-    assert len(proposal) < 6000
-    assert len(review) < 4500
-    assert "search formal research history across H, Outcomes and External records" in proposal
-    assert "SQLite-derived source_hypotheses and typed lineage" in review
-    assert "never open or parse exploration.canvas" in review
-    assert "adjudicability alone is not sufficient for qualification" in review
+    identity = developer_instructions("challenger")
+    assert "只读 search/detail" in identity
+    assert "不调用 `view`" in identity
+    assert "不得直接修改图谱或 Canvas" in identity
+    review = stage_definition_text("challenger", "candidate_review")
+    proposal = stage_definition_text("research_lead", "frontier_proposal")
+    # Permission is shared in Identity; these are current-stage stopping and
+    # bounded-evidence rules, not arbitrary prompt character budgets.
+    assert "stop once the relevant comparison is established" in proposal
+    assert "Stop once the comparison needed for this decision is established" in review
+    assert "bounded and input-only" in review
+    assert "beyond declared parents and recent Cycles" in review
+    assert "active/resolved claim without new uncertainty" in review
 
 
 def test_hypothesis_detail_text_is_bounded_and_annotated(tmp_path: Path):

@@ -1,12 +1,11 @@
 """Production Investigator prompt layers: identity, Native Goal v2, setup.
 
-No live model and no research Cycle. Stage Cards are legacy/observer text and
-must not be counted as the production prompt.
+No live model and no research Cycle. The three normal research Stage Cards are
+legacy/observer text; preservation uses a regular Stage and its own Contract.
 """
 from __future__ import annotations
 
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -133,6 +132,33 @@ class InvestigatorPromptConsistencyTests(unittest.TestCase):
         self.assertEqual([item[0] for item in seen], ["investigate"])
         self.assertEqual(seen[0][1], {"layout": "v2", "allow_setup_reference": True})
         self.assertEqual(backend.goals, [seen[0][2]])
+        from theory_master.contracts import role_contract
+        contract = role_contract("investigator", phase="investigate")
+        # Capture the actual Native Goal Setup path: schema ownership moved out
+        # of Identity, so checking only the standalone projection is insufficient.
+        self.assertIn(contract.prompt_projection({}), backend.setups[0])
+        finding_schema = contract.prompt_schema["findings"][0]
+        for field in ("statement", "method", "result", "provenance"):
+            self.assertIn(json.dumps(field), backend.setups[0])
+        for field in ("source", "split", "declaration_ref", "frozen_before_current_cycle"):
+            self.assertIn(json.dumps(field), backend.setups[0])
+        for enum_value in ("benchmark_provided", "pre_specified_synthetic", "agent_generated",
+                           "external_source", "validation", "holdout", "gate"):
+            self.assertIn(enum_value, backend.setups[0])
+        self.assertIn("optional", finding_schema["provenance"]["source"])
+        contract.validate({"findings": [{"statement": "Self-contained result without optional fields"}]}, {})
+        declared = {"statement": "Bounded result", "provenance": {
+            "source": "benchmark_provided", "split": "holdout",
+            "declaration_ref": "input/declaration.json", "frozen_before_current_cycle": True,
+        }}
+        contract.validate({"findings": [declared]}, {})
+        with self.assertRaises(ValueError):
+            contract.validate({"findings": [{"statement": "Unsupported strong identity", "provenance": {
+                "source": "benchmark_provided", "split": "holdout",
+            }}]}, {})
+        identity = _copies_match("investigator.md")
+        for schema_token in ("`statement`", "`method`", "`result`", "`provenance`", "declaration_ref"):
+            self.assertNotIn(schema_token, identity)
         wire = "\n".join(backend.goals + backend.setups)
         for marker in STAGE_CARD_MARKERS:
             self.assertNotIn(marker, wire)

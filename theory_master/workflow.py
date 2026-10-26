@@ -1093,6 +1093,11 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
         after this point and must never be re-executed by resume.
         """
         lock = state.get("hypothesis_lock") or {}
+        from .scientific_objective import locked_science_view
+        try:
+            locked_science_view(lock)
+        except (KeyError, ValueError) as exc:
+            raise RecoveryStop(str(exc)) from exc
         completing = lock.get("status") == "committing"
         if lock.get("status") not in {"locked", "committing"}:
             raise ValueError("locked-cycle recovery requires hypothesis_lock.status=locked")

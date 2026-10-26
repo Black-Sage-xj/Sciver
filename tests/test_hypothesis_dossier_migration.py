@@ -52,7 +52,7 @@ def test_backfill_preserves_originals_adds_all_parents_and_is_idempotent(tmp_pat
     with ScienceGraphStore(database, readonly=True) as store:
         rows = list(store.db.execute("SELECT id,title,summary,dossier_ref FROM hypotheses ORDER BY id"))
         assert all(row["dossier_ref"] for row in rows)
-        assert all(len(row["title"]) <= 48 for row in rows)
+        assert all(len(row["title"]) <= 40 for row in rows)
         assert all(len(row["summary"]) <= 160 for row in rows)
         h1 = next(row for row in rows if row["id"] == "H-0001")
         assert "摘要暂不可用" in h1["summary"]

@@ -81,6 +81,24 @@ class MilestoneOnlyBackend(FakeBackend):
         return super().invoke(role, prompt, thread_id, model, provider)
 
 
+class CapturingNotPassedBackend(FakeBackend):
+    def __init__(self):
+        super().__init__(reworks=0)
+        self.lead_graphs: list[dict] = []
+        self.lead_prompts: list[str] = []
+        self.challenger_graphs: list[dict] = []
+        self.challenger_prompts: list[str] = []
+
+    def invoke(self, role, prompt, thread_id, model, provider):
+        if role == "research_lead" and _stage(prompt) == "frontier_proposal":
+            self.lead_graphs.append(_context(prompt)["agent_graph"])
+            self.lead_prompts.append(prompt)
+        if role == "challenger" and _stage(prompt) == "candidate_review":
+            self.challenger_graphs.append(_context(prompt)["agent_graph"])
+            self.challenger_prompts.append(prompt)
+        return super().invoke(role, prompt, thread_id, model, provider)
+
+
 class GoalCompletionGateTest(unittest.TestCase):
     def test_contract_is_minimal_and_conditional(self):
         contract = role_contract("judge", phase="goal_completion")
@@ -139,10 +157,10 @@ class GoalCompletionGateTest(unittest.TestCase):
             self.assertEqual(Path(backend.goal_context["research_plan_access"]["path"]), spec.document)
             self.assertGreater(backend.graph_hypotheses_at_gate, 0)
             self.assertNotIn("canvas_access", backend.goal_context)
-            self.assertIn("Goal + Research Contract + Final Gate + Required Context", backend.goal_prompt)
-            self.assertIn("A supported H or Cycle is never sufficient by itself", backend.goal_prompt)
+            self.assertIn("Goal, Research Contract, Final Gate and Required Context", backend.goal_prompt)
+            self.assertIn("A supported H or Cycle does not by itself establish Goal completion", backend.goal_prompt)
             self.assertIn("concrete deliverable against the Final Gate", backend.goal_prompt)
-            self.assertIn("Do not add requirement ledgers", backend.goal_prompt)
+            self.assertIn("Do not output requirement ledgers", backend.goal_prompt)
             self.assertIn("optional robustness, external generalization", backend.goal_prompt)
             self.assertGreaterEqual(len(backend.judge_threads), 2)
             self.assertNotEqual(backend.judge_threads[-2], backend.judge_threads[-1])
@@ -154,6 +172,10 @@ class GoalCompletionGateTest(unittest.TestCase):
                 outcomes = [row for node in store.graph_view()["nodes"] if node["type"] == "Hypothesis"
                             for row in node.get("cycle_outcomes") or []]
                 self.assertTrue(any(row.get("id") == "cycle-outcome-1" for row in outcomes))
+                self.assertEqual(outcomes[0]["goal_gate"], {
+                    "verdict": "passed",
+                    "rationale": state["goal_completion"]["rationale"],
+                })
                 self.assertTrue(all(row["frontier_status"] == "closed" for row in store.frontier_view().values()))
             continuation = (state.get("frontier_state") or {}).get("continuation_context") or {}
             self.assertNotIn("remaining_goal_gap", continuation)
@@ -203,6 +225,42 @@ class GoalCompletionGateTest(unittest.TestCase):
             events = (cycle / "events.jsonl").read_text(encoding="utf-8")
             self.assertIn("goal.not_completed", events)
             self.assertNotIn("remaining_goal_gap", events)
+            from theory_master.science_graph_store import ScienceGraphStore
+            with ScienceGraphStore(spec.branch_canvas.with_name("science_graph.sqlite3"), readonly=True) as store:
+                graph = store.graph_view()
+                outcome = next(row for node in graph["nodes"] if node["type"] == "Hypothesis"
+                               for row in node.get("cycle_outcomes") or [])
+                self.assertEqual(outcome["verdict"], "supported")
+                self.assertEqual(outcome["goal_gate"], receipt)
+                detail = store.agent_hypothesis_detail(outcome["hypothesis_id"])
+                self.assertEqual(detail["cycle_outcomes"][0]["goal_gate"], receipt)
+                self.assertEqual(store.agent_cycle_detail("1")["goal_gate"], receipt)
+                attention = store.agent_view()["goal_gate_attention"]
+                self.assertEqual(attention, [[outcome["hypothesis_id"], "1", "not_passed",
+                                               receipt["rationale"]]])
+
+    def test_next_lead_receives_prior_not_passed_with_complete_h_index(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "task"
+            root.mkdir()
+            spec = _make_task(root, max_cycles=2)
+            backend = CapturingNotPassedBackend()
+
+            Workflow(spec, backend).run()
+
+            self.assertEqual(len(backend.lead_graphs), 2)
+            graph = backend.lead_graphs[1]
+            self.assertEqual(len(graph["hypotheses"]), 1)
+            self.assertEqual(graph["hypotheses"][0][0], "H-0001")
+            self.assertEqual(graph["goal_gate_attention"][0][2], "not_passed")
+            self.assertEqual(graph["goal_gate_attention"][0][3],
+                             "the deterministic smoke trajectory does not yet satisfy the task Final Gate")
+            self.assertIn("Read all relevant goal_gate_attention rows",
+                          backend.lead_prompts[1])
+            self.assertEqual(backend.challenger_graphs[1]["goal_gate_attention"],
+                             graph["goal_gate_attention"])
+            self.assertIn("goal_gate_attention with linked Outcomes",
+                          backend.challenger_prompts[1])
 
 
 if __name__ == "__main__":

@@ -12,13 +12,17 @@ from pathlib import Path
 from theory_master.contract_stages import role_contract
 from theory_master.prompt_stages import build_initial_prompt, stage_context
 from theory_master.stage_registry import (
-    PROCEDURE_CARDS,
     STAGE_CARDS,
     procedure_card_text,
     stage_card_text,
 )
 
 
+ARCHIVE = (
+    Path(__file__).resolve().parents[3]
+    / "gs_study/.theory-master-tasks/"
+    "1-matrix-cavity-green-g-closure-h8-dd60a2f2780a/research"
+)
 TEST_AGENT_GRAPH = {
     "schema": "theorymaster/test-agent-graph/v1",
     "hypotheses": [],
@@ -75,13 +79,13 @@ class PrelockScientificFeasibilityOracle(unittest.TestCase):
             for domain_specific in ("P(d)", "52 networks", "network-level", "same-input", "H8"):
                 self.assertNotIn(domain_specific.lower(), body.lower())
 
-        self.assertIn("registry/metadata", self.lead_procedure)
-        self.assertIn("eligible comparison set", self.lead_procedure)
-        self.assertIn("non-empty", self.lead_procedure)
-        self.assertIn("required comparison set", self.review)
-        self.assertIn("feasible and non-empty", self.review)
-        self.assertIn("if the decisive test explicitly requires a matched", self.review_procedure.lower())
-        self.assertIn("do not impose matching when the science does not require it", self.review_procedure)
+        self.assertIn("existing inputs/metadata", self.lead_procedure)
+        self.assertIn("comparison eligibility", self.lead_procedure)
+        self.assertIn("eligible independent units", self.lead_procedure)
+        self.assertIn("required comparator/contrast", self.review_procedure)
+        self.assertIn("credible essential route", self.review)
+        self.assertIn("comparison eligibility, matching or controls", self.lead_procedure)
+        self.assertIn("do not impose matching on a design that does not require it", self.review_procedure)
 
     def test_c186_uncertainty_and_c187_188_common_support(self):
         # Illustrative overlapping intervals: point estimates exist, but they
@@ -93,28 +97,33 @@ class PrelockScientificFeasibilityOracle(unittest.TestCase):
 
         self.assertIn("uncertainty", self.lead.lower())
         self.assertIn("uncertainty and proof precision", self.lead.lower())
-        self.assertIn("independent-unit sample size", self.review.lower())
-        self.assertIn("not merely whether calculations run", self.review.lower())
+        self.assertIn("for empirical designs also assess independent units", self.review)
+        self.assertIn("statistically unreachable outcomes under the stated design", self.review)
         self.assertIn("independent units", self.lead_procedure)
         self.assertIn("uncertainty/error budget", self.lead_procedure)
-        self.assertIn("contrast/common support", self.lead_procedure)
-        self.assertIn("rather than merely yield estimates", self.lead_procedure)
+        self.assertIn("joint/conditional support", self.lead_procedure)
+        self.assertIn("can in principle distinguish the stated outcomes", self.lead_procedure)
         self.assertIn("credible in-scope route", self.review)
-        self.assertIn("treat it as Investigation work rather than a revise blocker", self.review)
+        self.assertIn("Do not demand the research answer at qualification", self.review)
 
     def test_c190_local_protocol_bridge_and_c191_negative_result_remain_eligible(self):
+        # A necessary local consequence can refute a universal claim, but
+        # support in one local window does not establish the whole claim.
+        local_predictions = {"window_a": True, "window_b": False}
+        self.assertTrue(local_predictions["window_a"])
+        self.assertFalse(all(local_predictions.values()))
         self.assertIn(
-            "A matching local result may advance the Cycle without supporting the whole hypothesis",
+            "a local contrary result refutes H only if it contradicts a necessary local prediction",
             self.lead,
         )
-        self.assertIn("a contrary result refutes H only when its local prediction is necessary", self.lead)
+        self.assertIn("local result bears on a broader claim only within its actual logical implication", self.review)
         self.assertIn("negative", self.lead.lower())
-        self.assertIn("negative results can be valuable", self.review.lower())
+        self.assertIn("eventual negative/open result is not itself a blocker", self.review)
         self.assertIn("uncertain effect", self.review.lower())
-        self.assertIn("as a design failure when the test remains executable", self.review.lower())
-        self.assertIn("Reject the design, not the broader research direction", self.review)
+        self.assertIn("credible in-scope route and meaningful test remain", self.review)
+        self.assertIn("Reject the current design, not its general topic", self.review)
 
-    def test_stage_contract_procedure_separation_and_brevity(self):
+    def test_stage_contract_separation_and_single_delivery(self):
         for role, stage, card, procedure in (
             ("research_lead", "frontier_proposal", self.lead, self.lead_procedure),
             ("challenger", "candidate_review", self.review, self.review_procedure),
@@ -157,15 +166,14 @@ class PrelockScientificFeasibilityOracle(unittest.TestCase):
                 self.assertNotIn("blocking_issues", card)
                 self.assertNotIn("required_change", card)
                 self.assertNotIn("qualified/revise/reject", procedure)
-                limit = 6000 if role == "research_lead" else 4500
-                self.assertLess(len(card + procedure), limit)
+                self.assertEqual(assembled.count(card + procedure), 1)
 
         self.assertNotIn("lineage_anchor_node_ids", self.lead)
         self.assertNotIn("evolution_operator", self.lead)
         self.assertEqual(role_contract("challenger", phase="candidate_review").version, 5)
         self.assertIn(("challenger", "repair_verification"), STAGE_CARDS)
-        self.assertIn(("research_lead", "frontier_proposal"), PROCEDURE_CARDS)
-        self.assertIn(("challenger", "candidate_review"), PROCEDURE_CARDS)
+        self.assertIn("procedure", STAGE_CARDS[("research_lead", "frontier_proposal")])
+        self.assertIn("procedure", STAGE_CARDS[("challenger", "candidate_review")])
 
     def test_non_h8_math_and_ai4s_scenarios_use_generic_rules(self):
         scenarios = (
@@ -191,11 +199,36 @@ class PrelockScientificFeasibilityOracle(unittest.TestCase):
                 prompt = self._challenger_prompt(candidate)
                 self.assertIn(candidate["hypothesis"], prompt)
                 self.assertIn("credible in-scope route", prompt)
-                self.assertIn("matching, contrary and genuinely inconclusive", prompt.lower())
+                self.assertIn("matching, contrary and inconclusive", prompt.lower())
+                self.assertIn("purely theoretical or existence proofs need no data matching or statistical sample requirement", prompt)
                 for domain_specific in ("P(d)", "network-level", "same-input", "52 networks", "H8"):
                     self.assertNotIn(domain_specific.lower(), prompt.lower())
-        self.assertIn("do not impose matching when the science does not require it", self.review_procedure)
+        self.assertIn("do not impose matching on a design that does not require it", self.review_procedure)
 
+    def test_archived_cycle_hypotheses_are_frozen_reference_only(self):
+        if not ARCHIVE.exists():
+            self.skipTest("Private local archived Cycles are not bundled with Sciver")
+        markers = {
+            186: ("L₁₄", "P(d)"),
+            187: ("C_self", "共同支持"),
+            188: ("共变", "K_out"),
+            189: ("P(d)", "独立底图"),
+            190: ("Green", "B"),
+            191: ("λ", "负谷"),
+        }
+        for cycle, (hypothesis_marker, test_marker) in markers.items():
+            with self.subTest(cycle=cycle):
+                checkpoints = sorted((ARCHIVE / str(cycle) / "checkpoints").glob("*.json"))
+                candidates = []
+                for path in checkpoints:
+                    item = json.loads(path.read_text(encoding="utf-8"))
+                    if item.get("candidates"):
+                        candidates = item["candidates"]
+                        break
+                self.assertTrue(candidates, f"Cycle {cycle} frozen candidates unavailable")
+                first = candidates[0]
+                self.assertIn(hypothesis_marker, first["hypothesis"])
+                self.assertIn(test_marker, first["decisive_test"])
 
 
 if __name__ == "__main__":

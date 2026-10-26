@@ -460,6 +460,10 @@ def _model_reply(task: dict[str, Any] | None, row: dict[str, Any], backend: Any 
     history_rows = [m for m in row["messages"][-20:]
                     if m.get("role") in {"user", "assistant"}
                     and not str(m.get("content") or "").startswith("上一条回复没有完成：")]
+    # Existing model threads retain their original scientific authority identity.
+    if row.get("agent_policy_version") != 4:
+        row["codex_thread_id"] = None
+        row["agent_policy_version"] = 4
     saved_thread = str(row.get("codex_thread_id") or "").strip() or None
     resumed_thread = bool(saved_thread and (backend is None or
                         callable(getattr(backend, "ensure_thread", None))))

@@ -136,6 +136,23 @@ class ResearchChatTests(unittest.TestCase):
         self.assertEqual(fake.calls[0][0], "research_chat")
         self.assertEqual(row["messages"][-1]["content"], "需要进一步核验文献与实验记录。")
 
+    def test_authority_identity_refresh_restarts_old_thread_with_history(self):
+        from tm_observer import research_chat as module
+        ident = create(self.state_dir, self.state, {"mode": "project", "task_id": "a" * 16})["session_id"]
+        store = module._store(self.state_dir)
+        record = module._read(store, ident)
+        record["codex_thread_id"] = "old-authority-thread"
+        record["agent_policy_version"] = 3
+        module._message(record, "user", "此前的科研问题")
+        module._write(store, record)
+        fake = PersistentFakeBackend()
+        send(self.state_dir, self.root, self.state, ident, {"content": "继续核对前沿"}, backend=fake)
+        self.assertIsNone(fake.ensured[0][1])
+        self.assertIn("此前的科研问题", fake.calls[0][1])
+        row = snapshot(self.state_dir, self.state, ident)["session"]
+        self.assertEqual(row["agent_policy_version"], 4)
+        self.assertEqual(row["codex_thread_id"], "native-thread-1")
+
     def test_native_codex_thread_is_resumed_across_chat_turns(self):
         ident = create(self.state_dir, self.state, {"mode": "project", "task_id": "a" * 16})["session_id"]
         fake = PersistentFakeBackend()

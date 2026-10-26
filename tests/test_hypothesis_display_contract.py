@@ -17,21 +17,23 @@ def test_summary_requires_separate_claim_conditions_and_sdk_owned_status():
     )
     assert summary.startswith("主张：到达时间差能否解释负谷加深；条件：")
     assert summary.endswith("；状态：待检验。")
-    assert len(summary) <= 160
+    assert len(summary) <= 240
     assert is_compliant_hypothesis_summary(summary)
 
 
-def test_safe_fallback_never_substitutes_the_full_hypothesis():
+def test_fallback_displays_the_original_frozen_hypothesis_verbatim():
     long_hypothesis = "在固定制备规则和共同原生力域内，" + "具体命题" * 80
     title, summary = fallback_hypothesis_display(
-        "H-0017", preferred_title=long_hypothesis,
+        "H-0017", preferred_title="简短标题", long_text=long_hypothesis,
     )
-    assert title == "H-0017 · 摘要暂不可用"
-    assert len(title) <= 48
-    assert len(summary) <= 160
-    assert "摘要暂不可用" in summary
-    assert "状态：待检验" in summary
-    assert long_hypothesis not in summary
+    assert title == "简短标题"
+    assert len(title) <= 40
+    assert long_hypothesis in summary
+    assert summary.startswith("完整命题（原文）：")
+    assert summary.endswith("；状态：待检验。")
+    assert "摘要暂不可用" not in summary
+    assert is_compliant_hypothesis_summary(summary)
+    assert summary_with_current_status(summary, "supported", adjudicated=True).endswith("；状态：已支持（仅限冻结范围）。")
 
 
 def test_current_whole_h_verdict_updates_only_the_epistemic_label():
@@ -67,6 +69,32 @@ def test_stage_prompt_and_schema_require_claim_conditions_not_freeform_summary()
     contract = role_contract("research_lead", phase="hypothesis_display")
     assert set(contract.prompt_schema) == {"canvas_title", "canvas_claim", "canvas_conditions"}
     card = stage_card_text("research_lead", "hypothesis_display")
-    assert "canvas_claim" in card
-    assert "canvas_conditions" in card
-    assert "free-form canvas_summary" in card
+    # The Stage owns faithful compression; the Contract owns field names.
+    assert "concrete claim and indispensable applicability conditions separately" in card
+    assert "frozen_hypothesis" in card
+    assert "canvas_summary" not in contract.prompt_schema
+    contract.validate({"canvas_title": "A title", "canvas_claim": "A specific claim",
+                       "canvas_conditions": "A bounded scope"}, {})
+    with __import__("pytest").raises(ValueError):
+        contract.validate({"canvas_title": "A title", "canvas_summary": "Unstructured summary"}, {})
+
+
+def test_display_limits_are_40_80_80_and_errors_report_actual_limit_and_excess():
+    from theory_master.contract_stages import _hypothesis_display_structure, role_contract
+    from theory_master.hypothesis_display import TITLE_LIMIT, CLAIM_LIMIT, CONDITIONS_LIMIT
+
+    assert (TITLE_LIMIT, CLAIM_LIMIT, CONDITIONS_LIMIT) == (40, 80, 80)
+    schema = role_contract("research_lead", phase="hypothesis_display").prompt_schema
+    assert "40 characters" in schema["canvas_title"]
+    assert "80 characters" in schema["canvas_claim"]
+    assert "80 characters" in schema["canvas_conditions"]
+    good = {"canvas_title": "t" * 40, "canvas_claim": "c" * 80, "canvas_conditions": "x" * 80}
+    _hypothesis_display_structure(good, {})
+    assert len(compose_hypothesis_summary(good["canvas_claim"], good["canvas_conditions"])) <= 240
+    for field, limit in (("canvas_title", 40), ("canvas_claim", 80), ("canvas_conditions", 80)):
+        with __import__("pytest").raises(ValueError) as exc:
+            _hypothesis_display_structure({**good, field: "z" * (limit + 3)}, {})
+        message = str(exc.value)
+        assert f"{limit + 3} characters" in message
+        assert f"limit is {limit}" in message
+        assert "exceeds by 3 characters" in message

@@ -122,8 +122,9 @@ class LightweightJudgeBoundaryTest(unittest.TestCase):
         for identity_path in identity_paths:
             with self.subTest(identity_path=identity_path):
                 identity = identity_path.read_text(encoding="utf-8")
-                self.assertIn("当前 Stage Card", identity)
-                self.assertIn("最小科学语义", identity)
+                self.assertIn("只裁决当前 Stage 指定的科学对象", identity)
+                self.assertIn("不重做 Investigation", identity)
+                self.assertIn("来源校验、预算、路由与状态提交由 SDK 负责", identity)
                 for forbidden in ("cycle_progress_criteria", "Evidence Manifest", "Coverage Matrix", "Judge Packet"):
                     self.assertNotIn(forbidden, identity)
 
