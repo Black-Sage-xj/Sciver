@@ -19,7 +19,7 @@ BRANDED_DOCS = (
     "theory_master/model_profiles/README.md",
     "web/README.md",
     "web/research_chat_frontend/README.md",
-    "测试架构.md",
+    "TEST_ARCHITECTURE.md",
 )
 
 
