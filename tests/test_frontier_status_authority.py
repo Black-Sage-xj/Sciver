@@ -9,33 +9,38 @@ class LeadFrontierStatusPromptTest(unittest.TestCase):
     def setUp(self):
         self.procedure = procedure_card_text("research_lead", "frontier_proposal")
         self.stage = stage_card_text("research_lead", "frontier_proposal")
+        self.maintenance = stage_card_text("research_lead", "frontier_maintenance")
+        self.identity = (identities_root() / "research_lead.md").read_text(encoding="utf-8")
 
     def test_frontier_is_independent_of_graph_leaf(self):
-        self.assertIn("Frontier labels are opportunity metadata, not graph leaves or verdicts", self.stage)
-        self.assertIn("descendants do not disqualify parents", self.stage)
-        self.assertIn("Read explicit frontier states independently of graph leaves", self.procedure)
+        self.assertIn("Frontier labels describe opportunities independently of graph leaves and Judge verdicts", self.procedure)
+        self.assertIn("independently of graph degree, descendants", self.maintenance)
+        self.assertIn("without clearing non-leaf labels", self.maintenance)
 
     def test_outcome_and_frontier_are_different(self):
-        self.assertIn("not graph leaves or verdicts", self.stage)
-        self.assertIn("adjudicated Outcomes and SQLite graph as scientific authority", self.stage)
-        self.assertIn("without supporting the whole hypothesis", self.stage)
+        self.assertIn("Cycle Outcome", self.identity)
+        self.assertIn("Goal Completion", self.identity)
+        self.assertIn("local supported/rejected/open Outcomes", self.maintenance)
+        self.assertIn("Local support, whole-H scope, frontier state and Goal completion are distinct", self.procedure)
 
     def test_parked_continuation_requires_trigger(self):
-        self.assertIn("Do not reopen a closed hypothesis or continue a parked one unchanged", self.stage)
-        self.assertIn("same-claim retesting needs a scientific revision or new uncertainty", self.stage)
+        self.assertIn("reopen closed H, or continue parked H unchanged", self.stage)
+        self.assertIn("retesting an active or resolved claim needs new science or a new source of uncertainty", self.stage)
 
     def test_closed_can_derive_new_h_without_reopening(self):
-        self.assertIn("Closed/parked history may inform a new proposition without being reopened", self.stage)
+        self.assertIn("A new Candidate from historical work must be scientifically distinct", self.stage)
+        self.assertIn("including pending/parked claims and unadjudicated work", self.procedure)
         contract = role_contract("research_lead", phase="frontier_proposal")
         self.assertIn("evolution_operator", str(contract.prompt_schema))
 
     def test_history_not_a_second_outcome(self):
-        self.assertIn("search formal research history across H, Outcomes and External records", self.procedure)
-        self.assertIn("adjudicated Outcomes and SQLite graph as scientific authority", self.stage)
+        self.assertIn("search formal research history beyond declared parents and recent Cycles across H, Outcomes and External records", self.procedure)
+        self.assertIn("Separate proposals, provisional results and Judge conclusions", self.procedure)
+        self.assertIn("SQLite", self.identity)
 
     def test_goal_aligned_historical_pivot(self):
-        self.assertIn("justify historical pivots by Goal impact", self.stage)
-        self.assertIn("Do not force continuation along an active branch", self.procedure)
+        self.assertIn("justify historical pivots by Goal impact", self.procedure)
+        self.assertIn("Consider relevant active H without treating their labels as commands", self.procedure)
         self.assertIn("lineage_anchor_node_ids", str(role_contract(
             "research_lead", phase="frontier_proposal").prompt_schema))
 
@@ -60,16 +65,16 @@ class LeadFrontierStatusPromptTest(unittest.TestCase):
     def test_maintenance_manages_h_not_tips(self):
         procedure = procedure_card_text("research_lead", "frontier_maintenance")
         card = stage_card_text("research_lead", "frontier_maintenance")
-        self.assertIn("every relevant H can be a scientific origin", procedure)
-        self.assertIn("regardless of derived children", card)
-        self.assertIn("active/parked/closed", card)
-        self.assertIn("Do not modify scientific_status", card)
+        self.assertIn("canonical H/Outcome details and multi-parent lineage", procedure)
+        self.assertIn("independently of graph degree, descendants", card)
+        self.assertIn("Choose active/parked/closed", card)
+        self.assertIn("change scientific_status", card)
 
     def test_no_active_frontier_does_not_mean_complete(self):
         procedure = procedure_card_text("research_lead", "frontier_maintenance")
         card = stage_card_text("research_lead", "frontier_maintenance")
-        self.assertIn("zero active H does not imply Goal Completion", procedure)
-        self.assertIn("Task COMPLETE", card)
+        self.assertIn("remaining Goal opportunities", procedure)
+        self.assertIn("infer Task completion from zero active H or all closed frontiers", card)
 
 
 class FrontierMaintenanceContractTest(unittest.TestCase):
@@ -93,13 +98,11 @@ class FrontierMaintenanceContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no phase contract"):
             role_contract("reporter", phase="canvas_maintenance")
         identity = (identities_root() / "reporter.md").read_text(encoding="utf-8")
-        self.assertIn("scientific_status", identity)
-        self.assertIn("frontier_status", identity)
-        self.assertIn("frontier_status", identity)
-        self.assertIn("归 Research Lead", identity)
+        self.assertIn("不改变候选、Scientific Model、Judge verdict、Hypothesis 科学状态或前沿状态", identity)
+        self.assertIn("下一 Cycle 的候选由 Research Lead 提出", identity)
         card = stage_card_text("research_lead", "frontier_maintenance")
-        self.assertIn("hypothesis_id", card)
-        self.assertIn("status=closed|parked|active", card)
+        self.assertIn("existing-H frontier updates", card)
+        self.assertIn("Choose active/parked/closed", card)
 
 
 if __name__ == "__main__":

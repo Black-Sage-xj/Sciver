@@ -1149,7 +1149,7 @@ class TheoryMasterTest(unittest.TestCase):
                 if role == 'challenger':
                     self.challenger_threads.append(thread)
                     candidates = context.get('candidate') or []
-                    if candidates and candidates[0].get('hypothesis') == 'smoke-h' and value.get('reviews'):
+                    if candidates and candidates[0].get('frozen_objective', {}).get('hypothesis') == 'smoke-h' and value.get('reviews'):
                         value['reviews'][0].update({'verdict': 'revise',
                                                    'reason': 'candidate combines definition and instance search',
                                                    'blocking_issues': [{
@@ -1518,7 +1518,7 @@ class TheoryMasterTest(unittest.TestCase):
                 "repair_count": 1,
             }
             from theory_master.workflow_support import RecoveryStop
-            with self.assertRaisesRegex(RecoveryStop, "original Challenger blocker ledger"):
+            with self.assertRaisesRegex(RecoveryStop, "scientific review binding missing or changed"):
                 workflow._qualify_and_lock(state, "2", {})
             self.assertEqual(backend.reviewed_candidate_ids, [])
             self.assertNotEqual(state.get("hypothesis_lock", {}).get("status"), "locked")

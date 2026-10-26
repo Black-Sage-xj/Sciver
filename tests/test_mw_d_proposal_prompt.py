@@ -8,8 +8,8 @@ def test_frontier_prompt_dedups_running_hypotheses_and_drops_claimed_parent():
         "research_lead", "frontier_proposal")
     assert "worker_claimed_frontier" not in text
     assert "preferred ResearchFocus" not in text
-    assert "do not justify a new claim or repeat a running claim/test" in text
-    assert "descendants do not disqualify parents" in text
+    assert "A new Candidate from historical work must be scientifically distinct" in text
+    assert "Frontier labels describe opportunities independently of graph leaves" in text
     projected = stage_context("research_lead", "frontier_proposal", {
         "goal": "G",
         "agent_graph": {"schema": "theorymaster/agent-graph/v1", "hypotheses": []},

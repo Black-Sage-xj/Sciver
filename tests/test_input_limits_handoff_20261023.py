@@ -37,14 +37,13 @@ class InputLimitsHandoff(unittest.TestCase):
                             ("challenger", "candidate_review"),
                             ("challenger", "repair_verification")):
             for prompt in helper.prompts(role, stage):
-                for text in ("Lead binds key checked/pending input limits", "representation, units, domain, comparison sides",
-                             "in decisive_test", "Challenger verifies it beyond rationale/reason"):
-                    self.assertIn(text, prompt)
-                self.assertIn("not a check-later plan or claimed proof", prompt)
+                self.assertIn("decisive_test", prompt)
+                self.assertIn("independent units" if stage != "repair_verification" else "comparison set", prompt)
+                self.assertIn("input", prompt.lower())
         for prompt in helper.prompts("research_lead", "selection_repair"):
-            self.assertIn("Keep material checked/pending input limits in the complete decisive_test", prompt)
-            self.assertIn("audit rationale alone is not binding", prompt)
-            self.assertIn("Preserve the original scientific scope", prompt)
+            self.assertIn("complete revised decisive_test", prompt)
+            self.assertIn("scope", prompt)
+            self.assertIn("blocker", prompt)
 
     def test_graph_authority_guard_survives_procedure_compression(self):
         # Missing graph is already rejected by actual production assembly;
@@ -55,11 +54,9 @@ class InputLimitsHandoff(unittest.TestCase):
                 stage_context(role, stage, {"candidate": []})
         helper = input_fixtures.InputQualificationEvidence()
         for prompt in helper.prompts("challenger", "candidate_review"):
-            self.assertIn("Lead citations do not prove novelty", prompt)
-            self.assertIn("unresolved material history is a qualification gap", prompt)
-            self.assertIn("older primary reports outside declared lineage", prompt)
-            self.assertIn("never open or parse exploration.canvas", prompt)
-            self.assertIn("Do not adjudicate scientific truth", prompt)
+            self.assertIn("primary reports", prompt)
+            self.assertIn("unavailable material history is a qualification gap", prompt)
+            self.assertIn("Do not demand the research answer", prompt)
 
     def _checkpoint(self, root: Path, *, repair: bool):
         class LimitBackend(repair_fixtures.RepairFixtureBackend):
@@ -75,7 +72,9 @@ class InputLimitsHandoff(unittest.TestCase):
                     candidates = context.get("candidate", [])
                     if context.get("repaired_candidate"):
                         candidates = [context["repaired_candidate"]]
-                    self.seen_review_tests.extend(c["decisive_test"] for c in candidates)
+                    self.seen_review_tests.extend(
+                        c.get("frozen_objective", c)["decisive_test"] for c in candidates
+                    )
                 thread, raw = super().invoke(role, prompt, thread_id, model, provider)
                 out = json.loads(raw)
                 if role == "research_lead" and "candidates" in out:

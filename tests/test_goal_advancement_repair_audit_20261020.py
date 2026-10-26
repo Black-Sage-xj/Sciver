@@ -99,10 +99,10 @@ class QualificationRepairAuditTest(unittest.TestCase):
     def test_goal_advancement_is_scientific_review_not_success_guarantee(self):
         lead = stage_card_text("research_lead", "frontier_proposal")
         challenger = stage_card_text("challenger", "candidate_review")
-        self.assertIn("A matching, contrary, or inconclusive result needs a meaningful interpretation", lead)
-        self.assertIn("Matching, contrary and genuinely inconclusive results", challenger)
-        self.assertIn("eventual open/negative result as a design failure", challenger)
-        self.assertIn("Bounded mechanisms, counterexamples and negative results can be valuable without immediate Goal completion", challenger)
+        self.assertIn("Matching, contrary and inconclusive results each need an honest interpretation", lead)
+        self.assertIn("Matching, contrary and inconclusive results must retain scientific meaning", challenger)
+        self.assertIn("eventual negative/open result is not itself a blocker", challenger)
+        self.assertIn("counterexample, bounded mechanism, negative result or high-risk claim can advance the Goal without completing it", lead)
 
     def test_one_repair_freezes_the_corrected_test_and_audit(self):
         class RevisingBackend(FakeBackend):

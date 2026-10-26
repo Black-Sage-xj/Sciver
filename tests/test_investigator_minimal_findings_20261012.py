@@ -224,8 +224,8 @@ class MinimalFindingV10Test(unittest.TestCase):
 
     def test_documented_authority_and_test_gates(self):
         doc = (Path(__file__).resolve().parents[1] / "design" / "SDK设计文档.md").read_text()
-        for name in ("G04", "G05", "G06", "G07", "Final Formatting",
-                     "不能单凭它证明事前冻结", "TMC-20261012-25bfb7511767"):
+        for name in ("Hypothesis Lock", "decisive_test", "C-1",
+                     "自包含 Findings", "机器身份和产物溯源", "Judge"):
             self.assertIn(name, doc)
 
 

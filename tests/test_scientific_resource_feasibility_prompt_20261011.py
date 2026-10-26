@@ -71,12 +71,11 @@ class ResourceFeasibilityPromptTests(unittest.TestCase):
     def test_lead_design_can_trade_unneeded_global_precision_for_local_value(self):
         for prompt in self.prompts("research_lead", "frontier_proposal",
                                    {"goal": "Discover shell response", "final_gate": "Predict shells"}):
-            for phrase in ("A matching local result may advance the Cycle",
-                           "high-risk or otherwise credible work remains eligible",
+            for phrase in ("high-risk claim can advance the Goal without completing it",
                            "Indispensable premises need a credible in-scope route"):
                 self.assertIn(phrase, prompt)
-            self.assertIn("add discriminating information beyond adjudicated outcomes", prompt)
-            self.assertIn("Match uncertainty and proof precision to the claimed inference", prompt)
+            self.assertIn("Explain the substantive change from prior claims", prompt)
+            self.assertIn("Match uncertainty and proof precision to the scientific distinction claimed", prompt)
             self.assertNotIn("381", prompt)
 
     def test_challenger_distinguishes_scientific_design_failure_from_unknown_work(self):
@@ -84,28 +83,27 @@ class ResourceFeasibilityPromptTests(unittest.TestCase):
                                    {"candidate": [{"hypothesis": "H", "scope": "S",
                                                    "decisive_test": "a bounded local test"}]}):
             for phrase in ("essential route is demonstrably unavailable",
-                           "decisive outcome is unreachable", "credible in-scope route", "Investigation work",
+                           "claimed decision", "credible in-scope route", "Do not demand the research answer",
                            "Do not demand optional stronger claims"):
                 self.assertIn(phrase, prompt)
-            self.assertIn("Qualify when the design", prompt)
-            self.assertIn("Revise only when", prompt)
-            self.assertIn("Reject only when", prompt)
-            self.assertIn("eventual open/negative result as a design failure", prompt)
+            self.assertIn("Return the per-candidate decision", prompt)
+            self.assertIn("selection follows separately", prompt)
+            self.assertIn("Reject the current design", prompt)
+            self.assertIn("eventual negative/open result is not itself a blocker", prompt)
 
     def test_investigator_stage_preserves_no_premature_findings_and_native_blocked(self):
         card = stage_card_text("investigator", "investigate")
-        for phrase in ("value and resources before costly work", "abandon infeasible METHODS",
-                       "bounded in-scope alternatives", "frozen scientific estimand",
-                       "Never request native blocked for scientific difficulty",
-                       "without fabricating completion"):
+        for phrase in ("estimate feasibility and scientific value", "abandon disproportionate methods",
+                       "valid bounded alternatives", "frozen test",
+                       "Do not request native blocked for scientific difficulty",
+                       "unfinished science remains unfinished"):
             self.assertIn(phrase, card)
-        self.assertIn("Return complete findings[] ONLY", card)
-        self.assertIn("frozen decisive test", card)
-        self.assertIn("Do not hand off after a partial theorem", card)
-        self.assertIn("Do not scale a worst-case bound", card)
+        self.assertIn("whole frozen test", card)
+        self.assertIn("Do not submit a partial theorem", card)
+        self.assertIn("worst-case bounds do not justify unbounded compute", card)
         self.assertIn("requested_resolution", stage_card_text("investigator", "judge_rework"))
-        self.assertIn("abandon a disproportionate method", stage_card_text("investigator", "judge_rework"))
-        self.assertIn("without requesting native blocked", stage_card_text("investigator", "judge_rework"))
+        self.assertIn("abandon disproportionate methods", stage_card_text("investigator", "judge_rework"))
+        self.assertIn("Do not request native blocked", stage_card_text("investigator", "judge_rework"))
         self.assertNotIn("native Goal blocked status", stage_card_text("judge", "terminal_assessment"))
 
     def test_skills_extend_existing_cost_gate_without_setting_global_limits(self):
@@ -151,7 +149,8 @@ class ResourceFeasibilityPromptTests(unittest.TestCase):
                                 "current_frontiers": [], "lineage": [], "focus_details": [],
                                 "external_sources": [], "external_references": [], "source_relations": []},
             })["candidate"][0],
-            candidate,
+            {"frozen_objective": {"hypothesis": "H", "scope": "S", "decisive_test": "Test"},
+             "proposal_context": {"why_now": "Goal", "goal_advance": "Progress"}},
         )
 
 

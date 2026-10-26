@@ -21,17 +21,17 @@ class CompleteHandoffPromptTest(unittest.TestCase):
         self.assertEqual(src.read_bytes(), bundled.read_bytes())
         self.assertTrue(any(path.name == "investigator.md" for path in identity_files("investigator")))
         text = src.read_text(encoding="utf-8")
-        for phrase in ("唯一 Native Goal", "Judge", "SDK Setup", "claim", "limitations"):
+        for phrase in ("当前授权", "Judge", "冻结", "科学结论", "Contract"):
             self.assertIn(phrase, text)
         self.assertNotIn("剩余工作清单", text)
 
     def test_investigate_stage_prioritizes_work_before_submit(self):
         stage = stage_card_text("investigator", "investigate")
         for phrase in (
-            "Privately decompose decisive_test", "every necessary scientific prerequisite",
-            "perform the required independent test", "combined evidence",
-            "WHOLE Hypothesis", "KEEP RESEARCHING", "scientific statement",
-            "support, falsification", "frozen comparison",
+            "Decompose the frozen test", "necessary prerequisites",
+            "independent checks", "combined findings",
+            "whole frozen test", "unfinished science remains unfinished",
+            "scientific statement", "support, falsification", "frozen comparison",
         ):
             self.assertIn(phrase, stage)
         self.assertNotIn("Report unresolved scientific prerequisites in findings[].limitations", stage)
@@ -41,10 +41,10 @@ class CompleteHandoffPromptTest(unittest.TestCase):
     def test_rework_requires_actual_resolution_not_partial_findings(self):
         stage = stage_card_text("investigator", "judge_rework")
         for phrase in (
-            "judge_objections[].requested_resolution", "binding scientific target",
-            "missing prerequisites", "execute the necessary", "exact Judge request",
-            "BEFORE submitting findings[]", "materially RESOLVES", "If the actionable Judge objection remains",
-            "KEEP WORKING", "rigorous falsification/non-identifiability/impossibility",
+            "actual requested_resolution", "Native Goal binds those requests",
+            "missing prerequisites", "necessary in-scope work", "exact Judge request",
+            "materially resolve", "If actionable required work remains",
+            "rigorous falsification, non-identifiability or impossibility",
         ):
             self.assertIn(phrase, stage)
         self.assertNotIn("Report unresolved scientific prerequisites in findings[].limitations", stage)
@@ -52,8 +52,8 @@ class CompleteHandoffPromptTest(unittest.TestCase):
 
     def test_literature_stage_is_not_early_delivery(self):
         stage = stage_card_text("investigator", "integrate_literature")
-        self.assertIn("NOT a submission milestone", stage)
-        self.assertIn("complete findings[]", stage)
+        self.assertIn("Literature integration alone is not research completion", stage)
+        self.assertIn("complete the remaining frozen research", stage)
         self.assertNotIn("Report unresolved scientific prerequisites in findings[].limitations", stage)
 
     def test_real_assembled_first_and_rework_prompts_retain_exact_contract(self):
@@ -75,9 +75,9 @@ class CompleteHandoffPromptTest(unittest.TestCase):
                 self.assertNotIn("Report unresolved scientific prerequisites in findings[].limitations", prompt)
                 if stage == "judge_rework":
                     self.assertIn("Independent B comparison required", prompt)
-                    self.assertIn("KEEP WORKING", prompt)
+                    self.assertIn("If actionable required work remains, continue", prompt)
                 elif stage == "investigate":
-                    self.assertIn("KEEP RESEARCHING", prompt)
+                    self.assertIn("unfinished science remains unfinished", prompt)
             self.assertEqual(set(contract.prompt_schema), {"findings"})
 
 

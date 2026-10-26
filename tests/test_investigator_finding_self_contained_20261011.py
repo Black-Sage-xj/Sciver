@@ -102,17 +102,16 @@ class SelfContainedFindingTests(unittest.TestCase):
             if filename.name == "investigator.md":
                 text = filename.read_text(encoding="utf-8")
                 self.assertIn("科学结论必须准确反映实际方法", text)
-                self.assertIn("statement", text)
         for stage in STAGES:
-            self.assertIn("findings", stage_card_text("investigator", stage))
+            self.assertIn("statement", role_contract("investigator", phase=stage).prompt_projection())
         self.assertIn("limits in each scientific statement",
                       stage_card_text("investigator", "investigate"))
         self.assertNotIn("findings[].limitations", stage_card_text("investigator", "investigate"))
 
     def test_sdk_design_documents_the_exact_reason_and_gates(self):
         doc = (Path(__file__).resolve().parents[1] / "design" / "SDK设计文档.md").read_text(encoding="utf-8")
-        for phrase in ("Gate G01", "Gate G02", "成立条件", "冗余呈现",
-                       "Hypothesis.scope", "不单列 scope/limitations"):
+        for phrase in ("冻结", "decisive_test", "C-1", "自包含 Findings",
+                       "适用范围和不确定性写入科学正文"):
             self.assertIn(phrase, doc)
 
 

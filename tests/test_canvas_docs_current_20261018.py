@@ -47,4 +47,5 @@ def test_primary_entrypoints_link_the_current_sqlite_graph_model():
     assert "SQLite 图谱" in chinese_readme
     assert "每个已裁决 Cycle 唯一 Outcome" in plan
     assert "[Canvas设计文档.md](./Canvas设计文档.md)" in research
-    assert "当前 Canvas 权威" in sdk or "SQLite 是唯一科研数据权威层" in sdk
+    assert "Stage 读取 SQLite" in sdk
+    assert "Canvas 是确定性展示投影" in sdk

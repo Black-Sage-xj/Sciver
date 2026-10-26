@@ -12,8 +12,8 @@ class AuditRegression20260928Test(unittest.TestCase):
     def test_preparation_only_candidate_guard_is_now_a_lead_invariant(self):
         from theory_master.stage_registry import stage_card_text
         card = stage_card_text("research_lead", "frontier_proposal")
-        self.assertIn("Do not create filler or preparation-only candidates", card)
-        self.assertIn("uncertain scientific prerequisites remain Investigator work", card)
+        self.assertIn("Avoid umbrella programs, filler, preparation-only work", card)
+        self.assertIn("unknown derivations and the decisive experiment remain Investigator work", card)
         self.assertFalse(hasattr(Workflow, "_guard_local_source_only_candidate"))
         self.assertFalse(hasattr(Workflow, "_guard_terminal_existing_review_replay"))
 

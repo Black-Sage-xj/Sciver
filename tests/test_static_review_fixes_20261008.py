@@ -71,7 +71,7 @@ class StaticReviewFixesTest(unittest.TestCase):
             card = stage_card_text("investigator", stage)
             self.assertNotIn("an empty remaining_scientific_question", card)
             self.assertNotIn("actionable_no_progress_correction", card)
-            self.assertIn("findings[]", card)
+            self.assertIn("findings", str(role_contract("investigator", phase=stage).prompt_schema))
             self.assertNotIn("Report unresolved scientific prerequisites in findings[].limitations", card)
             projected = stage_context("investigator", stage, {"hypothesis_lock": {"hypothesis": "H"}, "actionable_no_progress_correction": "OLD"})
             self.assertNotIn("actionable_no_progress_correction", projected)
@@ -166,15 +166,15 @@ class StaticReviewFixesTest(unittest.TestCase):
         challenger = stage_card_text("challenger", "candidate_review")
         self.assertLess(len(lead) + len(procedure), 10500)
         for phrase in ("unmet Goal, Research Contract, Final Gate or necessary prerequisite",
-                       "add discriminating information", "A matching local result may advance the Cycle",
-                       "new source of uncertainty exists", "external novelty/priority review"):
+                       "discriminating consequence", "local contrary result",
+                       "new source of uncertainty", "blocking external scholarly gap"):
             self.assertIn(phrase, lead)
-        for phrase in ("explicit frontier states independently of graph leaves", "unmarked means unknown, not closed",
-                       "search formal research history across H, Outcomes and External records"):
+        for phrase in ("Frontier labels describe opportunities independently of graph leaves", "unmarked is unknown, not closed",
+                       "search formal research history beyond declared parents and recent Cycles across H, Outcomes and External records"):
             self.assertIn(phrase, procedure)
         self.assertIn("lineage_anchor_node_ids", str(role_contract(
             "research_lead", phase="frontier_proposal").prompt_schema))
-        self.assertIn("treat it as Investigation work rather than a revise blocker", challenger)
+        self.assertIn("eventual negative/open result is not itself a blocker", challenger)
 
     def test_lead_second_literature_request_gets_one_correction_no_new_search(self):
         class RepeatedRequestBackend(FakeBackend):

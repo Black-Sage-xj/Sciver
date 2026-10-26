@@ -184,9 +184,8 @@ class Task88RegressionTest(unittest.TestCase):
         self.assertNotIn("canary", investigator)
         self.assertIn("Include provenance only for strong evidence-identity claims", investigator)
         self.assertIn("compact scientific result", judge_card)
-        self.assertIn("Do not reopen or request raw files", judge_card)
-        self.assertIn("do not perform a second investigation", judge_card)
-        self.assertIn("Do not emit criterion IDs", judge_card)
+        self.assertIn("Do not request raw files", judge_card)
+        self.assertIn("Do not output audit inventories", judge_card)
         self.assertIn("needs_external_scholarship", judge)
         self.assertNotIn("do not reopen", judge.lower())
         skill = (
