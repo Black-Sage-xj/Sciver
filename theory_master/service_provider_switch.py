@@ -108,6 +108,8 @@ def switch_service_provider(account: str) -> dict[str, object]:
         tier = before["tier"]
         profile = CODEX_PROFILES[tier]
         provider = "codex"
+        if profile not in MODEL_PROFILES:
+            raise SelectionConflict(f"缺少模型档位 {profile}，无法切换账号；请先检查安装")
         choice_path = preference_path()
         old_paths = {p: p.read_bytes() if p.is_file() and not p.is_symlink()
                      else None for p in (profile_path, provider_path, choice_path)}

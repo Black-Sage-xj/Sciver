@@ -23,6 +23,7 @@ def _harness_with_search_race() -> str:
     head, tail = base.rsplit(marker, 1)
     extra = r"""
   const query=elements['ex-query'],box=elements['ex-results'],pending=[];
+  const descendants=node=>[node,...(node.children||[]).flatMap(descendants)];
   const nativeSetTimeout=ctx.setTimeout;
   ctx.setTimeout=(fn,delay)=>nativeSetTimeout(fn,delay===250?0:delay);
   ctx.fetch=url=>new Promise(resolve=>pending.push({url,resolve}));
@@ -32,12 +33,26 @@ def _harness_with_search_race() -> str:
   assert.equal(pending.length,2,'second debounced request started');
   pending[1].resolve({ok:true,json:async()=>({results:[{kind:'doc',id:'new',label:'NEW_RESULT',excerpt:'new excerpt'}],partial:true})});
   await tick();await tick();
-  assert(box.children.some(child=>String(child.textContent||'').includes('NEW_RESULT')),'new query is displayed');
-  assert(box.children.some(child=>child.className==='ex-search-warning'),'partial-index warning is visible');
+  assert(descendants(box).some(child=>String(child.textContent||'').includes('NEW_RESULT')),'new query is displayed');
+  assert(descendants(box).some(child=>child.className==='ex-search-warning'),'partial-index warning is visible');
   pending[0].resolve({ok:true,json:async()=>({results:[{kind:'doc',id:'old',label:'OLD_RESULT',excerpt:'old excerpt'}],partial:false})});
   await tick();await tick();
-  assert(box.children.some(child=>String(child.textContent||'').includes('NEW_RESULT')),'late old response cannot replace new results');
-  assert(!box.children.some(child=>String(child.textContent||'').includes('OLD_RESULT')),'stale result is discarded');
+  assert(descendants(box).some(child=>String(child.textContent||'').includes('NEW_RESULT')),'late old response cannot replace new results');
+  assert(!descendants(box).some(child=>String(child.textContent||'').includes('OLD_RESULT')),'stale result is discarded');
+  index.nodes.push({id:'H-0012',label:'Exact node',semantic:{type:'Hypothesis'},text:'# Exact node'});
+  query.value='12';query.listeners.input();await tick();await tick();
+  assert.equal(pending.length,3);
+  pending[2].resolve({ok:true,json:async()=>({results:[
+    {kind:'node',id:'H-0012',label:'Exact node',excerpt:'12 in content'},
+    {kind:'doc',id:'notes/other.md',label:'Other 12',excerpt:'content 12'}
+  ],partial:false})});
+  await tick();await tick();
+  assert.equal(box.children[0].children[0].textContent,'节点编号');
+  assert(box.children[0].children.some(child=>String(child.textContent||'').includes('H-0012')));
+  assert.equal(box.children[1].children[0].textContent,'内容匹配');
+  assert(box.children[1].children.some(child=>String(child.textContent||'').includes('Other 12')));
+  assert(!box.children[1].children.some(child=>String(child.textContent||'').includes('Exact node')),
+    'an exact node appears only in the node-number section');
 """
     return head + '\n' + extra + marker + tail
 

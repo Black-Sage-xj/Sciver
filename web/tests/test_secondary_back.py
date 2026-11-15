@@ -80,7 +80,7 @@ class SecondaryBackNavigationTests(unittest.TestCase):
         explorer = dashboard_shell(
             "Task Explore map", "Body", active="explorer", back_href=task_href)
         self.assertEqual(labels_and_links(explorer),
-                         (["Workspace", "Task List", "Task Console", "Explore map"],
+                         (["Workspace", "Task List", "Task Console", "图谱"],
                           [None, "/run/", task_href, None]))
         nav = BeautifulSoup(explorer, "html.parser").select_one("nav#tm-main-nav")
         self.assertGreaterEqual(len(nav.select("a")), 6)  # navigation categories can expand
@@ -124,6 +124,25 @@ class SecondaryBackNavigationTests(unittest.TestCase):
             unknown=BeautifulSoup(explorer_html(Path("/tmp"),state,selected="evil"),"html.parser")
             self.assertEqual(unknown.select_one(".tm-secondary-back")["href"],
                              "/workflow-stage-preview/")
+
+    def test_explorer_selection_uses_explicit_id_or_discovery_order(self):
+        class UninspectedPath:
+            def __str__(self):
+                raise AssertionError("Task selection must not inspect filesystem path text")
+
+        second = "b" * 16
+        state = {"runs": [
+            {"observer_id": IDENT, "run_id": 2, "task_name": "First discovered",
+             "task_root": UninspectedPath()},
+            {"observer_id": second, "run_id": 1, "task_name": "Second discovered",
+             "task_root": UninspectedPath()},
+        ]}
+        with patch("tm_observer.research_explorer_ui.vault_root", return_value=Path("/tmp")):
+            for requested, expected in (("", IDENT), (second, second)):
+                with self.subTest(requested=requested):
+                    page = BeautifulSoup(explorer_html(Path("/tmp"), state, selected=requested),
+                                         "html.parser")
+                    self.assertEqual(page.select_one("#ex-task option[selected]")["value"], expected)
 
     def test_services_back_uses_last_task_console_cookie(self):
         from urllib.request import Request

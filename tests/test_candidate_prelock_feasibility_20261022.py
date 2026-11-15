@@ -1,13 +1,10 @@
-"""Offline design oracles for C186–191 pre-lock feasibility and prompt generality.
+"""Handwritten pre-lock feasibility oracles; no archived research is bundled.
 
-These tests do not predict LLM verdicts. H8-specific structures stay in test
-fixtures and never become universal Stage/Procedure requirements.
+These checks validate generic prompt and transport rules, not LLM verdicts.
 """
 from __future__ import annotations
 
-import json
 import unittest
-from pathlib import Path
 
 from theory_master.contract_stages import role_contract
 from theory_master.prompt_stages import build_initial_prompt, stage_context
@@ -18,11 +15,6 @@ from theory_master.stage_registry import (
 )
 
 
-ARCHIVE = (
-    Path(__file__).resolve().parents[3]
-    / "gs_study/.theory-master-tasks/"
-    "1-matrix-cavity-green-g-closure-h8-dd60a2f2780a/research"
-)
 TEST_AGENT_GRAPH = {
     "schema": "theorymaster/test-agent-graph/v1",
     "hypotheses": [],
@@ -65,18 +57,17 @@ class PrelockScientificFeasibilityOracle(unittest.TestCase):
             write_rule="read only",
         )
 
-    def test_c189_exact_input_matching_has_a_cheap_eligibility_gate(self):
-        # The H8-specific fixture mirrors the reported condition; these are
-        # illustrative encodings, not a fresh inventory of archived assets.
-        encodings = [("P(d)", f"unique-{i:02d}") for i in range(52)]
+    def test_exact_input_matching_has_a_cheap_eligibility_gate(self):
+        # Handwritten identifiers have no matched pair; no scientific data is used.
+        encodings = [("fixture-category", f"unique-{i}") for i in range(5)]
         pairs = [
-            (i, j) for i in range(52) for j in range(i + 1, 52)
+            (i, j) for i in range(5) for j in range(i + 1, 5)
             if encodings[i] == encodings[j]
         ]
         self.assertEqual(pairs, [])
 
         for body in self.prompt_bodies:
-            for domain_specific in ("P(d)", "52 networks", "network-level", "same-input", "H8"):
+            for domain_specific in ("fixture-category", "unique-0", "synthetic-record"):
                 self.assertNotIn(domain_specific.lower(), body.lower())
 
         self.assertIn("existing inputs/metadata", self.lead_procedure)
@@ -87,7 +78,7 @@ class PrelockScientificFeasibilityOracle(unittest.TestCase):
         self.assertIn("comparison eligibility, matching or controls", self.lead_procedure)
         self.assertIn("do not impose matching on a design that does not require it", self.review_procedure)
 
-    def test_c186_uncertainty_and_c187_188_common_support(self):
+    def test_uncertainty_and_common_support(self):
         # Illustrative overlapping intervals: point estimates exist, but they
         # cannot resolve the frozen signed contrast.
         estimate_a, err_a = 1.0, 0.8
@@ -106,7 +97,7 @@ class PrelockScientificFeasibilityOracle(unittest.TestCase):
         self.assertIn("credible in-scope route", self.review)
         self.assertIn("Do not demand the research answer at qualification", self.review)
 
-    def test_c190_local_protocol_bridge_and_c191_negative_result_remain_eligible(self):
+    def test_local_implication_and_negative_result_remain_eligible(self):
         # A necessary local consequence can refute a universal claim, but
         # support in one local window does not establish the whole claim.
         local_predictions = {"window_a": True, "window_b": False}
@@ -159,8 +150,8 @@ class PrelockScientificFeasibilityOracle(unittest.TestCase):
                 )
                 self.assertIn("Current task: " + stage, assembled)
                 self.assertIn("Output contract:", assembled)
-                self.assertNotIn("P(d)", card + procedure)
-                self.assertNotIn("network-level", (card + procedure).lower())
+                self.assertNotIn("fixture-category", card + procedure)
+                self.assertNotIn("synthetic-record", (card + procedure).lower())
                 self.assertNotIn("same-input", (card + procedure).lower())
                 self.assertNotIn("candidate_id", card)
                 self.assertNotIn("blocking_issues", card)
@@ -175,7 +166,7 @@ class PrelockScientificFeasibilityOracle(unittest.TestCase):
         self.assertIn("procedure", STAGE_CARDS[("research_lead", "frontier_proposal")])
         self.assertIn("procedure", STAGE_CARDS[("challenger", "candidate_review")])
 
-    def test_non_h8_math_and_ai4s_scenarios_use_generic_rules(self):
+    def test_math_and_algorithm_scenarios_use_generic_rules(self):
         scenarios = (
             {
                 "candidate_id": "math-proof-1",
@@ -201,34 +192,31 @@ class PrelockScientificFeasibilityOracle(unittest.TestCase):
                 self.assertIn("credible in-scope route", prompt)
                 self.assertIn("matching, contrary and inconclusive", prompt.lower())
                 self.assertIn("purely theoretical or existence proofs need no data matching or statistical sample requirement", prompt)
-                for domain_specific in ("P(d)", "network-level", "same-input", "52 networks", "H8"):
+                for domain_specific in ("fixture-category", "unique-0", "synthetic-record"):
                     self.assertNotIn(domain_specific.lower(), prompt.lower())
         self.assertIn("do not impose matching on a design that does not require it", self.review_procedure)
 
-    def test_archived_cycle_hypotheses_are_frozen_reference_only(self):
-        if not ARCHIVE.exists():
-            self.skipTest("Private local archived Cycles are not bundled with Sciver")
-        markers = {
-            186: ("L₁₄", "P(d)"),
-            187: ("C_self", "共同支持"),
-            188: ("共变", "K_out"),
-            189: ("P(d)", "独立底图"),
-            190: ("Green", "B"),
-            191: ("λ", "负谷"),
-        }
-        for cycle, (hypothesis_marker, test_marker) in markers.items():
-            with self.subTest(cycle=cycle):
-                checkpoints = sorted((ARCHIVE / str(cycle) / "checkpoints").glob("*.json"))
-                candidates = []
-                for path in checkpoints:
-                    item = json.loads(path.read_text(encoding="utf-8"))
-                    if item.get("candidates"):
-                        candidates = item["candidates"]
-                        break
-                self.assertTrue(candidates, f"Cycle {cycle} frozen candidates unavailable")
-                first = candidates[0]
-                self.assertIn(hypothesis_marker, first["hypothesis"])
-                self.assertIn(test_marker, first["decisive_test"])
+    def test_synthetic_scientific_definitions_reach_challenger_without_rewriting(self):
+        candidates = (
+            {"hypothesis": "A finite rewrite system terminates for strings of length at most eight.",
+             "scope": "The three explicitly declared rewrite rules only.",
+             "decisive_test": "Exhaustively enumerate the bounded state graph or exhibit a cycle."},
+            {"hypothesis": "Estimator A improves on the median for the declared synthetic samples.",
+             "scope": "A frozen generated table, with paired error comparison.",
+             "decisive_test": "Compare held-out paired errors and report uncertainty."},
+            {"hypothesis": "The proposed integer recurrence preserves parity.",
+             "scope": "Nonnegative integers with the stated base condition.",
+             "decisive_test": "Prove the invariant by induction or return an exact counterexample."},
+        )
+        for candidate in candidates:
+            with self.subTest(hypothesis=candidate["hypothesis"]):
+                context = stage_context("challenger", "candidate_review", {
+                    "candidate": [candidate], "agent_graph": TEST_AGENT_GRAPH,
+                })
+                self.assertEqual(context["candidate"][0]["frozen_objective"], candidate)
+                prompt = self._challenger_prompt(candidate)
+                for value in candidate.values():
+                    self.assertIn(value, prompt)
 
 
 if __name__ == "__main__":

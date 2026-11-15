@@ -15,10 +15,17 @@ from .workflow_versions import load_workflow_snapshots, workflow_snapshot
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STAGE_PREVIEW_GUIDE = REPO_ROOT / "web" / "WORKFLOW_STAGE_PREVIEW_GUIDE.md"
+if not STAGE_PREVIEW_GUIDE.is_file():
+    STAGE_PREVIEW_GUIDE = Path(__file__).resolve().parent / "resources" / "WORKFLOW_STAGE_PREVIEW_GUIDE.md"
 
 
-def _core_source_dir(root: Path) -> Path:
+def _core_source_dir(root: Path | None = None) -> Path:
     """Locate TheoryMaster source in a checkout or an installed wheel."""
+    if root is None:
+        spec = importlib.util.find_spec("theory_master")
+        if spec is None or spec.origin is None:
+            raise FileNotFoundError("The Sciver core package is not installed")
+        return Path(spec.origin).resolve().parent
     for candidate in (root / "theory_master", root / "tool" / "theory_master" / "theory_master"):
         if (candidate / "stage_registry.py").is_file():
             return candidate
@@ -88,8 +95,7 @@ def _safe_source_value(node: ast.AST, symbols: dict[str, ast.AST], stack: tuple[
 
 
 def _source_catalog(repo_root: Path | None = None) -> tuple[dict[tuple[str, str], dict[str, Any]], dict[tuple[str, str], dict[str, str]], dict[str, str]]:
-    root = (repo_root or REPO_ROOT).resolve()
-    tm_root = _core_source_dir(root)
+    tm_root = _core_source_dir(repo_root)
     stage_symbols = _assignment_map(tm_root / "stage_registry.py")
     display_source = tm_root / "hypothesis_display.py"
     contract_symbols = {
@@ -168,8 +174,7 @@ DISPLAYED_AGENT_STAGES: tuple[tuple[str, str], ...] = (
 # metadata. Read the authoritative source declaration beside stage_context()
 # so prompt changes automatically appear in /workflow-stage-preview/.
 def _source_context_fields(repo_root: Path | None = None) -> dict[tuple[str, str], tuple[str, ...]]:
-    root = (repo_root or REPO_ROOT).resolve()
-    path = _core_source_dir(root) / "prompt_stages.py"
+    path = _core_source_dir(repo_root) / "prompt_stages.py"
     symbols = _assignment_map(path)
     value = _safe_source_value(symbols["STAGE_CONTEXT_FIELDS"], symbols)
     if not isinstance(value, dict):
@@ -188,9 +193,7 @@ STAGE_CONTEXT_FIELDS = _source_context_fields()
 
 
 def _source_stage_details(repo_root: Path | None = None) -> dict[tuple[str, str], dict[str, Any]]:
-    root = (repo_root or REPO_ROOT).resolve()
-    tm_root = _core_source_dir(root)
-    _contracts, cards, _labels = _source_catalog(root)
+    _contracts, cards, _labels = _source_catalog(repo_root)
     result: dict[tuple[str, str], dict[str, Any]] = {}
     for pair in DISPLAYED_AGENT_STAGES:
         card = cards.get(pair) or {}
@@ -260,6 +263,7 @@ CONTEXT_FIELD_STRUCTURES: dict[tuple[str, str, str], tuple[str, ...]] = {
     ("reporter", "report", "scientific_synthesis"): ("conclusions[]", "open_questions[]"),
     ("reporter", "report", "scientific_model_summary"): ("version", "current_scientific_picture", "established_knowledge[]"),
     ("reporter", "report", "evidence_scope_digest"): ("[].{evidence_id,relation,source_access,provenance,summary,criterion_ids,scope,limitations}",),
+    ("reporter", "report", "report_materials"): ("[].evidence_id", "[].assets[].{reference,kind,role,status,path,image_ref}"),
 }
 
 

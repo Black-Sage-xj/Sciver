@@ -5,5 +5,14 @@ prune config/local
 prune audit
 prune changes
 
-recursive-include regression_cases/test_0 *
 include regression_cases/index.json
+include regression_cases/test_0/case.json
+include regression_cases/test_0/research_plan.md
+include regression_cases/test_0/expected.json
+include regression_cases/test_0/PROTOCOL.md
+include regression_cases/test_0/benchmark/instruction.md
+include regression_cases/test_0/benchmark/source_manifest.json
+include regression_cases/test_0/benchmark/datasets/brownian_2d/trajectories.csv
+include regression_cases/test_0/evaluator/generate_data.py
+include regression_cases/test_0/evaluator/grade.py
+include regression_cases/test_0/evaluator/score_trajectory.py

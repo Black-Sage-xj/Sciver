@@ -274,6 +274,10 @@ def task_route_catalog() -> list[dict[str, str]]:
         for group in MODEL_PROVIDER_MAP.values()
         for route in group.values()
     }
+    variants.update((route.model, route.provider)
+                    for profile in MODEL_PROFILES
+                    for route in build_model_profile(profile).values()
+                    if route.provider in ACCOUNT_PROVIDERS)
     return [{"model": model, "provider": provider} for model, provider in sorted(variants)]
 
 
@@ -323,6 +327,36 @@ def read_task_role_activations(research_root: Path) -> dict[str, str]:
             for role, row in payload.get("roles", {}).items()}
 
 
+def read_task_model_profile(research_root: Path) -> str | None:
+    """Return the explicit task preset independently of global defaults."""
+    path = Path(research_root) / ".theory-master" / TASK_ROLE_OVERRIDES_NAME
+    if not path.exists():
+        return None
+    read_task_role_overrides(research_root)
+    import json
+    profile = json.loads(path.read_text(encoding="utf-8")).get("profile")
+    if profile is not None and (not isinstance(profile, str) or profile not in MODEL_PROFILES):
+        raise ValueError("invalid task model profile")
+    return profile
+
+
+def save_task_model_profile(research_root: Path, profile: str) -> dict[str, Any]:
+    """Replace six task routes atomically; active calls retain their bound route."""
+    routes = build_model_profile(profile)
+    directory = Path(research_root) / ".theory-master"
+    if not directory.is_dir() or directory.is_symlink():
+        raise ValueError("missing task runtime registry")
+    from .runtime import atomic
+    import json
+    payload = {"schema": "theory-master/web-role-routes/v1", "profile": normalize_model_profile(profile),
+               "roles": {role: {"model": route.model, "provider": route.provider,
+                                "reasoning_effort": route.reasoning_effort,
+                                "activation": "next_invocation"}
+                         for role, route in routes.items()}}
+    atomic(directory / TASK_ROLE_OVERRIDES_NAME, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    return {"profile": payload["profile"], "roles": payload["roles"]}
+
+
 def save_task_role_override(research_root: Path, *, role: str, model: str,
                             provider: str, effort: str,
                             activation: str = "next_invocation") -> dict[str, str]:
@@ -348,6 +382,9 @@ def save_task_role_override(research_root: Path, *, role: str, model: str,
               "activation": previous_modes.get(key, "next_invocation")}
         for key, route in sorted(previous.items())
     }}
+    profile = read_task_model_profile(research_root)
+    if profile is not None:
+        payload["profile"] = profile
     import json
     atomic(directory / TASK_ROLE_OVERRIDES_NAME, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
     return {"role": role, "model": model, "provider": provider,

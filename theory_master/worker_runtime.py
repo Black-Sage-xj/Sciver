@@ -271,6 +271,7 @@ def available_worker_name(root: Path, *, exclude: frozenset[str] = frozenset(),
                           eligible_ids: frozenset[str] | None = None) -> str:
     workers = list_workers(root)
     claims = set(exclude) | {w["worker_id"] for w in workers if w.get("process_alive")
+                               or w.get("close_requested")
                                or w.get("effective_status") in (RESUMABLE | RUNNING)}
     for index in range(1, len(workers) + 2):
         name = f"worker-{index}"
@@ -1845,6 +1846,8 @@ def watch_worker_quota(spec: Any, worker_id: str) -> int:
             "started_at": utcnow().isoformat(), "worker_id": worker_id})
         while quota_auto_adjust_enabled(root):
             w = read_worker(root, worker_id)
+            if w.get("close_requested") or w.get("dismissed"):
+                return 0
             status = str(w.get("status") or "")
             if status in {"OVER", "COMPLETE", "RELEASED", "CANCELLED", "STOPPED", "FAILED_START"}:
                 return 0
@@ -2076,6 +2079,8 @@ def request_preserve_release(spec: Any, worker_id: str) -> dict[str, Any]:
     with gate.open("a+", encoding="utf-8") as held:
         fcntl.flock(held.fileno(), fcntl.LOCK_EX)
         worker = read_worker(root, worker_id)
+        if worker.get("close_requested") or worker.get("dismissed"):
+            raise PreservationPreflightRejected("Worker is closing or closed")
         if worker.get("status") not in {"NEEDS_ATTENTION", "PAUSED", "INTERRUPTED", "PRESERVING"}:
             raise PreservationPreflightRejected("only a stopped Worker with a scientific blocker may be preserved")
         if process_identity_alive(worker.get("pid"), worker.get("pid_start_ticks")):
@@ -2326,6 +2331,11 @@ def worker_action(
     provider_fallback: str | None = None,
 ) -> dict[str, Any]:
     """Exact Worker-specific checkpoint control; never use Master-wide kill."""
+    if action == "close":
+        if account is not None or provider_fallback is not None:
+            raise ValueError("close does not accept account/provider migration")
+        from .worker_close import close_worker
+        return close_worker(spec, worker_id)
     if action == "preserve_release":
         if account is not None or provider_fallback is not None:
             raise ValueError("preservation does not accept account/provider migration")
@@ -2344,6 +2354,8 @@ def worker_action(
         w = read_worker(root, worker_id)
         if not w or w.get("schema") != SCHEMA:
             raise ValueError("Worker does not exist")
+        if w.get("close_requested") or w.get("dismissed"):
+            raise ValueError("Worker is closing or closed; automatic resume is disabled")
         if action == "retry_direction":
             if w.get("status") != WAITING_RESEARCH_DIRECTION:
                 raise ValueError("retry_direction applies only to a Worker waiting for research direction")
@@ -2358,6 +2370,8 @@ def worker_action(
             return {"worker_id": worker_id, "action": action, "status": "RETRY_REQUESTED",
                     "effective_at": "next_scheduler_tick"}
         if action == "dismiss":
+            if worker_id == "worker-1":
+                raise ValueError("Agent 1 is the permanent primary Agent")
             if w.get("dismissed"):
                 raise ValueError("Worker already hidden")
             if sum(not row.get("dismissed") for row in list_workers(root)) <= 1:
@@ -2681,6 +2695,16 @@ def start_scheduler(spec: Any, slots: int, *, preferred_hypothesis: str | None =
             "resource_slots": slots}
 
 
+def scheduler_worker_ids(root: Path, desired: int) -> tuple[str, ...]:
+    workers = list_workers(root)
+    names = [w["worker_id"] for w in workers if not w.get("dismissed")]
+    next_id = max([int(w["worker_id"].split("-")[1]) for w in workers] + [0]) + 1
+    while len(names) < desired:
+        names.append(f"worker-{next_id}")
+        next_id += 1
+    return tuple(names)
+
+
 def scheduler_daemon(spec: Any, slots: int, preferred: str | None = None) -> int:
     """Poll Canvas at Cycle boundaries, assigning new independent Worker processes."""
     root = Path(spec.research_root).resolve()
@@ -2696,7 +2720,7 @@ def scheduler_daemon(spec: Any, slots: int, preferred: str | None = None) -> int
         from .worker_mode import read_mode
         mode = read_mode(root)
         worker_count = mode["desired_agents"] if mode["configured"] else slots
-        worker_ids = tuple(f"worker-{i}" for i in range(1, worker_count + 1))
+        worker_ids = scheduler_worker_ids(root, worker_count)
         previous = _read_json(metadata_path)
         max_cycles = int(spec.max_cycles)
         # A stopped, not-yet-exhausted batch is safe to resume without
@@ -2707,7 +2731,6 @@ def scheduler_daemon(spec: Any, slots: int, preferred: str | None = None) -> int
         resume = (previous.get("quota_mode") == "per_worker" and
                   previous.get("status") in {"STOPPED", "FAILED", "STALLED", "RUNNING"} and
                   isinstance(previous_max, int) and 0 < previous_max <= max_cycles and
-                  previous.get("worker_ids") == list(worker_ids) and
                   previous.get("resume_batch") is True)
         raw_counts = previous.get("cycles_started_by_worker") if resume else {}
         raw_counts = raw_counts if isinstance(raw_counts, dict) else {}
@@ -2750,8 +2773,12 @@ def scheduler_daemon(spec: Any, slots: int, preferred: str | None = None) -> int
             # A Worker gets max_cycles of its OWN new allocations per batch.
             # Completed/failed cycles consume a slot once they were started;
             # resumptions are routed by dispatch_pending and consume no slot.
-            eligible = frozenset(name for name, count in counts.items()
-                                 if count < max_cycles)
+            worker_ids = scheduler_worker_ids(root, desired)
+            for name in worker_ids:
+                counts.setdefault(name, 0)
+            eligible = frozenset(name for name in worker_ids
+                                 if counts[name] < max_cycles
+                                 and not read_worker(root, name).get("close_requested"))
             try:
                 recovered = _recover_proposal_gate(root)
                 if recovered is not None:

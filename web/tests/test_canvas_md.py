@@ -13,10 +13,11 @@ import unittest
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
+from urllib.parse import urlencode
 
 from tm_observer.auth import BasicAuthCredentials
 from tm_observer.canvas_md import ExplorerError, build_index, read_document, resolve_link, search_payload, vault_root
-from tm_observer.canvas_md_routes import canvas_md_get
+from tm_observer.canvas_md_routes import canvas_md_get, canvas_md_image_get
 from tm_observer.research_explorer_ui import EXPLORER_HTML, explorer_html
 from tm_observer.web import ThreadingHTTPServer, make_handler
 
@@ -55,6 +56,48 @@ class CanvasMDTests(unittest.TestCase):
             "edges": [{"id": "scientific-inheritance", "fromNode": "H-0042", "toNode": "next",
                        "label": "research parent"}],
         }, ensure_ascii=False), encoding="utf-8")
+
+    def test_images_resolve_document_vault_research_and_repo_paths(self):
+        figure = self.notebook / "assets" / "对比 图.svg"
+        figure.parent.mkdir()
+        figure.write_bytes(b'<svg xmlns="http://www.w3.org/2000/svg"/>')
+        route = f"/api/canvas-md/tasks/{self.ident}/image"
+        for target in ("../assets/对比 图.svg", "assets/对比 图.svg", str(figure)):
+            body, mime = canvas_md_image_get(route, urlencode({"path": target,
+                "source": "notes/detail.md"}), self.repo, self.state)
+            self.assertEqual(body, figure.read_bytes())
+            self.assertEqual(mime, "image/svg+xml")
+        local = self.notebook / "notes" / "assets" / figure.name
+        local.parent.mkdir()
+        local.write_bytes(b"document relative")
+        for vault, expected in (("0", local.read_bytes()), ("1", figure.read_bytes())):
+            body, _ = canvas_md_image_get(route, urlencode({"path": "assets/对比 图.svg",
+                "source": "notes/detail.md", "vault": vault}), self.repo, self.state)
+            self.assertEqual(body, expected)
+        result = self.research / "result.png"
+        result.write_bytes(b"\x89PNG\r\n\x1a\n")
+        for target in ("result.png", str(result), result.relative_to(self.repo).as_posix()):
+            body, mime = canvas_md_image_get(route, urlencode({"path": target}), self.repo, self.state)
+            self.assertEqual((body, mime), (result.read_bytes(), "image/png"))
+
+    def test_image_api_rejects_other_tasks_symlinks_types_and_oversize(self):
+        from unittest.mock import patch
+        outside = self.repo / "other-task.png"
+        outside.write_bytes(b"private")
+        (self.notebook / "escape.png").symlink_to(outside)
+        (self.notebook / "data.csv").write_text("private,data")
+        (self.notebook / "large.png").write_bytes(b"12345")
+        route = f"/api/canvas-md/tasks/{self.ident}/image"
+        for target, status in ((str(outside), 403), ("../../../other-task.png", 403),
+                               ("escape.png", 404), ("data.csv", 415), ("missing.png", 404),
+                               ("", 400), ("\x00.png", 400)):
+            with self.subTest(target=target), self.assertRaises(ExplorerError) as error:
+                canvas_md_image_get(route, urlencode({"path": target}), self.repo, self.state)
+            self.assertEqual(error.exception.status, status)
+        with patch("tm_observer.canvas_md_routes.MAX_IMAGE_BYTES", 4):
+            with self.assertRaises(ExplorerError) as error:
+                canvas_md_image_get(route, "path=large.png", self.repo, self.state)
+            self.assertEqual(error.exception.status, 413)
 
     def test_active_worker_markers_follow_frozen_h_and_never_show_stale_process(self):
         from unittest.mock import patch
@@ -291,6 +334,100 @@ console.log('trackpad pan/pinch assertions passed');
         with self.assertRaises(ExplorerError):
             vault_root(self.repo, self.ident, indexed)
 
+    def _external_registered_task(self, task=None):
+        external = tempfile.TemporaryDirectory()
+        self.addCleanup(external.cleanup)
+        research = Path(external.name) / "runtime" / "research"
+        research.mkdir(parents=True)
+        task = task or self.repo / "project" / "external-task"
+        task.mkdir(parents=True, exist_ok=True)
+        (task / "exploration.canvas").write_text('{"nodes":[],"edges":[]}', encoding="utf-8")
+        config = task / "theory-master.config.json"
+        payload = {
+            "schema": "theory-master/system/v1", "path_model": "theory-master/task-path/v2",
+            "task_home": str(task), "research_root": str(research),
+            "plan_path": str(task / "research_plan.md"),
+            "branch_canvas": str(task / "exploration.canvas"),
+        }
+        config.write_text(json.dumps(payload), encoding="utf-8")
+        marker = task / ".theory-master" / "task.json"
+        marker.parent.mkdir(exist_ok=True)
+        marker.write_text(json.dumps({"schema": "theory-master/task/v2", "config_path": str(config)}),
+                          encoding="utf-8")
+        ident = hashlib.sha256(str(research).encode()).hexdigest()[:16]
+        state = {"runs": [dict(self.run, observer_id=ident, task_root=str(task), research_root=str(research))]}
+        return task, config, marker, payload, ident, state
+
+    def test_bound_external_runtime_and_task_as_search_root_are_readable(self):
+        task, _, _, _, ident, state = self._external_registered_task()
+        for search_root in (self.repo, task):
+            with self.subTest(search_root=search_root):
+                self.assertEqual(vault_root(search_root, ident, state), task)
+                payload, status = canvas_md_get(f"/api/canvas-md/tasks/{ident}/index", "", search_root, state)
+                self.assertEqual(status, 200)
+                self.assertEqual(json.loads(payload)["nodes"], [])
+
+    def test_expanded_mapping_requires_every_canonical_sdk_binding_field(self):
+        task, config, marker, payload, ident, state = self._external_registered_task()
+        for field in ("schema", "path_model", "task_home", "research_root", "plan_path", "branch_canvas"):
+            for replacement in (None, "wrong", 7, {"path": "wrong"}):
+                with self.subTest(field=field, replacement=replacement):
+                    changed = dict(payload)
+                    changed[field] = replacement
+                    config.write_text(json.dumps(changed), encoding="utf-8")
+                    with self.assertRaises(ExplorerError):
+                        vault_root(self.repo, ident, state)
+        config.write_text(json.dumps(payload), encoding="utf-8")
+        for binding in ({"schema": "wrong", "config_path": str(config)},
+                        {"schema": "theory-master/task/v2", "config_path": str(task / "other.json")}):
+            marker.write_text(json.dumps(binding), encoding="utf-8")
+            with self.subTest(binding=binding), self.assertRaises(ExplorerError):
+                vault_root(self.repo, ident, state)
+        marker.unlink()
+        with self.assertRaises(ExplorerError):
+            vault_root(self.repo, ident, state)
+
+    def test_external_runtime_does_not_admit_unbound_legacy_or_outside_task_home(self):
+        task, _, marker, _, ident, state = self._external_registered_task(self.notebook)
+        marker.unlink()
+        with self.assertRaises(ExplorerError):
+            vault_root(self.repo, ident, state)
+        self.assertEqual(task, self.notebook)
+        elsewhere = tempfile.TemporaryDirectory()
+        self.addCleanup(elsewhere.cleanup)
+        _, _, _, _, other_id, other_state = self._external_registered_task(Path(elsewhere.name) / "task")
+        with self.assertRaises(ExplorerError):
+            vault_root(self.repo, other_id, other_state)
+        _, _, _, _, notebook_id, notebook_state = self._external_registered_task(self.repo / "笔记区")
+        with self.assertRaises(ExplorerError):
+            vault_root(self.repo, notebook_id, notebook_state)
+
+    def test_expanded_mapping_rejects_symlink_binding_config_graph_and_raw_home(self):
+        task, config, marker, _, ident, state = self._external_registered_task()
+        for path in (marker, config, task / "exploration.canvas"):
+            original = path.with_name(path.name + ".original")
+            path.rename(original)
+            path.symlink_to(original)
+            try:
+                with self.subTest(path=path), self.assertRaises(ExplorerError):
+                    vault_root(self.repo, ident, state)
+            finally:
+                path.unlink()
+                original.rename(path)
+        marker.parent.rename(task / ".original-marker")
+        marker.parent.symlink_to(task / ".original-marker", target_is_directory=True)
+        with self.assertRaises(ExplorerError):
+            vault_root(self.repo, ident, state)
+        marker.parent.unlink()
+        (task / ".original-marker").rename(marker.parent)
+        raw_state = {"runs": [dict(state["runs"][0], task_root=str(task / ".." / task.name))]}
+        with self.assertRaises(ExplorerError):
+            vault_root(self.repo, ident, raw_state)
+
+    def test_in_scope_legacy_without_config_remains_readable(self):
+        (self.notebook / "theory-master.config.json").unlink()
+        self.assertEqual(vault_root(self.repo, self.ident, self.state), self.notebook)
+
     def test_http_api_requires_auth_and_is_readonly(self):
         class Cache:
             search_root = self.repo
@@ -325,6 +462,17 @@ console.log('trackpad pan/pinch assertions passed');
                          "live Worker assignments require the same authentication")
         with urlopen(Request(worker_url, headers={"Authorization": auth}), timeout=5) as response:
             self.assertEqual(json.loads(response.read()), {"workers": []})
+        image = self.notebook / "figure.svg"
+        image.write_bytes(b'<svg xmlns="http://www.w3.org/2000/svg"/>')
+        image_url = f"{base}/api/canvas-md/tasks/{self.ident}/image?path=figure.svg"
+        with self.assertRaises(HTTPError) as denied_image:
+            build_opener(NoRedirect).open(image_url, timeout=5)
+        self.assertEqual(denied_image.exception.code, 303)
+        with urlopen(Request(image_url, headers={"Authorization": auth}), timeout=5) as response:
+            self.assertEqual(response.read(), image.read_bytes())
+            self.assertEqual(response.headers["Content-Type"], "image/svg+xml")
+            self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+            self.assertIn("sandbox", response.headers["Content-Security-Policy"])
         with urlopen(Request(f"{base}/research-explorer/?observer_id={self.ident}",
                              headers={"Authorization": auth}), timeout=5) as response:
             page = response.read().decode("utf-8")
@@ -352,6 +500,25 @@ console.log('trackpad pan/pinch assertions passed');
             third = search_payload(self.notebook, 'Fresh cache invalidation token')
             self.assertTrue(any(row['id'] == 'nodes/proof.md' for row in third['results']))
             self.assertGreater(reader.call_count, initial_reads, 'changed mtime/size must invalidate the cache')
+
+    def test_numeric_search_prioritizes_exact_cycle_over_full_text(self):
+        from unittest.mock import patch
+        from tm_observer import canvas_md
+
+        unrelated = [{"id": f"other-{i}", "label": f"Mentions 210 {i}",
+                      "content": "210 appears in body", "cycle_ids": []} for i in range(70)]
+        exact_node = {"id": "H-0210", "label": "Target hypothesis", "content": "No number here",
+                      "cycle_ids": ["210"]}
+        exact_doc = {"id": "notes/outcomes/210.md", "label": "Outcome", "content": "No number here"}
+        with patch.object(canvas_md, "_search_index", return_value={
+            "nodes": unrelated + [exact_node], "documents": [exact_doc],
+            "partial": False, "scanned_documents": 1, "scanned_bytes": 1,
+        }):
+            hits = search_payload(self.notebook, "210")["results"]
+            self.assertEqual([(hit["kind"], hit["id"]) for hit in hits[:2]],
+                             [("node", "H-0210"), ("doc", "notes/outcomes/210.md")])
+            self.assertEqual(len(hits), 60)
+            self.assertEqual(search_payload(self.notebook, "21")["results"][0]["id"], "other-0")
 
     def test_graph_and_search_indexes_have_a_total_document_read_budget(self):
         from unittest.mock import patch

@@ -259,7 +259,7 @@ class GoalCompletionGateTest(unittest.TestCase):
                           backend.lead_prompts[1])
             self.assertEqual(backend.challenger_graphs[1]["goal_gate_attention"],
                              graph["goal_gate_attention"])
-            self.assertIn("goal_gate_attention with linked Outcomes",
+            self.assertIn("Read current Goal/Contract/Final Gate and goal_gate_attention with linked Outcomes",
                           backend.challenger_prompts[1])
 
 

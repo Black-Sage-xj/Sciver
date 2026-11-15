@@ -117,7 +117,13 @@ def task_settings_body(run: dict[str, Any], *, task_selector: str = "", access: 
         data-cycle="{cycle}" data-status="{status}" data-launch="{launch}">
         <h2>自动审计</h2>
         <p class="tm-task-settings-hint">这项功能不常用，仅在此处配置。设置会保存到当前任务，
-          开关在下一次 Run/Resume 后由新 Runner 采用；不会打断正在执行的 Cycle。</p>
+          开关在下一次 Run/Resume 后由新 Runner 采用；不会打断正在执行的 Cycle。
+          自动审计默认关闭，需要另行配置外部审计适配器，启用后会额外消耗模型额度。</p>
+        <details><summary>自动审计的环境准备</summary><p>在启动 Runner 的环境中配置
+          <code>THEORY_MASTER_AUDIT_SKILL</code>（审计 Skill 文件）、
+          <code>THEORY_MASTER_AUDIT_RELAY</code>（审计启动脚本）和
+          <code>THEORY_MASTER_AUDIT_WORKDIR</code>（工作目录）。
+          普通安装包不附带外部审计服务；尚未配置时请保持关闭。</p></details>
         {settings_panel(run, audit_only=True)}
       </section>
     </main>
@@ -148,9 +154,11 @@ def task_settings_body(run: dict[str, Any], *, task_selector: str = "", access: 
             if(caption)caption.textContent='已配置'+(value.value?'开启':'关闭')+' · 下次 Run/Resume';
           }}
           show('已保存。自动审计开关在下一次 Run/Resume 生效。');
+          return true;
         }}catch(error){{
           if(control&&rollback!==undefined)control.checked=rollback;
           show('保存失败：'+String(error.message||error)+'。请刷新页面确认状态。');
+          return false;
         }}finally{{
           if(control)control.disabled=false;
         }}
@@ -161,12 +169,21 @@ def task_settings_body(run: dict[str, Any], *, task_selector: str = "", access: 
         save('set_operator_preference',{{kind:'flag',key:'cycle_audit',value:input.checked}},
              input,!input.checked);
       }});
-      settings.addEventListener('click',event=>{{
+      const model=settings.querySelector('[data-setting-model="cycle_audit"]');
+      let savedModel=model?.value;
+      settings.addEventListener('click',async event=>{{
         const button=event.target.closest('[data-setting-save-model="cycle_audit"]');
         if(!button)return;
         const selected=settings.querySelector('[data-setting-model="cycle_audit"]');
         if(!selected)return;
-        save('set_operator_preference',{{kind:'model',key:'cycle_audit',value:selected.value}},
-             button);
+        const next=selected.value;
+        selected.disabled=true;
+        try{{
+          if(await save('set_operator_preference',{{kind:'model',key:'cycle_audit',value:next}},button)){{
+            savedModel=next;
+          }}else{{
+            selected.value=savedModel;
+          }}
+        }}finally{{selected.disabled=false;}}
       }});
     }})();</script>'''

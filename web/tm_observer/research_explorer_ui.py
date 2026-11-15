@@ -188,10 +188,8 @@ def explorer_html(search_root: Path, state: dict, selected: str = "", *, legacy:
         except ExplorerError:
             continue
         available.append(run)
-    # Prefer the original Master 1 note if the visitor has not selected a Run.
     if not selected and available:
-        primary = next((r for r in available if str(r.get("run_id")) == "1" and "矩阵腔体Green" in str(r.get("task_root"))), None)
-        selected = str((primary or available[0])["observer_id"])
+        selected = str(available[0]["observer_id"])
     options = "".join(
         f'<option value="{html.escape(str(r["observer_id"]), quote=True)}"'
         + (" selected" if r["observer_id"] == selected else "")
@@ -200,7 +198,7 @@ def explorer_html(search_root: Path, state: dict, selected: str = "", *, legacy:
     )
     if not available:
         options = '<option value="">没有可访问的科研画布</option>'
-    content = (EXPLORER_CSS + EXPLORER_HTML if legacy else graph_content()).replace("TM_CANVAS_TASK_OPTIONS", options)
+    content = graph_content().replace("TM_CANVAS_TASK_OPTIONS", options)
     # When reached from a specific Run's Canvas/MD link, the observer_id in
     # the URL is the selected task. Keep the DOM select for the existing reader
     # but do not repeat an unrelated "科研任务 Master …" chooser above it.
@@ -212,6 +210,6 @@ def explorer_html(search_root: Path, state: dict, selected: str = "", *, legacy:
         str(row.get("observer_id")) == requested_task_id
         for row in available
     ) and len(requested_task_id) == 16 and all(ch in "0123456789abcdef" for ch in requested_task_id))
-    return dashboard_shell("Sciver Observatory — Explore map", content,
+    return dashboard_shell("Sciver Observatory — 图谱", content,
                            active="explorer",
                            back_href=f"/run/{requested_task_id}/" if has_source_task else None)

@@ -72,13 +72,15 @@ def vault_root(search_root: Path, observer_id: str, state: dict[str, Any]) -> Pa
     root = Path(root_text).resolve()
     research = Path(research_text).resolve()
     if (
-        root == repo or not _inside(root, repo) or root == notebook
-        or not _inside(research, repo)
+        not _inside(root, repo) or root == notebook
+        or root_text != str(root) or research_text != str(research)
         or hashlib.sha256(str(research).encode("utf-8")).hexdigest()[:16] != observer_id
     ):
         raise ExplorerError("任务映射不安全", 403)
     canvas = root / "exploration.canvas"
     graph_database = root / "science_graph.sqlite3"
+    if canvas.is_symlink() or graph_database.is_symlink():
+        raise ExplorerError("科研图谱路径不安全", 403)
     if not root.is_dir() or not (
         (canvas.is_file() and _inside(canvas.resolve(), root))
         or (graph_database.is_file() and _inside(graph_database.resolve(), root))
@@ -87,10 +89,15 @@ def vault_root(search_root: Path, observer_id: str, state: dict[str, Any]) -> Pa
     # Outside the historical notebook area, require the SDK's task marker and
     # exact config binding before exposing any files from a registered Run.
     config = root / "theory-master.config.json"
-    registered_home = not _inside(root, notebook)
+    # Runtime storage is intentionally separate from the task's notes. An
+    # expanded mapping needs the complete v2 SDK binding; legacy notebook
+    # layouts retain their historical in-scope read-only compatibility.
+    expanded_mapping = root == repo or not _inside(research, repo)
+    registered_home = not _inside(root, notebook) or expanded_mapping
     if registered_home:
         marker = root / ".theory-master" / "task.json"
-        if not marker.is_file() or not _inside(marker.resolve(), root) or marker.stat().st_size > 512 * 1024:
+        if (not marker.is_file() or marker.is_symlink() or marker.resolve() != marker
+                or marker.stat().st_size > 512 * 1024):
             raise ExplorerError("任务映射不安全", 403)
         try:
             binding = json.loads(marker.read_text(encoding="utf-8"))
@@ -104,28 +111,38 @@ def vault_root(search_root: Path, observer_id: str, state: dict[str, Any]) -> Pa
     # Ensure the task configuration binds this home to the indexed research
     # root. Do not follow config-provided paths.
     if config.is_file():
-        if not _inside(config.resolve(), root) or config.stat().st_size > 512 * 1024:
+        if config.is_symlink() or config.resolve() != config or config.stat().st_size > 512 * 1024:
             raise ExplorerError("任务配置不可读取", 403)
         try:
             parsed = json.loads(config.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise ExplorerError("任务配置无效", 422) from exc
-        if not isinstance(parsed, dict) or (
+        if not isinstance(parsed, dict):
+            raise ExplorerError("任务配置无效", 422)
+        if expanded_mapping and any(parsed.get(field) != value for field, value in {
+            "schema": "theory-master/system/v1",
+            "path_model": "theory-master/task-path/v2",
+            "task_home": str(root),
+            "research_root": str(research),
+            "plan_path": str(root / "research_plan.md"),
+            "branch_canvas": str(canvas),
+        }.items()):
+            raise ExplorerError("任务源文件与 Run 索引不一致", 409)
+        if (
             registered_home and (
                 parsed.get("task_home") != str(root)
                 or parsed.get("research_root") != str(research)
                 or (canvas.is_file() and parsed.get("branch_canvas") != str(canvas))
             )
-        ) or (
-            parsed.get("research_root") and Path(parsed["research_root"]).resolve() != research
-        ) or (
-            parsed.get("branch_canvas") and canvas.is_file()
-            and Path(parsed["branch_canvas"]).resolve() != canvas.resolve()
-        ) or (
-            parsed.get("graph_database") and
-            Path(parsed["graph_database"]).resolve() != graph_database.resolve()
         ):
             raise ExplorerError("任务源文件与 Run 索引不一致", 409)
+        for field, target in (("research_root", research), ("branch_canvas", canvas),
+                              ("graph_database", graph_database)):
+            value = parsed.get(field)
+            if value and (not isinstance(value, str) or Path(value).resolve() != target):
+                raise ExplorerError("任务源文件与 Run 索引不一致", 409)
+    elif config.is_symlink():
+        raise ExplorerError("任务配置不可读取", 403)
     return root
 
 
@@ -321,15 +338,22 @@ def _sqlite_graph_projection(root: Path) -> dict[str, Any]:
             h["resolved_dossier_ref"] = dossier_ref
             if original_dossier_ref and not dossier_ref:
                 h["unavailable_dossier_ref"] = original_dossier_ref
+            from theory_master.hypothesis_lineage import source_role_text
+            from theory_master.outcome_guide import hypothesis_reading_summary
             text = (
                 f"type: Hypothesis\nid: {h['id']}\nscientific_status: {h['scientific_status']}\n"
                 + (f"created_cycle: {created_cycle}\n" if created_cycle is not None else "")
                 + (f"frontier_status: {status}\n" if status else "")
-                + f"\n# {h['title'] or h['id']}\n\n{h['summary']}\n"
+                + f"\n# {h['title'] or h['id']}\n\n{hypothesis_reading_summary(h)}\n"
+                + source_role_text(h)
                 + (f"\n[[{dossier_ref}|查看完整猜想文档]]\n" if dossier_ref else "")
                 + (f"[[{h['outcome']['document_ref']}]]"
                    if h.get("outcome") and h["outcome"].get("document_ref") else "")
             )
+            if status:
+                reason = next((f.get("reason") for f in frontiers
+                               if f.get("status") == status and f.get("reason")), None)
+                text += "\n\n**分支状态：** " + status + "；" + (reason or "原因未记录。")
         else:
             detail_ref = _readable_markdown_ref(root, external_detail_ref(h.get("id")))
             text = (
@@ -362,6 +386,7 @@ def _sqlite_graph_projection(root: Path) -> dict[str, Any]:
          "originating_outcome": e["originating_outcome"],
          "provenance_json": e["provenance_json"]}
         for e in source["edges"]
+        if json.loads(e["provenance_json"]).get("lineage_role") != "other"
     ]
     edges.extend({
         "id": e["id"], "fromNode": e["hypothesis_id"], "toNode": e["external_id"],
@@ -664,10 +689,12 @@ def _build_index_uncached(root: Path) -> dict[str, Any]:
 
 
 def _node_search_content(node: dict[str, Any]) -> str:
+    from theory_master.outcome_guide import graph_summary_text
     content = str(node.get("text", ""))
     for outcome in node.get("cycle_outcomes") or ([node.get("outcome")] if node.get("outcome") else []):
         if not isinstance(outcome, dict):
             continue
+        content += "\n" + graph_summary_text(outcome)
         content += "\n" + "\n".join(
             str(outcome.get(k) or "") for k in ("summary", "judge_rationale", "decisive_test", "verdict")
         )
@@ -801,7 +828,13 @@ def _search_index(root: Path) -> dict[str, Any]:
                 content = encoded[:remaining].decode("utf-8", errors="ignore")
                 partial = True
             node_bytes += len(content.encode("utf-8"))
-            nodes.append({"id": str(node.get("id", "")), "label": label, "content": content})
+            cycle_ids = [str(outcome.get("cycle_id")) for outcome in node.get("cycle_outcomes") or []
+                         if isinstance(outcome, dict) and str(outcome.get("cycle_id") or "").isdigit()]
+            created = re.search(r"^created_cycle:\s*(\d+)\s*$", content, re.MULTILINE)
+            if created:
+                cycle_ids.append(created.group(1))
+            nodes.append({"id": str(node.get("id", "")), "label": label, "content": content,
+                          "cycle_ids": cycle_ids})
 
         document_budget = max(0, MAX_INDEX_TOTAL_BYTES - node_bytes)
         per_document_limit = min(MAX_DOCUMENT_BYTES, max(8192, document_budget // max(1, len(docs))))
@@ -843,22 +876,25 @@ def search_payload(root: Path, query: str) -> dict[str, Any]:
     if not needle:
         return {"results": [], "partial": False, "scanned_documents": 0, "scanned_bytes": 0}
     index = _search_index(root)
-    results: list[dict[str, str]] = []
+    ranked: list[tuple[int, int, dict[str, str]]] = []
+    cycle_query = str(int(needle)) if needle.isdecimal() and int(needle) > 0 else None
     for node in index["nodes"]:
-        if needle in (node["label"] + "\n" + node["content"]).casefold():
-            results.append({"kind": "node", "id": node["id"], "label": node["label"],
-                            "excerpt": node["content"][:200]})
-        if len(results) >= 60:
-            break
-    if len(results) < 60:
-        for doc in index["documents"]:
-            content = doc["content"]
-            idx = content.casefold().find(needle)
-            if idx != -1:
-                results.append({"kind": "doc", "id": doc["id"], "label": doc["label"],
-                                "excerpt": content[max(0, idx - 100):idx + 180].replace("\n", " ")})
-            if len(results) >= 60:
-                break
+        exact = cycle_query is not None and cycle_query in node["cycle_ids"]
+        if exact or needle in (node["label"] + "\n" + node["content"]).casefold():
+            ranked.append((0 if exact else 2, len(ranked),
+                           {"kind": "node", "id": node["id"], "label": node["label"],
+                            "excerpt": node["content"][:200]}))
+    for doc in index["documents"]:
+        content = doc["content"]
+        idx = content.casefold().find(needle)
+        exact = cycle_query is not None and re.search(
+            rf"(?:^|/)cycle-0*{re.escape(cycle_query)}(?:--|[./-])|^notes/outcomes/0*{re.escape(cycle_query)}\.(?:md|json)$",
+            doc["id"], re.IGNORECASE) is not None
+        if exact or idx != -1:
+            ranked.append((1 if exact else 3, len(ranked),
+                           {"kind": "doc", "id": doc["id"], "label": doc["label"],
+                            "excerpt": content[max(0, idx - 100):idx + 180].replace("\n", " ") if idx >= 0 else content[:180].replace("\n", " ")}))
+    results = [row for _, _, row in sorted(ranked, key=lambda item: item[:2])[:60]]
     return {"results": results, "partial": index["partial"],
             "scanned_documents": index["scanned_documents"], "scanned_bytes": index["scanned_bytes"]}
 

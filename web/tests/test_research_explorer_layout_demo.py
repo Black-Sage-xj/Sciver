@@ -24,7 +24,7 @@ def test_temp_view_is_its_own_timeline_branch_visual():
         assert item in page
     assert "tm-layout-b" not in page
     assert 'href="/research-explorer/?observer_id=8dd38a9977eef7e5"' in page
-    assert 'href="/research-explorer-tmp-b/?observer_id=8dd38a9977eef7e5"' in page
+    assert '/research-explorer-tmp-b/' not in page
 
 
 def test_all_nodes_and_all_edges_are_consumed_without_default_node_cutoff():
@@ -80,9 +80,9 @@ def test_legacy_graph_page_is_not_replaced_by_the_temporary_view():
     old = graph_content()
     assert "tm-layout-ac" not in old
     assert 'id="ex-g6"' in old
-    assert 'id="ex-layout-demo-link"' in old
-    assert 'href="/research-explorer-tmp/"' in old
-    assert "布局B" in old
+    assert 'id="ex-edge-menu"' in old
+    assert 'id="ex-layout-demo-link"' not in old
+    assert "布局B" not in old
     for removed in (
         "布局实验 A+C", "布局实验 B", "布局实验 A0 原始版", "布局实验 V0 最早版",
         'id="ex-layout-demo-b-link"', 'id="ex-layout-demo-a0-link"', 'id="ex-layout-demo-v0-link"',

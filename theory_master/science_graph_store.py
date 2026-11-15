@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .goal_terminal import GoalSealedError
+from .outcome_guide import graph_summary_text
 
 SCHEMA_VERSION = 2
 GOAL_CLOSE_REASON = "Final Gate passed; no remaining active research frontier"
@@ -563,6 +564,7 @@ class ScienceGraphStore:
                        boundary: list[str] | None = None, evidence_refs: list[str] | None = None,
                        report_ref: str | None = None,
                        source_decisions: list[dict[str, Any]] | None = None,
+                       graph_summary: dict[str, str] | None = None,
                        authorized_revision_reason: str | None = None,
                        record_only: bool = False) -> None:
         """Record a Cycle evaluation, updating the single H Outcome in place.
@@ -581,6 +583,10 @@ class ScienceGraphStore:
         )
         if source_decisions:
             evaluation["source_decisions"] = source_decisions
+        if graph_summary is not None:
+            from .outcome_guide import validate_graph_summary
+            validate_graph_summary(graph_summary)
+            evaluation["graph_summary"] = dict(graph_summary)
         with self.transaction():
             old = self.db.execute(
                 "SELECT source_json FROM cycle_evaluations WHERE id=?",(outcome_id,),
@@ -872,12 +878,21 @@ class ScienceGraphStore:
 
 
     def add_evolution(self, *, edge_id: str, source: str, target: str,
-                      operator: str | None = None, outcome_id: str | None = None) -> None:
+                      operator: str | None = None, outcome_id: str | None = None,
+                      lineage_role: str | None = None) -> None:
+        if lineage_role not in {None, "main", "other"}:
+            raise ValueError("lineage_role must be main or other")
         with self.transaction():
+            if lineage_role == "main" and self.db.execute(
+                "SELECT 1 FROM scientific_edges WHERE target_hypothesis=? AND id!=? "
+                "AND json_extract(provenance_json, '$.lineage_role')='main'", (target, edge_id)
+            ).fetchone():
+                raise ValueError("Hypothesis already has a main lineage source")
             self.db.execute(
                 "INSERT OR IGNORE INTO scientific_edges"
-                "(id,source_hypothesis,target_hypothesis,evolution_operator,originating_outcome)"
-                " VALUES (?,?,?,?,?)", (edge_id, source, target, operator, outcome_id),
+                "(id,source_hypothesis,target_hypothesis,evolution_operator,originating_outcome,provenance_json)"
+                " VALUES (?,?,?,?,?,?)", (edge_id, source, target, operator, outcome_id,
+                    json.dumps({"lineage_role": lineage_role} if lineage_role else {})),
             )
             self._event("edge.observed", edge_id, {"source": source, "target": target})
 
@@ -1069,6 +1084,15 @@ class ScienceGraphStore:
                 dict(r) for r in self.db.execute(
                     "SELECT * FROM frontier_branches WHERE hypothesis_id=? ORDER BY id", (h["id"],))
             ]
+            incoming = [dict(r) for r in self.db.execute(
+                "SELECT source_hypothesis,provenance_json FROM scientific_edges "
+                "WHERE target_hypothesis=? ORDER BY id", (h["id"],))]
+            main = [e["source_hypothesis"] for e in incoming
+                    if json.loads(e["provenance_json"]).get("lineage_role") == "main"]
+            if main:
+                item["lineage_main_node_id"] = main[0]
+                item["lineage_other_node_ids"] = [e["source_hypothesis"] for e in incoming
+                    if json.loads(e["provenance_json"]).get("lineage_role") == "other"]
             item["type"] = "Hypothesis"
             hypotheses.append(item)
         external = [{**dict(row), "type": "External"} for row in self.db.execute(
@@ -1222,9 +1246,12 @@ class ScienceGraphStore:
                     }
                     if outcome.get("original_verdicts"):
                         row["source_verdicts"] = list(outcome["original_verdicts"][:3])
-                    summary = clipped(outcome.get("summary"), focused_outcome_summary_chars)
-                    if summary:
-                        row["result"] = summary
+                    if outcome.get("graph_summary"):
+                        row["graph_summary"] = dict(outcome["graph_summary"])
+                    else:
+                        summary = clipped(outcome.get("summary"), focused_outcome_summary_chars)
+                        if summary:
+                            row["result"] = summary
                     refs = [str(ref) for ref in (outcome.get("evidence_refs") or []) if ref]
                     if refs:
                         row["evidence_refs"] = refs[:3]
@@ -1258,9 +1285,12 @@ class ScienceGraphStore:
                         "cycle": str(latest.get("cycle_id") or ""),
                         "verdict": str(latest.get("verdict") or "open"),
                     }
-                    summary = clipped(latest.get("summary"), 48)
-                    if summary:
-                        latest_view["result"] = summary
+                    if latest.get("graph_summary"):
+                        latest_view["graph_summary"] = dict(latest["graph_summary"])
+                    else:
+                        summary = clipped(latest.get("summary"), 48)
+                        if summary:
+                            latest_view["result"] = summary
                     detail = latest.get("report_ref") or latest.get("document_ref")
                     if detail:
                         latest_view["detail_ref"] = str(detail)
@@ -1384,9 +1414,8 @@ class ScienceGraphStore:
         for candidate in candidates if isinstance(candidates, list) else []:
             if not isinstance(candidate, dict):
                 continue
-            raw_ids = candidate.get("lineage_anchor_node_ids")
-            if not isinstance(raw_ids, list):
-                raw_ids = [candidate.get("lineage_anchor_node_id")]
+            from .hypothesis_lineage import lineage_sources
+            raw_ids = lineage_sources(candidate)
             ids = list(dict.fromkeys(str(value).strip() for value in raw_ids if str(value or "").strip()))
             ids = [value for value in ids if value in known_h][:3]
             source_ids.extend(ids)
@@ -1468,9 +1497,12 @@ class ScienceGraphStore:
                     "cycle": str(outcome.get("cycle_id") or ""),
                     "verdict": str(outcome.get("verdict") or "open"),
                 }
-                summary = clipped(outcome.get("summary"), 140)
-                if summary:
-                    row["summary"] = summary
+                if outcome.get("graph_summary"):
+                    row["graph_summary"] = dict(outcome["graph_summary"])
+                else:
+                    summary = clipped(outcome.get("summary"), 140)
+                    if summary:
+                        row["summary"] = summary
                 ref = outcome.get("report_ref") or outcome.get("document_ref")
                 if ref:
                     row["detail_ref"] = str(ref)
@@ -1551,7 +1583,7 @@ class ScienceGraphStore:
             "termination_reason", "prior_judge_objection", "original_verdicts",
             "summary", "decisive_test", "judge_rationale", "findings",
             "open_questions", "boundary", "evidence_refs", "report_ref",
-            "document_ref",
+            "document_ref", "graph_summary",
             "goal_gate",
         )
         lineage = [[
@@ -1596,6 +1628,8 @@ class ScienceGraphStore:
             } for row in node.get("frontiers") or []],
             "lineage_columns": ["from", "to", "operator", "outcome_ref"],
             "lineage": sorted(lineage),
+            **({key: node[key] for key in ("lineage_main_node_id", "lineage_other_node_ids")}
+               if node.get("lineage_main_node_id") else {}),
             "external_reference_columns": ["id", "title", "content_type", "detail_ref", "outcome_ref"],
             "external_references": sorted(linked_external),
             "dossier_ref": str(node.get("dossier_ref") or ""),
@@ -1706,6 +1740,7 @@ class ScienceGraphStore:
             "research_root_source": "existing research_root Context; never a graph authority",
             "file_availability": "not_checked; missing private Workspace is allowed",
             "whole_h_status_inferred": False,
+            **({"graph_summary": dict(record["graph_summary"])} if record.get("graph_summary") else {}),
         }
 
     def agent_external_detail(
@@ -1848,6 +1883,7 @@ class ScienceGraphStore:
                         continue
                     searchable = " ".join(str(outcome.get(key) or "") for key in
                         ("summary", "decisive_test", "judge_rationale", "findings", "boundary"))
+                    searchable += " " + graph_summary_text(outcome)
                     if text.casefold() in searchable.casefold() or any(
                         term in searchable.casefold() for term in terms
                     ):
@@ -1889,6 +1925,7 @@ class ScienceGraphStore:
             else:
                 for outcome in node.get("cycle_outcomes") or []:
                     if isinstance(outcome, dict):
+                        parts.append(graph_summary_text(outcome))
                         for field in ("summary", "decisive_test", "judge_rationale", "findings", "boundary"):
                             parts.append(str(outcome.get(field) or "")[:1000])
             return node_id.casefold(), title.casefold(), " ".join(parts).casefold()

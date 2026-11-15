@@ -70,6 +70,7 @@ class FakeGraph {
     this.renders++;
   }
   async fitView(){
+    this.fitCalls=(this.fitCalls||0)+1;
     if(Number.isFinite(this.nextFitZoom)){
       this.camera.zoom=this.nextFitZoom;this.nextFitZoom=null;
       this.events.aftertransform?.();
@@ -134,6 +135,7 @@ const ctx={
     ]}:index}),
   setTimeout,clearTimeout,console
 };
+vm.runInNewContext(fs.readFileSync(require('node:path').join(require('node:path').dirname(process.argv[1]),'research_explorer_layout_c.js'),'utf8'),ctx);
 vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),ctx);
 const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
 (async()=>{
@@ -149,11 +151,10 @@ const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
   assert.equal(elements['ex-layout'].dataset.layout,'side');
   assert.equal(elements['ex-splitter']['aria-orientation'],'vertical');
   const initialRenders=latestGraph.renders;
-  assert.equal(elements['ex-all']['aria-pressed'],'true',
-    'direct unanchored entry defaults to 完整图谱');
+  assert.equal(latestGraph.fitCalls,1,'fresh entry fits the full tree');
   assert.equal(latestGraph.data.nodes.length,5,
     'full graph includes the otherwise filtered historical branch');
-  assert.equal(latestGraph.focused,'B',
+  assert.equal(latestGraph.focused,undefined,
     'legacy-only fixture centers the newest trusted Cycle, not the rightmost arbitrary node');
   assert.equal(history.state?.tmExplorerView?.selected,null,
     'landing center never silently selects a node or forges a deep link');
@@ -209,367 +210,90 @@ const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
   assert.equal(elements['ex-fullscreen']['aria-pressed'],'false');
   assert.equal(latestGraph.renders,initialRenders,'pane resize must not re-layout the research graph');
   assert.equal(history.state?.tmExplorerView?.selected?.id,initialSelected,'resize preserves selected node');
-  const tipButtons=elements['ex-tip-summary'].children.filter(x=>x.tagName==='BUTTON');
-  assert.equal(tipButtons.length,4,'all/active/parked/closed navigation controls');
-  assert(tipButtons.some(x=>x.textContent.includes('全部 3')));
-  assert(tipButtons.some(x=>x.textContent.includes('已终止 1')));
-  const legend=elements['ex-type-legend'].children.filter(x=>x.className==='ex-type-key');
-  assert.equal(legend.length,4,'detail legend shows H frontier, Outcome, and legacy node types');
-  assert.notEqual(legend[0].children[0].style.background,legend[1].children[0].style.background);
-  const closedControl=tipButtons.find(x=>x.textContent.includes('已终止'));
-  closedControl.onclick();
-  assert.equal(elements['ex-tip-panel'].hidden,false);
-  assert.equal(elements['ex-tip-panel'].children.filter(x=>x.className==='ex-tip-entry').length,1);
-  const tipCycle=elements['ex-tip-panel'].children.find(x=>x.className==='ex-tip-entry')
-    .children[0].children.find(x=>x.className==='ex-tip-sub').textContent;
-  assert(tipCycle.startsWith('C? · '),'frontier list uses Cycle rather than node ID');
-  closedControl.onclick();
-  assert.equal(elements['ex-tip-panel'].hidden,true);
-  // Worker chips must appear exclusively on currently active H rows, with
-  // exact native Task Console deep-links and no card click interception.
-  const activeControl=tipButtons.find(x=>x.textContent.includes('活跃'));
-  await activeControl.onclick();await tick();
-  const activeRow=elements['ex-tip-panel'].children.find(x=>x.className==='ex-tip-entry');
-  const chips=activeRow.children.find(x=>x.className==='ex-tip-workers');
-  assert.equal(chips.children.length,2,'two active workers can share one research H');
-  assert.equal(chips.children[0].href,
-    '/run/0000000000000001/?worker=worker-2','worker badge points at selected Console');
-  assert(chips.children[0].textContent.includes('Worker 2 · C3'));
-  assert(chips.children[1].textContent.includes('Worker 5 · C4'));
-  assert(!elements['ex-tip-panel'].children.some(x=>x.textContent?.includes('Worker 3')),
-    'closed/nonactive H is not assigned a live badge');
-  activeControl.onclick();
-  assert.equal(elements['ex-tip-panel'].hidden,true,'active panel still closes normally');
-  assert.equal(latestGraph.data.nodes.length,5,'initial mode is the full graph');
-  assert(latestGraph.data.nodes.some(n=>n.id==='X'),
-    'full landing retains closed and non-frontier historical branches');
-  const graphOptions=latestGraph.options;
-  assert.equal(graphOptions.layout,undefined,
-    'G6 must respect fixed Cycle positions rather than recompute Dagre ranks');
-  assert(latestGraph.data.nodes.every(n=>Number.isFinite(n.style.x)&&Number.isFinite(n.style.y)),
-    'all graph nodes have explicit x/y coordinates');
-  // G6 trackpad routing: swipe pans and pinch zooms, never both for one event.
-  const pan=graphOptions.behaviors.find(b=>b.key==='trackpad-pan');
-  const pinch=graphOptions.behaviors.find(b=>b.key==='trackpad-pinch');
-  assert.equal(pan.type,'scroll-canvas');
-  assert.equal(pinch.type,'zoom-canvas');
-  for(const [event,expectedPan,expectedZoom] of [
-    [{ctrlKey:false,deltaX:64,deltaY:28},true,false],
-    [{ctrlKey:true,deltaX:0,deltaY:-12},false,true],
-    [{ctrlKey:false,metaKey:true,deltaY:18},true,false],
-  ]){
-    assert.equal(pan.enable(event),expectedPan,'two-finger pan gate');
-    assert.equal(pinch.enable(event),expectedZoom,'pinch zoom gate');
-    assert.notEqual(pan.enable(event),pinch.enable(event),'gesture behaviors must be exclusive');
-  }
-  assert.equal(graphOptions.behaviors.filter(b=>b==='zoom-canvas').length,0,
-    'unconditional wheel zoom must be disabled');
-  // G6's wheel listener is attached to its canvas; HTML overlay buttons
-  // must forward gestures without stealing wheel events from that canvas.
-  const overlayWheel=elements['ex-graph'].listeners.wheel;
-  assert.equal(typeof overlayWheel,'function');
-  const originalCamera=[...latestGraph.camera.position];
-  const gesture=(target,ctrlKey,dx,dy)=>{
-    const flags={prevented:false,stopped:false};
-    overlayWheel({target,ctrlKey,deltaX:dx,deltaY:dy,clientX:400,clientY:200,
-      preventDefault(){flags.prevented=true},stopPropagation(){flags.stopped=true}});
-    return flags;
-  };
-  const overlayTarget={closest:()=>({className:'ex-outcome-card'})};
-  const panFlags=gesture(overlayTarget,false,24,-12);
-  assert.deepEqual(panFlags,{prevented:true,stopped:true});
-  assert.deepEqual([...latestGraph.camera.position],
-    [originalCamera[0]-24,originalCamera[1]+12],
-    'HTML H/Outcome overlay continues two-finger G6 pan');
-  const unchanged=latestGraph.camera.zoom;
-  const nativeFlags=gesture({closest:()=>null},false,10,10);
-  assert.deepEqual(nativeFlags,{prevented:false,stopped:false},
-    'native G6 canvas handles its own wheel events exactly once');
-  assert.equal(latestGraph.camera.zoom,unchanged);
-  const pinchFlags=gesture(overlayTarget,true,0,-20);
-  assert.deepEqual(pinchFlags,{prevented:true,stopped:true});
-  assert(latestGraph.camera.zoom>unchanged,'pinch zoom still works over HTML node controls');
-  assert.deepEqual([...latestGraph.zoomOrigin],[400,200],
-    'overlay pinch is anchored at the pointer, not viewport center');
-  latestGraph.camera.zoom=1;latestGraph.camera.position=originalCamera;
-  latestGraph.events.aftertransform();
-  assert.equal(latestGraph.layout,undefined,'manual coordinate chart has no hidden layout');
-  assert.deepEqual([...latestGraph.data.nodes[2].style.size],[352,154]);
-  const cards=new Map(latestGraph.data.nodes.map(n=>[n.id,n]));
-  assert(cards.get('D').style.labelText.startsWith('C3 · D\n'),
-    'Decision card heading has compact type and verified own cycle');
-  assert(!cards.get('D').style.labelText.includes('Decision'),
-    'type long name is no longer repeated inside card');
-  assert(cards.get('C').style.labelText.startsWith('C150（前序） · F\n'),
-    'Finding can show the explicitly qualified incoming Decision cycle');
-  assert.equal(cards.get('A').style.labelText,'',
-    'H content is displayed by split overlay, never duplicated by native G6 label');
-  assert(elements['ex-outcome-cards'].children.find(x=>x.dataset.nodeId==='A')
-    .children[0].children[0].textContent.startsWith('C? · H'),
-    'missing Cycle remains explicitly unknown inside upper H region');
-  assert(cards.get('B').style.labelText.includes('前沿 parked'),
-    'frontier status is not conflated with scientific status');
-  assert(cards.get('D').style.labelText.includes('科学 open'),
-    'verdict remains visible');
-  assert.equal(cards.get('D').style.labelMaxLines,6);
-  assert.equal(cards.get('A').style.size[0],352);
-  assert.equal(cards.get('A').style.fill,'#384152','H with no frontier has a neutral color');
-  elements['ex-all'].onclick();await tick();
-  const before=JSON.stringify(latestGraph.data);
-  assert.equal(latestGraph.data.nodes.length,5);
-  const defaultLine=latestGraph.data.edges.find(e=>e.id==='AC');
-  assert(Math.min(...latestGraph.data.nodes.map(n=>n.style.zIndex))>
-    Math.max(...latestGraph.data.edges.map(e=>e.style.zIndex)),
-    'every card must render above every connecting line');
-  assert.equal(defaultLine.style.stroke,'#e2e8f0','default edge is visibly bright');
-  assert.equal(defaultLine.style.lineWidth,3.3,'default edge is thick enough to trace');
-  assert.equal(defaultLine.style.opacity,1,'default edge is fully opaque');
-  assert.equal(defaultLine.style.cursor,'pointer','edge advertises clickability');
-  assert(defaultLine.style.increasedLineWidthForHitTesting>=10,'thin segments have generous click targets');
-  nodes[0].x=-123456;nodes[0].y=888888;nodes[1].width=888;
-  elements['ex-all'].onclick();await tick();
-  assert.equal(JSON.stringify(latestGraph.data),before,'geometry must never affect read-only layout input');
-  // Click only repaints styles, no Dagre re-layout. All direct inbound edges
-  // attach to separately clickable rows within the target node's left strip.
-  const originalRenders=latestGraph.renders;
-  latestGraph.events['node:click']({target:{id:'C'}});
-  await tick();await tick();
-  assert(latestGraph.data.nodes.every(n=>n.style.fillOpacity===1),
-    'selection must not make unrelated cards translucent');
-  assert([...elements['ex-outcome-cards'].children].every(card=>card.style.opacity==='1'),
-    'Outcome overlay cards remain opaque too');
-  assert(Math.min(...latestGraph.data.nodes.map(n=>n.style.zIndex))>
-    Math.max(...latestGraph.data.edges.map(e=>e.style.zIndex)),
-    'highlighted lines must remain beneath cards');
-  assert(pageHistory.length>=2, 'reading a node creates a browser history entry');
-  assert.equal(history.state.tmExplorerView.selected.id,'C',
-    'browser history records the selected scientific document');
-  assert(location.hash.includes('node%3AC'), 'URL remains deep-linkable');
-  // Leading Canvas metadata is a small, initially closed disclosure rather
-  // than a flattened Markdown paragraph. The actual scientific text is intact.
-  const rightHtml=elements['ex-reader'].innerHTML;
-  assert(rightHtml.includes('<div class="ex-node-time">原始时间 · 09-08-19:21</div>'),
-    'legacy Finding timestamp is shown in right-side reader');
-  assert(!rightHtml.includes('Canvas 节点 · '),'repeated metadata heading is removed');
-  assert(rightHtml.includes('<details class="ex-node-tags"><summary>节点标签 '));
-  assert(!rightHtml.includes('<details class="ex-node-tags" open'),
-    'metadata must be collapsed by default');
-  assert(rightHtml.includes('节点标签 <span class="ex-node-tags-count">(3)</span>'));
-  assert(rightHtml.includes('<div class="ex-node-tag-line"><span class="ex-node-tag-key">type:</span> <span class="ex-node-tag-value">Finding</span></div>'));
-  assert(rightHtml.includes('<div class="ex-node-tag-line"><span class="ex-node-tag-key">id:</span> <span class="ex-node-tag-value">C</span></div>'));
-  assert(rightHtml.includes('<div class="ex-node-tag-line"><span class="ex-node-tag-key">timestamp:</span> <span class="ex-node-tag-value">09-08-19:21</span></div>'));
-  const scientificBody=rightHtml.split('<div class="ex-md">')[1];
-  assert(scientificBody.includes('# Shared finding'));
-  assert(scientificBody.includes('type: Finding, and must not be hidden'),
-    'content field-like prose after the header remains visible');
-  assert(!scientificBody.includes('timestamp: 09-08-19:21'),
-    'raw frontmatter is not repeated in the Markdown body');
-  assert.equal(latestGraph.renders,originalRenders,'selection must not rerun global layout');
-  assert(latestGraph.draws>0,'selection must repaint');
-  assert.equal(latestGraph.data.edges.find(e=>e.id==='AC').style.opacity,1);
-  assert.equal(latestGraph.data.edges.find(e=>e.id==='BC').style.opacity,1);
-  assert.equal(latestGraph.data.edges.find(e=>e.id==='CD').style.opacity,1,
-    'clicking a node highlights outgoing downstream scientific paths');
-  assert.equal(latestGraph.data.edges.find(e=>e.id==='CD').style.stroke,'#67e8f9');
-  assert.equal(latestGraph.data.nodes.find(n=>n.id==='D').style.stroke,'#a5f3fc');
-  assert.equal(latestGraph.data.edges.find(e=>e.id==='AX').style.opacity,.28,
-    'an unrelated visible branch remains present but less prominent');
-  assert.notEqual(latestGraph.data.edges.find(e=>e.id==='AC').style.targetPort,
-                  latestGraph.data.edges.find(e=>e.id==='BC').style.targetPort);
-  assert.notEqual(latestGraph.data.edges.find(e=>e.id==='AC').style.stroke,
-                  latestGraph.data.edges.find(e=>e.id==='BC').style.stroke,
-    'source identities need separate tracing colors when routes overlap');
-  const cPorts=latestGraph.data.nodes.find(n=>n.id==='C').style.ports;
-  const leftPorts=cPorts.filter(x=>x.key.startsWith('in:'));
-  assert.equal(leftPorts.length,2);
-  assert.notEqual(leftPorts[0].placement[1],leftPorts[1].placement[1]);
-  const stripHost=elements['ex-source-rail'];
-  const cStrip=stripHost.children.find(n=>n.dataset.nodeId==='C');
-  assert(cStrip,'source index must live inside the C node card');
-  assert.equal(cStrip.style.width,'42px');
-  assert.equal(cStrip.style.height,'154px');
-  const directChips=cStrip.children.filter(n=>n.tagName==='BUTTON');
-  assert.equal(directChips.length,2);
-  assert.equal(directChips[0].dataset.sourceId,'A');
-  assert.equal(directChips[1].dataset.sourceId,'B');
-  assert.equal(directChips[0].textContent,'C?','no fabricated Cycle for Hypothesis');
-  assert.equal(directChips[1].textContent,'C150','predecessor rail uses Cycle rather than type ID');
-  assert.equal(directChips[0].children.length,0,'compact entry contains no extra long label');
-  assert.equal(directChips[1].children.length,0,'compact entry contains no extra long label');
-  assert.notEqual(directChips[0].style.color,directChips[1].style.color,
-    'predecessor type color distinguishes Hypothesis from Decision');
-  assert.equal(latestGraph.data.edges.find(e=>e.id==='AC').style.stroke,
-    latestGraph.data.nodes.find(n=>n.id==='A').style.ports.length?'#93c5fd':'NO-PORT');
-  assert.equal(latestGraph.data.edges.find(e=>e.id==='BC').style.stroke,'#fcd34d');
-  for(let i=0;i<2;i++)assert.equal(leftPorts[i].placement[1],
-    (12+(i+.5)*(154-24)/2)/154,'port endpoint matches the index row center');
-  assert.equal(elements['ex-back'].disabled,false);
-  latestGraph.camera={zoom:1.8,position:[122,-56]};
-  latestGraph.events.aftertransform();
-  assert.equal(cStrip.style.transform,'scale(1.8)','embedded strip follows pinch zoom');
-  assert.equal(elements['ex-zoom-percent'].textContent,'180%',
-    'pinch zoom synchronizes the visible camera percentage');
-  directChips.find(n=>n.title.includes('B')).onclick();
-  await tick();await tick();
-  assert.equal(latestGraph.focused,'B','source chip should focus its original node');
-  assert.equal(elements['ex-forward'].disabled,true);
-  elements['ex-back'].onclick();await tick();await tick();
-  assert.equal(latestGraph.camera.zoom,1.8,'PDF-style back restores zoom');
-  assert.equal(elements['ex-zoom-percent'].textContent,'180%',
-    'history restores the zoom label even without a transform event');
-  assert.deepEqual(latestGraph.camera.position,[122,-56],'PDF-style back restores translation');
-  assert(elements['ex-source-rail'].children.some(n=>n.dataset.nodeId==='C'),
-    'embedded source strip restores after navigation history');
-  elements['ex-forward'].onclick();await tick();await tick();
-  assert.equal(latestGraph.focused,'B','forward restores selected source');
-  // Double-click zooms into and centers the selected node, and the browser
-  // history retains the exact pre-zoom camera. No graph re-layout occurs.
-  latestGraph.camera={zoom:1.65,position:[220,-90]};
-  const nodesBeforeCenter=latestGraph.data.nodes.map(n=>n.id).join(',');
-  const rendersBeforeZoom=latestGraph.renders;
-  latestGraph.events['node:dblclick']({target:{id:'B'}});await tick();await tick();
-  assert.equal(latestGraph.focused,'B','double click explicitly centers the node');
-  assert.equal(latestGraph.zoomAnimation.duration,300,'zoom uses smooth animation');
-  assert.equal(latestGraph.focusAnimation.duration,360,'focus uses smooth animation');
-  assert.equal(latestGraph.camera.zoom,2.4,'double click enlarges, capped at readable max');
-  assert.equal(elements['ex-zoom-percent'].textContent,'240%',
-    'double click updates the absolute percentage');
-  assert.equal(latestGraph.data.nodes.map(n=>n.id).join(','),nodesBeforeCenter,
-    'double click never collapses or alters the graph');
-  assert.equal(latestGraph.renders,rendersBeforeZoom,'double-click is camera-only, no Dagre relayout');
-  assert.equal(elements['ex-back'].disabled,false);
-  elements['ex-back'].onclick();await tick();await tick();
-  assert.deepEqual(latestGraph.camera.position,[220,-90],
-    'Back restores position before zooming into the node');
-  assert.equal(latestGraph.camera.zoom,1.65,'Back restores previous zoom');
-  elements['ex-forward'].onclick();await tick();await tick();
-  assert.equal(latestGraph.camera.position[0],50,'Forward restores centered camera');
-  assert.equal(latestGraph.camera.zoom,2.4,'Forward restores enlarged node');
-  latestGraph.events['node:click']({target:{id:'A'}});await tick();await tick();
-  const beforeFoldRenders=latestGraph.renders;
-  const beforeFoldLayout=latestGraph.layout;
-  const beforeFoldCamera=JSON.stringify(latestGraph.camera);
-  const beforeFoldPositions=new Map(latestGraph.getNodeData().map(n=>[n.id,latestGraph.getElementPosition(n.id)]));
-  const isShown=id=>(latestGraph.getNodeData(id)||latestGraph.data.edges.find(e=>e.id===id))?.style.visibility!=='hidden';
-  elements['ex-collapse'].onclick();await tick();await tick();
-  assert.equal(latestGraph.renders,beforeFoldRenders,'collapse never re-runs Dagre');
-  assert.equal(latestGraph.layout,beforeFoldLayout,'collapse leaves layout object untouched');
-  assert.equal(JSON.stringify(latestGraph.camera),beforeFoldCamera,'collapse never moves the camera');
-  for(const n of latestGraph.getNodeData())assert.deepEqual(latestGraph.getElementPosition(n.id),
-    beforeFoldPositions.get(n.id),'collapse leaves every node at its original position');
-  assert(!isShown('X'),'exclusive descendant of collapsed A is hidden in place');
-  assert(isShown('A')&&isShown('C')&&isShown('D'),'other nodes stay visible in their slots');
-  assert(!isShown('AC'),'collapsed outbound link is hidden in place');
-  assert(isShown('BC'),'alternative parent edge stays visible');
-  // Folding forms one stable history step; back/forward change visibility only.
-  elements['ex-back'].onclick();await tick();await tick();
-  assert(isShown('X'),'back reveals the original branch without reflow');
-  elements['ex-forward'].onclick();await tick();await tick();
-  assert(!isShown('X'),'forward hides the original branch without reflow');
-  elements['ex-expand-all'].onclick();await tick();await tick();
-  assert(isShown('X')&&isShown('AC'),'expand restores original nodes and edges');
-  assert.equal(latestGraph.renders,beforeFoldRenders,'expand and history do not re-render Dagre');
-  assert.equal(JSON.stringify(latestGraph.camera),beforeFoldCamera,'camera is unchanged on fold and unfold');
-  assert.equal(latestGraph.data.nodes.length,5);
-  assert.equal(latestGraph.data.edges.length,4);
-  assert.equal(elements['ex-forward'].disabled,true,'new branch action clears forward history');
-  // Navigating a filtered-out closed tip opens the real full graph and focuses it.
-  closedControl.onclick();
-  const closedTip=elements['ex-tip-panel'].children.find(x=>x.className==='ex-tip-entry').children[0];
-  closedTip.onclick();await tick();await tick();
-  assert.equal(latestGraph.focused,'X');
-  assert.equal(elements['ex-all']['aria-pressed'],'true');
-  assert.equal(elements['ex-tip-panel'].hidden,true);
-  // More than four incoming edges automatically grows the card; every connector
-  // still reaches its own embedded index row rather than sharing one endpoint.
-  nodes.push({id:'E',label:'E',semantic:{type:'External',title:'E'},text:'# E'});
-  nodes.push({id:'Z',label:'Z',semantic:{type:'Finding',title:'Z'},text:'# Z'});
-  edges.push(
-    {id:'AD',fromNode:'A',toNode:'D'},
-    {id:'BD',fromNode:'B',toNode:'D'},
-    {id:'XD',fromNode:'X',toNode:'D'},
-    {id:'ED',fromNode:'E',toNode:'D'},
-    {id:'ZD',fromNode:'Z',toNode:'D'}
-  );
-  await elements['ex-refresh'].onclick();await tick();
-  const bigNode=latestGraph.data.nodes.find(n=>n.id==='D');
-  assert.deepEqual([...bigNode.style.size],[352,168]);
-  const dStrip=elements['ex-source-rail'].children.find(n=>n.dataset.nodeId==='D');
-  assert.equal(dStrip.children.filter(n=>n.tagName==='BUTTON').length,6);
-  assert.equal(dStrip.style.height,'168px');
-  const dPorts=bigNode.style.ports.filter(port=>port.key.startsWith('in:'));
-  assert.equal(dPorts.length,6);
-  for(let i=0;i<dPorts.length;i++)assert.equal(dPorts[i].placement[1],
-    (12+(i+.5)*(168-24)/6)/168);
-  // No input click is routed through a floating element outside the node.
-  assert.equal(elements['ex-source-rail'].style.left,undefined);
-  // Test both sides of a two-hop cutoff. A->D is a shortcut, so D->Y is a
-  // second hop; Y->T is the third and must remain dim. E->Y is provenance.
-  nodes.push({id:'Y',label:'Y',semantic:{type:'Finding',title:'Y'},text:'# Y'});
-  nodes.push({id:'T',label:'T',semantic:{type:'Finding',title:'T'},text:'# T'});
-  edges.push({id:'DY',fromNode:'D',toNode:'Y'},
-    {id:'YT',fromNode:'Y',toNode:'T'},
-    {id:'EY',fromNode:'E',toNode:'Y',edge_type:'external_reference'});
-  await elements['ex-refresh'].onclick();await tick();
-  // Two-level directional trace stops precisely at scientific hop 2, while
-  // unrelated/provenance paths remain visible but do not receive highlights.
-  const noRelayout=latestGraph.renders;
-  latestGraph.events['node:click']({target:{id:'A'}});await tick();await tick();
-  for(const id of ['AC','AX','CD','AD','XD','DY']){
-    const line=latestGraph.data.edges.find(e=>e.id===id);
-    assert(line.style.lineWidth>=4,'reachable scientific edge '+id+' is highlighted');
-    assert.equal(line.style.opacity,1,'reachable path '+id+' remains opaque');
-  }
-  for(const id of ['YT','EY','BC'])assert.equal(latestGraph.data.edges.find(e=>e.id===id).style.opacity,.28,
-    'third-hop/provenance/alternate-parent path '+id+' must not be highlighted');
-  assert.notEqual(latestGraph.data.nodes.find(n=>n.id==='T').style.stroke,'#a5f3fc',
-    'third-generation successor node must not be highlighted');
-  assert.equal(latestGraph.data.nodes.find(n=>n.id==='D').style.stroke,'#a5f3fc',
-    'descendant nodes receive a visible cyan outline');
-  assert.equal(latestGraph.renders,noRelayout,'node click must not restart Dagre');
-  // Any lit successor edge directly opens its target node and centers it.
-  latestGraph.events['edge:click']({target:{id:'DY'}});await tick();await tick();
-  assert.equal(history.state.tmExplorerView.selected.kind,'node');
-  assert.equal(history.state.tmExplorerView.selected.id,'Y');
-  assert.equal(latestGraph.focused,'Y');
-  assert(location.hash.includes('node%3AY'));
-  elements['ex-back'].onclick();await tick();await tick();
-  assert.equal(history.state.tmExplorerView.selected.id,'A');
-  latestGraph.events['edge:click']({target:{id:'AC'}});await tick();await tick();
-  assert.equal(history.state.tmExplorerView.selected.id,'C');
-  assert.equal(latestGraph.focused,'C');
-  assert.equal(latestGraph.data.edges.find(e=>e.id==='CD').style.opacity,1,
-    'selecting newly reached C illuminates its next successor');
-  // The corresponding lit incoming edge jumps backwards to its source.
-  latestGraph.events['edge:click']({target:{id:'BC'}});await tick();await tick();
-  assert.equal(history.state.tmExplorerView.selected.id,'B');
-  assert.equal(latestGraph.focused,'B');
-  elements['ex-back'].onclick();await tick();await tick();
-  assert.equal(history.state.tmExplorerView.selected.id,'C');
-  elements['ex-back'].onclick();await tick();await tick();
-  assert.equal(history.state.tmExplorerView.selected.id,'A');
-  assert.equal(latestGraph.renders,noRelayout,'edge jumping preserves Dagre layout');
 
-  // Clicking an unrelated line still selects it (gold) and its endpoints, stores
-  // a deep link, and can be reversed through the ordinary Back navigation.
-  latestGraph.events['edge:click']({target:{id:'BC'}});await tick();await tick();
-  assert.equal(history.state.tmExplorerView.selected.kind,'edge');
-  assert.equal(history.state.tmExplorerView.selected.id,'BC');
-  assert(location.hash.includes('edge%3ABC'),'clicked relation gets a stable deep link');
-  assert(elements['ex-reader'].innerHTML.includes('科研连线'));
-  const selectedLine=latestGraph.data.edges.find(e=>e.id==='BC');
-  assert.equal(selectedLine.style.stroke,'#fef08a');
-  assert.equal(selectedLine.style.lineWidth,5);
-  assert.equal(selectedLine.style.opacity,1);
-  assert.equal(latestGraph.data.edges.find(e=>e.id==='AC').style.opacity,.28);
-  for(const id of ['B','C'])
-    assert.equal(latestGraph.data.nodes.find(n=>n.id===id).style.stroke,'#fde68a');
-  assert.equal(latestGraph.renders,noRelayout,'edge click should repaint only, no re-layout');
+  assert.equal(latestGraph.data.edges.length,3,'one natural predecessor per node');
+  assert(!latestGraph.data.edges.some(e=>e.id==='BC'));
+  const initialPositions=JSON.stringify(latestGraph.data.nodes.map(n=>[n.id,n.style.x,n.style.y]));
+  const initialCamera=JSON.stringify(latestGraph.camera),readerHtml=elements['ex-reader'].innerHTML;
+  const line=id=>latestGraph.data.edges.find(e=>e.id===id);
+  const baseColor=line('AC').style.stroke;
+  const hover=id=>latestGraph.events['edge:pointerover']({target:{id},originalEvent:{clientX:400,clientY:200}});
+  const menu=elements['ex-edge-menu'],action=elements['ex-edge-menu-action'];
+  hover('AC');await tick();
+  assert.equal(menu.hidden,false);
+  assert.equal(menu.dataset.targetId,'C','edge chooses its child subtree rather than source A');
+  assert.equal(line('AC').style.stroke,'#7dd3fc');
+  assert.equal(line('AC').style.lineWidth,6);
+  assert.equal(line('AX').style.stroke,baseColor,'sibling line is not hover-highlighted');
+  assert.equal(action.textContent,'−');
+  const fixedPosition=JSON.stringify([menu.style.left,menu.style.top]);
+  latestGraph.events['edge:pointermove']({target:{id:'AC'},originalEvent:{clientX:700,clientY:450}});
+  assert.equal(JSON.stringify([menu.style.left,menu.style.top]),fixedPosition,'circle is anchored to the child edge, not the mouse');
+  await action.onclick();
+  assert.equal(latestGraph.getNodeData('D').style.visibility,'hidden');
+  assert.equal(latestGraph.getNodeData('C').style.visibility,'visible','branch root remains to reopen the edge menu');
+  assert.equal(latestGraph.getNodeData('X').style.visibility,'visible','sibling branch remains open');
+  assert.equal(line('AC').style.visibility,'visible','collapsed branch incoming edge is retained');
+  assert.equal(action.textContent,'+');
+  assert.equal(JSON.stringify(latestGraph.data.nodes.map(n=>[n.id,n.style.x,n.style.y])),initialPositions);
+  assert.equal(JSON.stringify(latestGraph.camera),initialCamera);
+  assert.equal(elements['ex-reader'].innerHTML,readerHtml);
+  assert.equal(history.state.tmExplorerView.selected,null,'folding never selects or navigates');
+  latestGraph.events['edge:pointerleave']();
+  menu.listeners.pointerenter();await new Promise(r=>setTimeout(r,230));
+  assert.equal(menu.hidden,false,'moving from the line into its menu keeps it open');
+  await action.onclick();
+  assert.equal(latestGraph.getNodeData('D').style.visibility,'visible');
   elements['ex-back'].onclick();await tick();await tick();
-  assert.equal(history.state.tmExplorerView.selected.id,'A');
-  assert.equal(latestGraph.data.edges.find(e=>e.id==='CD').style.stroke,'#67e8f9');
+  assert.equal(latestGraph.getNodeData('D').style.visibility,'hidden');
   elements['ex-forward'].onclick();await tick();await tick();
-  assert.equal(history.state.tmExplorerView.selected.kind,'edge');
+  assert.equal(latestGraph.getNodeData('D').style.visibility,'visible');
+  hover('AX');assert.equal(action.disabled,true,'leaf has no descendants to fold');
+  assert.equal(line('AC').style.stroke,baseColor,'previous edge highlight is restored');
+  latestGraph.events['edge:pointerleave']();await new Promise(r=>setTimeout(r,230));
+  assert.equal(menu.hidden,true);
+  assert.equal(line('AX').style.stroke,baseColor);
+  hover('AC');await action.onclick();
+  const fits=latestGraph.fitCalls;
+  await elements['ex-all'].onclick();
+  assert(latestGraph.data.nodes.every(n=>n.style.visibility==='visible'));
+  assert.equal(latestGraph.fitCalls,fits+1,'complete graph expands and fits the entire tree');
+  assert.equal(menu.hidden,true);
+  assert(latestGraph.renders>=initialRenders,'history may restore a complete graph render');
+  latestGraph.events['node:click']({target:{id:'C'}});await tick();await tick();
+  assert(elements['ex-reader'].innerHTML.includes('Full')||elements['ex-reader'].innerHTML.includes('Shared finding'));
+  assert(elements['ex-reader'].innerHTML.includes('ex-node-tags'));
+  const strip=elements['ex-source-rail'].children.find(n=>n.dataset.nodeId==='C');
+  assert.equal(strip.children.length,1);
+  assert.equal(strip.children[0].dataset.sourceId,'A');
+  assert.equal(history.state.tmExplorerView.selected.id,'C');
+  assert(location.hash.includes('node%3AC'));
+  const oldRender=latestGraph.renders;
+  latestGraph.events['node:dblclick']({target:{id:'C'}});await tick();await tick();
+  assert.equal(latestGraph.focused,'C');assert.equal(latestGraph.renders,oldRender);
+  // H/Outcome cards, verdict classifications and semantic zoom stay shared.
+  nodes[0].semantic={type:'Hypothesis',cycle:1,frontier_status:'active',
+    cycle_outcomes:[{verdict:'supported',cycle_id:'1',summary:'Supported result'}],
+    outcome:{verdict:'supported',cycle_id:'1',summary:'Supported result'}};
+  await elements['ex-refresh'].onclick();await tick();await tick();
+  let initialCard=elements['ex-outcome-cards'].children.find(n=>n.dataset.nodeId==='A');
+  assert.equal(initialCard.children.length,2);
+  assert(initialCard.children[0].children[0].textContent.includes('Active'));
+  assert(initialCard.children[1].children[0].textContent.includes('Supported'));
+  initialCard.children[1].onclick({preventDefault(){},stopPropagation(){}});await tick();await tick();
+  assert.equal(history.state.tmExplorerView.selected.anchor,'outcome');
+  latestGraph.camera.zoom=.4;latestGraph.events.aftertransform();
+  assert.equal(elements['ex-compact-labels'].hidden,false);
+  assert.equal(elements['ex-source-rail'].hidden,true);
+  const initialToggle=elements['ex-graph'].children.find(x=>x.id==='ex-color-mode');
+  assert(initialToggle);initialToggle.onclick();
+  assert.equal(latestGraph.getNodeData('A').style.fill,'#207A62');
+  latestGraph.camera.zoom=1;latestGraph.events.aftertransform();
+  assert.equal(elements['ex-compact-labels'].hidden,true);
+  assert.equal(elements['ex-source-rail'].hidden,false);
+  initialToggle.onclick();
+  nodes[0].semantic={type:'Hypothesis',frontier_status:null,title:'A hypothesis'};
+  nodes.push({id:'E',label:'E',semantic:{type:'External',title:'E'},text:'# E'});
   // One H with an Outcome remains ONE graph vertex, with two separate
   // clickable sections. These clicks preserve the deep link and history.
   nodes.push({id:'H-0008',label:'人工猜想',
@@ -716,8 +440,8 @@ const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
   const colorRenders=latestGraph.renders;
   colorToggle.onclick();
   assert(colorToggle.textContent.includes('结论'));
-  assert(elements['ex-type-legend'].children.some(x=>x.textContent==='结论颜色'),
-    'overview legend switches along with the color dimension');
+  assert(elements['ex-type-legend'].children.some(x=>x.textContent==='Outcome'),
+    'Outcome legend remains visible when switching the overview color dimension');
   assert.equal(latestGraph.getNodeData('H-0008').style.fill,'#207A62',
     'Outcome overview paints supported H green');
   assert.equal(latestGraph.getNodeData('H-0009').style.fill,'#374151',
@@ -871,18 +595,10 @@ const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
   assert(legacy.children[1].children[0].textContent.includes('历史归一'));
   assert.equal(legacy.children[1].style.background,'#656C7A',
     'legacy-normalized Open remains neutral instead of asserting a Judge Open');
-  // Task switching is a fresh unanchored entry, even if the previous task
-  // carried a selected node/hash and the page was in a different scope.
-  elements['ex-task'].listeners.change();await tick();await tick();
-  assert.equal(elements['ex-all']['aria-pressed'],'true',
-    'task entry also resets to complete graph');
-  assert.equal(latestGraph.focused,'H-0010',
-    'newest real Hypothesis Cycle 90 wins over historical Decision 150 and External');
-  assert.equal(history.state.tmExplorerView.selected,null,
-    'task landing leaves reader unselected and does not rewrite H identity');
-  console.log('G6 view model test: full graph centers latest valid Hypothesis Cycle; hierarchy/zoom controls OK');
 
+  console.log('G6 view model test: full tree fits by default; hover branch controls and reader/zoom OK');
 })().catch(e=>{console.error(e);process.exitCode=1});
+
 """
 
 
@@ -956,7 +672,7 @@ class GraphSemanticsTest(unittest.TestCase):
         self.assertNotIn('jumpToResearchFrontier', page)
         self.assertNotIn('latestFullGraphNode', page)
         self.assertIn('id="ex-all"', page)
-        self.assertIn('id="ex-local"', page)
+        self.assertNotIn('id="ex-local"', page)
         self.assertIn('id="ex-zoom-percent"', page)
         self.assertLess(page.index('id="ex-plus"'), page.index('id="ex-zoom-percent"'))
         self.assertLess(page.index('id="ex-zoom-percent"'), page.index('id="ex-minus"'))
@@ -971,7 +687,7 @@ class GraphSemanticsTest(unittest.TestCase):
         # Reuse the same fake browser/G6 setup for independent first visits.
         prefix = HARNESS.split("  onReady();await tick();", 1)[0]
         cases = (
-            ("stale-unanchored", "location.hash='';", "B", "null"),
+            ("stale-unanchored", "location.hash='';", "undefined", "null"),
             ("explicit-deep-link", "location.hash='#node%3AD';", "D", "'D'"),
         )
         for title, location_setup, expected_focus, expected_selection in cases:
@@ -985,13 +701,12 @@ class GraphSemanticsTest(unittest.TestCase):
   }};
   {location_setup}
   onReady();await tick();await tick();
-  assert.equal(elements['ex-all']['aria-pressed'],'true');
+  assert(latestGraph.fitCalls||latestGraph.focused,'landing fits the tree or honors a deep link');
   assert.equal(latestGraph.data.nodes.length,5,'complete graph is available');
-  assert.equal(latestGraph.focused,'{expected_focus}',
+  assert.equal(latestGraph.focused,{('undefined' if expected_focus=='undefined' else repr(expected_focus))},
     'landing focuses latest Cycle or explicit deep-linked node');
   assert.equal(history.state.tmExplorerView.selected?.id??null,{expected_selection},
     'fresh entry is never hijacked by a stale selected node');
-  assert.equal(history.state.tmExplorerView.mode,'all');
   assert.deepEqual([...history.state.tmExplorerView.collapsed],[],
     'previously folded nodes do not hide new landing content');
   console.log('fresh-entry smoke success');
@@ -1008,7 +723,7 @@ class GraphSemanticsTest(unittest.TestCase):
         process = subprocess.run(["node", "-e", HARNESS, str(SCRIPT)],
                                  capture_output=True, text=True, timeout=12, check=False)
         self.assertEqual(process.returncode, 0, process.stderr)
-        self.assertIn("full graph centers latest valid Hypothesis Cycle", process.stdout)
+        self.assertIn("full tree fits by default", process.stdout)
 
 
 if __name__ == "__main__":

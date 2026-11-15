@@ -587,6 +587,40 @@ class TheoryMasterTest(unittest.TestCase):
             cycle = latest_cycle_dir(spec.research_root)
             events = [json.loads(line) for line in (cycle / "events.jsonl").read_text().splitlines()]
             self.assertTrue(any(row.get("type") == "workflow.checkpoint_reached" for row in events))
+            stopped = next(row for row in events if row.get("type") == "workflow.stopped")
+            self.assertFalse(stopped["payload"]["resumable"])
+
+    def test_post_hypothesis_lock_checkpoint_persists_lock_before_investigator(self):
+        class CountingBackend(FakeBackend):
+            def __init__(self):
+                super().__init__(reworks=0)
+                self.roles = []
+
+            def invoke(self, role, prompt, thread_id, model, provider):
+                self.roles.append(role)
+                return super().invoke(role, prompt, thread_id, model, provider)
+
+        with tempfile.TemporaryDirectory() as temp:
+            spec, _ = self.make(Path(temp), max_cycles=3)
+            backend = CountingBackend()
+            state = Workflow(spec, backend, stop_before="investigator").run()
+            self.assertEqual(state["status"], "checkpoint_reached")
+            self.assertEqual(state["checkpoint"]["name"], "post_hypothesis_lock")
+            self.assertEqual(state["hypothesis_lock"]["status"], "locked")
+            self.assertTrue(state["hypothesis_locked"])
+            self.assertTrue(state["resumable"])
+            self.assertNotIn("investigator", backend.roles)
+            self.assertNotIn("judge", backend.roles)
+            self.assertEqual(len(list_cycle_dirs(spec.research_root)), 1)
+            cycle = latest_cycle_dir(spec.research_root)
+            with ScienceGraphStore(spec.branch_canvas.parent / "science_graph.sqlite3", readonly=True) as store:
+                graph = store.graph_view()
+                self.assertIn(state["hypothesis_lock"]["id"], {
+                    str(node.get("id")) for node in graph["nodes"] if node.get("type") == "Hypothesis"
+                })
+            events = [json.loads(line) for line in (cycle / "events.jsonl").read_text().splitlines()]
+            stopped = next(row for row in events if row.get("type") == "workflow.stopped")
+            self.assertTrue(stopped["payload"]["resumable"])
 
     def test_pre_hypothesis_lock_resume_consumes_checkpoint_without_requalification(self):
         class CountingBackend(FakeBackend):
@@ -1149,7 +1183,7 @@ class TheoryMasterTest(unittest.TestCase):
                 if role == 'challenger':
                     self.challenger_threads.append(thread)
                     candidates = context.get('candidate') or []
-                    if candidates and candidates[0].get('frozen_objective', {}).get('hypothesis') == 'smoke-h' and value.get('reviews'):
+                    if candidates and candidates[0].get('frozen_objective', candidates[0]).get('hypothesis') == 'smoke-h' and value.get('reviews'):
                         value['reviews'][0].update({'verdict': 'revise',
                                                    'reason': 'candidate combines definition and instance search',
                                                    'blocking_issues': [{
@@ -1176,10 +1210,8 @@ class TheoryMasterTest(unittest.TestCase):
             self.assertEqual(len(backend.challenger_threads), 2)
             expected_test = (
                 'certify the predicate protocol only\n\n'
-                'Binding hypothesis clarification:\n'
-                'the parent predicate claim remains unchanged\n\n'
-                'Binding operational definition:\n'
-                'define the parent predicate certification procedure explicitly'
+                'Binding hypothesis clarification:\nthe parent predicate claim remains unchanged\n\n'
+                'Binding operational definition:\ndefine the parent predicate certification procedure explicitly'
             )
             self.assertEqual(state['hypothesis_lock']['decisive_test'], expected_test)
             self.assertNotIn('cycle_milestone', state['hypothesis_lock'])
@@ -1981,6 +2013,8 @@ class TheoryMasterTest(unittest.TestCase):
         isolated = resolve_routes(env={})
         self.assertEqual(isolated, MODEL_PROFILES["test"])
         self.assertEqual(set(MODEL_PROFILES), {"test", "codex", "advanced"})
+        for name in ("test", "codex", "advanced"):
+            self.assertEqual(set(MODEL_PROFILES[name]), set(DEFAULT_ROUTES))
         test_profile = resolve_routes(profile="test", env={})
         self.assertTrue(all(route.model == "gpt-6-luna" for route in test_profile.values()))
         self.assertTrue(all(route.reasoning_effort == "medium" for route in test_profile.values()))
@@ -2140,6 +2174,7 @@ class TheoryMasterTest(unittest.TestCase):
 
 
     def test_codex_sdk_environment_keeps_historical_incremental_behavior(self):
+        import sys
         routes = resolve_routes(model="gpt-6-luna@CodexHTTPS", env={})
         parent = {
             "THEORYMASTER_COMPUTE_PYTHON": sys.executable,
@@ -2147,7 +2182,8 @@ class TheoryMasterTest(unittest.TestCase):
             "HTTPS_PROXY": "http://127.0.0.1:7890",
             "CODEX_PROXY": "http://127.0.0.1:7890",
         }
-        with mock.patch.dict(os.environ, parent, clear=True):
+        with mock.patch.dict(os.environ, parent, clear=True), mock.patch.object(
+                CodexBackend, "_compute_python", return_value=Path(sys.executable)):
             environment = CodexBackend._sdk_environment(routes)
             self.assertEqual(os.environ["HTTP_PROXY"], "http://127.0.0.1:7890")
             self.assertEqual(os.environ["HTTPS_PROXY"], "http://127.0.0.1:7890")

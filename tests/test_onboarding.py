@@ -19,7 +19,8 @@ class OnboardingTests(unittest.TestCase):
                 self.assertEqual(json.loads(first.config_path.read_text())["max_cycles"], 1)
                 before = first.config_path.read_bytes()
                 second = prepare_test0(workspace)
-            self.assertEqual(first.config_path, second.config_path)
+            self.assertNotEqual(first.config_path, second.config_path)
+            self.assertNotEqual(first.master_id, second.master_id)
             self.assertEqual(first.config_path.read_bytes(), before)
             self.assertTrue((first.benchmark_root / "datasets/brownian_2d/trajectories.csv").is_file())
             self.assertFalse((workspace / "test0/expected.json").exists())
@@ -29,8 +30,8 @@ class OnboardingTests(unittest.TestCase):
             root = Path(temp) / "test0"
             root.mkdir()
             (root / "research_plan.md").write_text("my research")
-            with self.assertRaises(RegressionCaseError):
-                prepare_test0(Path(temp))
+            binding = prepare_test0(Path(temp))
+            self.assertNotEqual(binding.task_home, root)
             self.assertEqual((root / "research_plan.md").read_text(), "my research")
 
     def test_import_recovery_does_not_overwrite_changed_scientific_input(self):

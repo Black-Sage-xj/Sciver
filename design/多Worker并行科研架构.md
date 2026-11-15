@@ -68,11 +68,11 @@ SDK 负责 deterministic claim / fencing / ID / snapshot / commit / quota / 运�
 - 配置 API：`set_worker_mode`（原子持久化 `{enabled, desired_agents}`）；`start_worker_scheduler`、`stop_worker_scheduler` 需用现有的 Web 操作鉴权、Origin 校验、请求随机 ID、task/Cycle/launch 乐观前置条件。前端没有调用任意 shell 或传入任务路径的权限。
 - 为了与旧科研运行隔离，当前尚不支持把运行中的单 Runner 无损即时拆成 N 个 Worker：该任务会保留在原运行模式直到其正常结束；首次真实多 Agent 科研的数学正确性仍列在 `TMA-20261016-0084` 审计中。
 
-## 7. 真实旧任务停机迁移（任务 1，2026-10-16）
+## 7. 旧 Runner 向 WorkerRuntime 的安全迁移
 
-经 Human 明确授权停止运行中的旧 Runner 后，已将任务 1 转到新 WorkerRuntime，而不是让新旧版本同时写 Canvas：
+迁移必须由操作者明确发起：先请求旧 Runner 到安全检查点暂停，核对 PID 与启动标识对应的进程确已退出，再检查 launch/branch claim/runner 锁及冻结 Cycle 身份。保留原始配置、状态和图谱备份后，才允许新 WorkerRuntime 取得唯一写入权；身份、锁或退出状态不确定时拒绝迁移，不让新旧版本同时写入科学记录。
 
-**待检验**：首轮恢复后 Agent 产出的科学发现/Canvas commit/Goal Gate 仍须审计 `TMA-20261016-0084`；目前自动新前沿生成（没有第二条活跃前沿时的自主规划）并未通过真正的并行科研实测，不能把最大并行数 2 等同为始终两个运行进程。
+确定性验收使用临时任务与 Mock 进程边界：验证旧 Runner 存活时拒绝启动、检查点错配时保持原文件、成功移交后同一冻结 Cycle 只被恢复一次，以及任意失败不重置已消费的 Cycle 额度。真正并行运行的科学质量需另行授权并独立复审；配置的最大并行数不代表已经存在同等数量的进程或科学前沿。
 
 ## 8. Task Console 的一键新增 Agent 交互（2026-10-16）
 
@@ -85,3 +85,28 @@ SDK 负责 deterministic claim / fencing / ID / snapshot / commit / quota / 运�
 ### Cycle 级并行来源追溯（2026-10-17）
 
 新 Cycle 的 `research_state.json` 必须携带创建时 `cycle_execution_context`（模式、worker_id、实际观测到的活跃 Worker、资源槽配置和观测时刻）；并行 Worker 在 `worker_concurrency_events.jsonl` 里按 Worker 集合变化记录追加事件。`concurrent_workers_at_start` 仅为观测时刻快照，不承诺整个 Cycle 始终保持此并行度；老 Cycle 无来源时保持 `unknown_legacy`。Research Graph V2 的 `cycle_memory_index` 为此提供 H → Cycle → 原始日志/证据的持久索引，详细语义见 [ResearchGraph设计文档.md](./ResearchGraph设计文档.md)。
+
+
+## 8. Task Console 独立关闭 Agent（2026-11-16）
+
+Agent 1 是固定保留的主入口；辅助 Agent 标签始终显示独立的 ×。暂停保留当前
+Cycle 的恢复资格和认领，关闭则明确结束该 Agent 的参与：先在 SDK 安全边界暂停，
+确认 PID 与启动标识对应的进程已退出，再按已有 Worker Release 合同释放认领、
+保留 checkpoint 备份及科研证据，并收起标签。关闭不调用模型、不生成科研 verdict。
+PRESERVING 的 × 暂不可用，提示保全完成后再关闭。
+
+- 用户点击 × 时确认关闭对象和影响；待分配请求的 × 直接撤销一个请求。
+- 运行中显示“关闭中”，进程退出后才收起；失败保持可见并提供重试。
+  关闭意图独立于 runtime status 持久保存，Owner 的状态更新不会覆盖它。
+- 关闭中的 Worker 禁止新分配、Quota Watch 自动恢复、Supervisor 修复和自动保全。
+  独立的无模型关闭服务持续请求安全暂停并等待进程退出；检查点身份不符时拒绝释放。
+- 在 scheduler.lock 内串行完成认领释放与容量减少；容量减少记录操作 ID，
+  部分失败后的重试不会再次减少容量。已关闭的编号保留为历史，新增使用新编号。
+- 调度器跟随当前可见 Worker 身份更新 roster，保留各 Worker 已消费的 Cycle 额度；
+  关闭 Agent 2 不会重编号 Agent 3，也不会重置其额度。
+- 当前查看的 Agent 关闭后回到 Agent 1；关闭其他 Agent 保持当前视图。
+  自动刷新仅在 HTTP 写请求尚未结束时保护操作区域，不能被禁用的关闭按钮永久阻断。
+- 科学内容、科研图谱、Scientific Model 与历史日志保留。关闭后的当前 Cycle
+  不再通过原 Worker Resume；需要继续同一 Cycle 时应选择暂停而非关闭。
+
+静态验证使用临时任务、Fake/Mock 启动边界和 Chromium HTTP 交互，不需新科研 Cycle。

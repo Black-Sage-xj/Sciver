@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .science_graph_store import ScienceGraphStore
+from .outcome_guide import graph_summary_text
 
 _MARKDOWN_GENERATOR = "theory-master/cycle-outcome"
 _MARKDOWN_VERSION = 2
@@ -72,6 +73,8 @@ def _render_outcome_body(
         lines.extend(["", "原始 Decision 的裁决类型为：" + ", ".join(
             f"`{value}`" for value in sorted(raw_verdicts) if value
         ) + "。数据库兼容字段不可替代原始类型。"])
+    if guide := graph_summary_text(outcome):
+        lines.extend(["", "## 图谱导览", "", guide])
     for label, value in (
         ("冻结命题", lock.get("hypothesis")),
         ("冻结范围", lock.get("scope")),

@@ -1,5 +1,5 @@
 # TheoryMaster Research Plan 设计文档
-> **图谱 V2 状态说明**：Research Plan 的 Goal / Research Contract / Final Gate 仍属人工维护的任务级权威；每个已裁决 Cycle 唯一 Outcome、历史 H 的多 Cycle Outcomes、分支 active/parked/closed 属于 [ResearchGraph设计文档.md](./ResearchGraph设计文档.md) 的 SQLite 科研图谱，不应回写成 Research Plan 顶层重复状态。任务 1 已完成科研图谱生产迁移；Research Plan 的人工维护权限仍不变。
+> **图谱 V2 状态说明**：Research Plan 的 Goal / Research Contract / Final Gate 仍属人工维护的任务级权威；每个已裁决 Cycle 唯一 Outcome、历史 H 的多 Cycle Outcomes、分支 active/parked/closed 属于 [ResearchGraph设计文档.md](./ResearchGraph设计文档.md) 的 SQLite 科研图谱，不应回写成 Research Plan 顶层重复状态。历史图谱的迁移不改变 Research Plan 的人工维护权限。
 
 > 状态：现行正式规范
 > 范围：`research_plan.md` 的格式、语义、维护权与读写边界
@@ -32,11 +32,8 @@
 
 ## 2. 标准模板
 
-当前标准模板以：
-
-`笔记区/探索台账/矩阵腔体Green低信息理论/research_plan.md`
-
-的结构为基准。
+当前标准模板由下列五字段定义，与具体科研题目、笔记目录或历史任务无关。
+任务目录可以放在用户选择的工作区；正式输入文件名为 `research_plan.md`。
 
 持久化后的 `research_plan.md` **恰好包含 5 个同级 H1**，并且顺序固定：
 

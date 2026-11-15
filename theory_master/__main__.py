@@ -21,7 +21,7 @@ from .observability.costs import backfill_research_costs
 from .load_snapshots import create_load_snapshot
 from .codex_accounts import account_status, ensure_layout, login_account, use_account
 from .task import TaskBinding, bootstrap, load_discovered, summary as task_summary
-from .regression_cases import RegressionCaseError, list_cases, materialize_case
+from .regression_cases import RegressionCaseError, list_cases, create_test_instance
 from .cli_discovery import (
     default_search_root, enter_task, print_runs, resumable_runs,
     spec_from_resume_identifier, spec_from_task, spec_from_tui_identifier,
@@ -315,6 +315,7 @@ def main() -> int:
     )
     resume_p.add_argument("--foreground", action="store_true", help="run task-mode Workflow headlessly in the current process instead of the managed supervisor")
     resume_p.add_argument("--stop-before-hypothesis-lock", action="store_true", help="test checkpoint: stop after candidate selection and before Hypothesis Lock")
+    resume_p.add_argument("--stop-after-hypothesis-lock", action="store_true", help="stop after committed Hypothesis Lock and before Investigator")
     resume_p.add_argument("--stop-before-judge", action="store_true", help="test checkpoint: stop after Investigation and before Judge")
     resume_audit = resume_p.add_mutually_exclusive_group()
     resume_audit.add_argument("--cycle-audit", dest="cycle_audit", action="store_true", help="enable the opt-in fresh Codex audit after each terminal Cycle")
@@ -340,6 +341,7 @@ def main() -> int:
     run_p.add_argument("--check-literature", action="store_true", help="opt-in startup check: run a tiny live tm-scholar retrieval before starting Sciver")
     run_p.add_argument("--foreground", action="store_true", help="run task-mode Workflow headlessly in the current process instead of the managed supervisor")
     run_p.add_argument("--stop-before-hypothesis-lock", action="store_true", help="test checkpoint: stop after candidate selection and before Hypothesis Lock")
+    run_p.add_argument("--stop-after-hypothesis-lock", action="store_true", help="stop after committed Hypothesis Lock and before Investigator")
     run_p.add_argument("--stop-before-judge", action="store_true", help="test checkpoint: stop after Investigation and before Judge")
     run_audit = run_p.add_mutually_exclusive_group()
     run_audit.add_argument("--cycle-audit", dest="cycle_audit", action="store_true", help="enable the opt-in fresh Codex audit after each terminal Cycle")
@@ -369,12 +371,14 @@ def main() -> int:
     item = sub.add_parser("smoke"); item.add_argument("--live", action="store_true")
     item = sub.add_parser("new", help="initialize a task from one research_plan.md path")
     item.add_argument("research_plan", type=Path)
-    test_p = sub.add_parser("test", help="instantiate a fresh canonical Sciver regression fixture")
+    test_p = sub.add_parser("test", aliases=["test0", "task0"], help="create and run a fresh canonical regression task")
     test_p.add_argument("case", nargs="?", help="fixture selector such as Test0")
     test_p.add_argument("destination", type=Path, nargs="?", help="empty/new directory for the runnable TM task")
     test_p.add_argument("--open", action="store_true", help="start and open the local Web UI after task creation")
     test_p.add_argument("--port", type=int, default=8787)
     test_p.add_argument("--list", action="store_true", help="list available canonical test fixtures")
+    test_p.add_argument("--root", type=Path, help="parent directory for automatically named fresh instances")
+    test_p.add_argument("--prepare-only", action="store_true", help="create a fresh task without launching model calls")
     worker_p = sub.add_parser("workers", help="dynamic parallel research Workers; launch requires explicit start")
     worker_p.add_argument("master_id", nargs="?", default=None)
     worker_p.add_argument("action", nargs="?", choices=["status", "plan", "start", "stop", "tick", "pause", "resume", "release"], default="status")
@@ -461,25 +465,25 @@ def main() -> int:
     if args.command == "ls": return print_runs(args.root)
     if args.command == "smoke": return smoke(args.live)
     if args.command == "new": print(task_summary(bootstrap(args.research_plan))); return 0
-    if args.command == "test":
+    if args.command in {"test", "test0", "task0"}:
         if args.list:
             for case in list_cases():
                 print(f"{case.case_id}\taliases={','.join(case.aliases)}\t{case.metadata.get('purpose', '')}")
             return 0
-        if not args.case or args.destination is None:
-            parser.error("test requires CASE and DESTINATION, e.g. 'sciver test Test0 /path/to/task'")
         try:
-            root = materialize_case(args.case, args.destination)
-            binding = bootstrap(root / "research_plan.md")
-            from .onboarding import install_benchmark_inputs
-            install_benchmark_inputs(binding)
-        except (RegressionCaseError, OSError, ValueError, json.JSONDecodeError) as exc:
+            binding, outcome = create_test_instance(args.case or "Test0", args.destination,
+                                                    instances_root=args.root, start=not args.prepare_only)
+        except (RegressionCaseError, OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
             parser.error(str(exc))
         print(task_summary(binding))
+        import hashlib
+        ident = hashlib.sha256(str(binding.research_root).encode()).hexdigest()[:16]
+        print(f"Console       : /run/{ident}/")
+        print(f"Launch        : {outcome.get('status')}")
         if args.open:
             from .onboarding import launch_web
             try:
-                launch_web(root, port=args.port)
+                launch_web(args.root or binding.task_home.parent, port=args.port)
             except KeyboardInterrupt:
                 pass
             except (OSError, ValueError) as exc:
@@ -585,6 +589,8 @@ def main() -> int:
             runner_args.append("--check-literature")
         if getattr(args, "stop_before_hypothesis_lock", False):
             runner_args += ["--stop-before", "hypothesis_lock"]
+        if getattr(args, "stop_after_hypothesis_lock", False):
+            runner_args += ["--stop-before", "investigator"]
         if getattr(args, "stop_before_judge", False):
             runner_args += ["--stop-before", "judge"]
         return foreground_runner(runner_args)

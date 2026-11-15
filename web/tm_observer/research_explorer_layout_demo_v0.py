@@ -45,7 +45,7 @@ AC_HTML = r"""
 <div class="tm-layout-ac" id="tm-layout-ac" data-observer-id="TM_OBSERVER_ID">
 <section class="ac-hero"><div class="ac-head"><div><div class="ac-eyebrow">EARLIEST LAYOUT LAB · V0 RECONSTRUCTION · READ ONLY</div>
 <h1>研究图谱 · 最早布局原型 V0</h1><p class="ac-subtitle">按最早 Layout Lab 记录重建：只显示 H-0128+ 范围内实际存在的 H 节点（当前为 H-0134–H-0153）。左侧按 Cycle 从上到下排序，右侧绘制范围内真实关系；点击节点可突出真实祖先路径。跨范围关系不画入主图，但保留在节点详情中并可跳转正式图谱。</p></div>
-<div class="ac-links"><a class="ac-link" href="TM_ORIGINAL_HREF">原图谱</a><a class="ac-link" href="TM_CURRENT_A_C_HREF">当前 A+C</a><a class="ac-link" href="TM_LAYOUT_B_HREF">B 前沿分组版</a><a class="ac-link" href="TM_A0_HREF">A0 后续历史版</a></div></div>
+<div class="ac-links"><a class="ac-link" href="TM_ORIGINAL_HREF">原图谱</a><a class="ac-link" href="TM_CURRENT_A_C_HREF">当前 A+C</a><a class="ac-link" href="TM_A0_HREF">A0 后续历史版</a></div></div>
 <div class="ac-toolbar"><input id="ac-search" class="ac-search" type="search" placeholder="搜索全部节点 ID、标题或内容…" aria-label="搜索全部图谱节点"/>
 <button id="ac-search-clear" type="button">清除搜索</button><button id="ac-ref-toggle" type="button" aria-pressed="true">来源连线：显示</button><button id="ac-local" type="button">突出当前分支</button><button id="ac-all" type="button">显示全图</button><button id="ac-frontier" type="button">跳到最新前沿</button><button id="ac-fullscreen" type="button">图谱全屏</button><button id="ac-back" type="button">← 后退</button><button id="ac-forward" type="button">前进 →</button><button id="ac-zoom-out" type="button">−</button><button id="ac-zoom-in" type="button">＋</button>
 <button id="ac-fit-width" type="button">适配宽度</button><button id="ac-fit-all" type="button">适配全图</button><button id="ac-refresh" type="button">重新加载</button><span id="ac-stats" class="ac-stats">正在读取完整图谱…</span></div>
@@ -179,12 +179,10 @@ def explorer_layout_v0_demo_html(search_root: Path, state: dict, selected: str =
         return dashboard_shell("临时研究图谱布局实验 · V0 最早原型重建", AC_CSS + body,
                                active="explorer", breadcrumb_leaf="布局实验 V0（最早版）")
     original = "/research-explorer/?observer_id=" + quote(observer_id, safe="")
-    layout_b = "/research-explorer-tmp-b/?observer_id=" + quote(observer_id, safe="")
     current_a_c = "/research-explorer-tmp/?observer_id=" + quote(observer_id, safe="")
     a0 = "/research-explorer-tmp-a0/?observer_id=" + quote(observer_id, safe="")
     body = (AC_CSS + AC_HTML.replace("TM_OBSERVER_ID", html.escape(observer_id, quote=True))
             .replace("TM_ORIGINAL_HREF", html.escape(original, quote=True))
-            .replace("TM_LAYOUT_B_HREF", html.escape(layout_b, quote=True))
             .replace("TM_CURRENT_A_C_HREF", html.escape(current_a_c, quote=True))
             .replace("TM_A0_HREF", html.escape(a0, quote=True)))
     return dashboard_shell("临时研究图谱布局实验 · V0 最早原型重建", body, active="explorer",

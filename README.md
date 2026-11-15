@@ -43,7 +43,7 @@ Inspect task status, research stages, and agent activity from desktop and mobile
 Copy this prompt into your coding Agent:
 
 ```text
-Please install and start Sciver for me. First check that Git and Python 3.11+ are available; on Windows, work inside WSL2. If a Sciver checkout already exists, preserve its changes, enter the checkout, and continue at the virtual-environment step. Otherwise run these commands in order:
+Please install and start Sciver for me. First check that Git and Python 3.12+ are available; on Windows, work inside WSL2. If a Sciver checkout already exists, preserve its changes, enter the checkout, and continue at the virtual-environment step. Otherwise run these commands in order:
 
 git clone https://github.com/Black-Sage-xj/Sciver.git
 cd Sciver
@@ -56,7 +56,7 @@ sciver quickstart
 sciver quickstart performs the offline Test0 check and opens the Web UI; diagnose and retry any dependency or startup errors. Confirm the page is reachable, keep the server running, and give me a clickable Web UI link. If running remotely, set up secure port forwarding and give me the forwarded link. Do not start real research.
 ```
 
-To do it yourself, use **Python 3.11+** on Linux, macOS, or Windows with WSL2:
+To do it yourself, use **Python 3.12+** on Linux, macOS, or Windows with WSL2:
 
 ```bash
 git clone https://github.com/Black-Sage-xj/Sciver.git
@@ -68,11 +68,11 @@ python -m pip install -e '.[sdk]' -e ./web
 sciver quickstart
 ```
 
-`quickstart` checks the original Test0 Brownian-motion data, initializes a task and SQLite graph, starts the local server, and opens [http://127.0.0.1:8787/](http://127.0.0.1:8787/). The default workspace is `~/Sciver-workspace`, with the task in `test0/` and separate computation artifacts under `.theory-master-tasks/`. Generated files stay outside the source checkout. This is an offline installation check: it sends no model requests, starts no research, and produces no scientific verdict. Test0 has a **one-Cycle limit**; research begins only when you explicitly start it later. Repeating `quickstart` preserves your task and settings.
+`quickstart` checks the original Test0 Brownian-motion data, initializes a task and SQLite graph, starts the local server, and opens [http://127.0.0.1:8787/](http://127.0.0.1:8787/). The default workspace is `~/Sciver-workspace`, with fresh tasks in uniquely named `test-instances/test0-*` directories and separate computation artifacts under `.theory-master-tasks/`. Generated files stay outside the source checkout. This is an offline installation check: it sends no model requests, starts no research, and produces no scientific verdict. Test0 has a **one-Cycle limit**; research begins only when you explicitly start it later. Every `quickstart` creates a new task with empty scientific state and new Agent sessions from Cycle 1; historical tasks and workspace settings are preserved.
 
-The browser opens in **Workspace → Research Chat** and shows a short guide on the first visit. To inspect the Test0 task just created, close the guide and open **Task List → test0**. You can view the task and its research plan without creating another project.
+The browser opens in **Workspace → Research Chat** and shows a short guide on the first visit. To inspect the Test0 task just created, close the guide and open **Task List → the new Test0 task**. You can view the task and its research plan without creating another project.
 
-To create your own project, start from scratch or select an existing directory containing a `research_plan.md`, notes, or data. Choose the files to import. If you select an existing plan, Sciver uses it as input for a new draft and preserves the original directory and files. The conversation asks for your research goal, checkable completion criteria, and resource or method limits. Review or edit the Research Plan draft, then choose **Confirm project creation**. Only then does the project appear in **Task List**; research does not start automatically. Basic setup needs no model account. If you choose model-assisted drafting, excerpts from selected plans and notes are sent to the model and may consume quota.
+To create your own project, start from scratch or select an existing directory containing a `research_plan.md`, notes, or data. Choose the files to import. If you select an existing plan, Sciver uses it as input for a new draft and preserves the original directory and files. The conversation asks for your research goal, long-term research boundaries and evidence standards, checkable completion criteria, and resource or method limits. Review or edit the Research Plan draft, then choose **Confirm project creation**. Only then does the project appear in **Task List**; research does not start automatically. Basic setup needs no model account. If you choose model-assisted drafting, excerpts from selected plans and notes are sent to the model and may consume quota.
 
 For existing-project migration, the five Research Plan sections, and what happens after setup, see [Start with your own research](docs/START_HERE.md).
 
@@ -100,10 +100,10 @@ Local Web login is **off by default**. In **Settings → Web login**, you can en
 You can also create a separate Test0 and open its Web UI immediately:
 
 ```bash
-sciver test Test0 ~/Sciver-workspace/another-test0 --open
+sciver test Test0 ~/Sciver-workspace/another-test0 --prepare-only --open
 ```
 
-The destination must be empty. This command initializes and verifies the task; it does not start model-based research.
+Without `--prepare-only`, `test` starts real model-based research and uses account quota. The destination must be empty. This command initializes and verifies a fresh task; it does not start model-based research. For an automatically named task directory, use `sciver test Test0 --root ~/Sciver-workspace --prepare-only`. See [First use](docs/first-use.md) and [Wheel installation](docs/distribution.md) for standalone delivery, account setup and troubleshooting.
 
 ### Before starting real research
 
@@ -125,14 +125,14 @@ Some package and CLI names retain historical `TheoryMaster`/`tm` naming. Those p
 
 ## Run tests
 
-Install test dependencies and list the available unittest categories:
+Install test dependencies and list the full pytest inventory and categories:
 
 ```bash
 python -m pip install -e '.[test]' -e ./web
 python scripts/run_tests.py --list
 ```
 
-Run the full core pytest gate used by CI with `python scripts/test_profiles.py default`. Run the categorized unittest suite with `python scripts/run_tests.py`, or run the invariant gate with `python scripts/run_tests.py --category invariant`. Some integration paths may require locally configured services or optional dependencies.
+Run the full core pytest gate used by CI with `python scripts/run_tests.py -q`; it includes function, parametrized and unittest tests. Use `python scripts/run_tests.py --category invariant` for the invariant gate, and `python -m pytest -q web/tests` for Web regressions. Browser tests require the explicitly enabled local browser runtime; real model tests require separate authorization.
 
 ## Run the Web Observatory
 

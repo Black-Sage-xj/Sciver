@@ -37,7 +37,7 @@ AC_HTML = r"""
 <div class="tm-layout-ac" id="tm-layout-ac" data-observer-id="TM_OBSERVER_ID">
 <section class="ac-hero"><div class="ac-head"><div><div class="ac-eyebrow">A0 SNAPSHOT · ORIGINAL LAYOUT · READ ONLY</div>
 <h1>研究图谱 · A0 原始布局演示</h1><p class="ac-subtitle">保留纵向时间轴与横向分支的布局。所有 Canvas 节点和原始连线均加载；点击节点查看详情，点击连线或关系列表可跳转到关联节点。</p></div>
-<div class="ac-links"><a class="ac-link" href="TM_ORIGINAL_HREF">原图谱</a><a class="ac-link" href="TM_LAYOUT_B_HREF">B 前沿分组版</a><a class="ac-link" href="TM_CURRENT_A_C_HREF">当前 A+C 版</a></div></div>
+<div class="ac-links"><a class="ac-link" href="TM_ORIGINAL_HREF">原图谱</a><a class="ac-link" href="TM_CURRENT_A_C_HREF">当前 A+C 版</a></div></div>
 <div class="ac-toolbar"><input id="ac-search" class="ac-search" type="search" placeholder="搜索全部节点 ID、标题或内容…" aria-label="搜索全部图谱节点"/>
 <button id="ac-search-clear" type="button">清除搜索</button><button id="ac-back" type="button">← 后退</button><button id="ac-forward" type="button">前进 →</button><button id="ac-zoom-out" type="button">−</button><button id="ac-zoom-in" type="button">＋</button>
 <button id="ac-fit-width" type="button">适配宽度</button><button id="ac-fit-all" type="button">适配全图</button><button id="ac-refresh" type="button">重新加载</button><span id="ac-stats" class="ac-stats">正在读取完整图谱…</span></div>
@@ -133,11 +133,9 @@ def explorer_layout_a0_demo_html(search_root: Path, state: dict, selected: str =
         return dashboard_shell("临时研究图谱布局实验 · A0 原始版", AC_CSS + body,
                                active="explorer", breadcrumb_leaf="布局实验 A0 原始版")
     original = "/research-explorer/?observer_id=" + quote(observer_id, safe="")
-    layout_b = "/research-explorer-tmp-b/?observer_id=" + quote(observer_id, safe="")
     current_a_c = "/research-explorer-tmp/?observer_id=" + quote(observer_id, safe="")
     body = (AC_CSS + AC_HTML.replace("TM_OBSERVER_ID", html.escape(observer_id, quote=True))
             .replace("TM_ORIGINAL_HREF", html.escape(original, quote=True))
-            .replace("TM_LAYOUT_B_HREF", html.escape(layout_b, quote=True))
             .replace("TM_CURRENT_A_C_HREF", html.escape(current_a_c, quote=True)))
     return dashboard_shell("临时研究图谱布局实验 · A0 原始版", body, active="explorer",
                            back_href=original, breadcrumb_leaf="A0 原始布局演示")

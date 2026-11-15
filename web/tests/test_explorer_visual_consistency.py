@@ -41,14 +41,17 @@ class ExplorerVisualConsistencyTest(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("node"), "requires Node.js")
     def test_reference_and_scientific_edges_have_identical_solid_dash_pattern(self):
-        # Reuse the real G6 data-builder test harness and introduce a separate
-        # reference edge after existing graph/navigation assertions complete.
-        addition = r"""
+        # Reuse only the bootstrap; later navigation scenarios mutate the shared
+        # fixture and leave a different selection and viewport behind.
+        bootstrap, marker, _ = HARNESS.partition("  onReady();await tick();")
+        self.assertTrue(marker, "G6 harness bootstrap marker is required")
+        script = bootstrap + r"""
   const sourceEdge = edges.find(e=>e.id==='AX');
   sourceEdge.edge_type = 'external_reference';
-  await elements['ex-refresh'].onclick();await tick();
+  onReady();await tick();await tick();
   const reference = latestGraph.data.edges.find(e=>e.id==='AX');
-  const scientific = latestGraph.data.edges.find(e=>e.id==='BC');
+  // The tree projection chooses A as C's single predecessor; BC stays in the index.
+  const scientific = latestGraph.data.edges.find(e=>e.id==='AC');
   assert(reference&&scientific,'both edge semantics remain visible');
   assert.deepEqual(reference.style.lineDash,scientific.style.lineDash);
   assert.equal(reference.style.lineDash.length,0,'solid pattern is stable for overlapping routes');
@@ -56,7 +59,13 @@ class ExplorerVisualConsistencyTest(unittest.TestCase):
   latestGraph.events['node:click']({target:{id:'A'}});await tick();await tick();
   assert.equal(latestGraph.data.edges.find(e=>e.id==='AX').style.opacity,.28,
     'reference link cannot masquerade as a downstream scientific relationship');
-  assert.equal(latestGraph.data.nodes.find(n=>n.id==='X').style.fillOpacity,1);
+  assert.equal(latestGraph.data.edges.find(e=>e.id==='AC').style.opacity,1,
+    'scientific successors remain highlighted');
+  const unrelated = latestGraph.data.nodes.find(n=>n.id==='X');
+  assert.equal(unrelated.style.labelFill,'#c8d4e4',
+    'reference-only target is dimmed instead of highlighted as a successor');
+  assert.equal(unrelated.style.fillOpacity,1,
+    'node backgrounds stay opaque so edges do not bleed through cards');
   latestGraph.events['edge:click']({target:{id:'AX'}});await tick();await tick();
   assert.equal(latestGraph.data.edges.find(e=>e.id==='AX').style.stroke,'#fef08a',
     'reference link is still individually clickable and highlighted');
@@ -71,10 +80,8 @@ class ExplorerVisualConsistencyTest(unittest.TestCase):
   assert.equal(latestGraph.data.edges.find(e=>e.id==='AX').style.stroke,'#fef08a');
   assert.equal(reference.style.endArrow,true);
   assert.equal(scientific.style.endArrow,true);
+})().catch(e=>{console.error(e);process.exitCode=1});
   """
-        needle = "  console.log('G6 view model test:"
-        self.assertIn(needle, HARNESS)
-        script = HARNESS.replace(needle, addition + "\n" + needle)
         result = subprocess.run(
             ["node", "-e", script, str(SCRIPT)],
             capture_output=True, text=True, timeout=12, check=False,

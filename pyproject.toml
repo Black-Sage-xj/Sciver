@@ -4,7 +4,11 @@ version = "0.1.0"
 description = "Persistent Codex SDK scientific workflow engine"
 license = "MIT"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
 
 [project.scripts]
 sciver = "theory_master.__main__:main"
@@ -15,7 +19,7 @@ tm-audit = "theory_master.audit_queue:main"
 
 [project.optional-dependencies]
 sdk = ["openai-codex>=0.1", "mcp>=1.0"]
-test = ["pytest>=8.0", "numpy>=1.24", "beautifulsoup4>=4.12", "textual>=0.50", "openai-codex>=0.1"]
+test = ["pytest>=8.0", "numpy>=1.24", "beautifulsoup4>=4.12", "textual>=0.50", "openai-codex>=0.1", "setuptools>=77", "wheel"]
 tui = ["textual"]
 jev = ["typesafe-sdk>=0.7"]
 
@@ -36,10 +40,3 @@ theory_master = [
 
 [tool.setuptools.exclude-package-data]
 theory_master = ["config/local/*", "config/local/**/*", "**/*.pyc", "**/__pycache__/*"]
-
-[tool.setuptools.data-files]
-"share/sciver/regression_cases" = ["regression_cases/index.json"]
-"share/sciver/regression_cases/test_0" = ["regression_cases/test_0/PROTOCOL.md", "regression_cases/test_0/case.json", "regression_cases/test_0/expected.json", "regression_cases/test_0/research_plan.md"]
-"share/sciver/regression_cases/test_0/benchmark" = ["regression_cases/test_0/benchmark/instruction.md", "regression_cases/test_0/benchmark/source_manifest.json"]
-"share/sciver/regression_cases/test_0/benchmark/datasets/brownian_2d" = ["regression_cases/test_0/benchmark/datasets/brownian_2d/trajectories.csv"]
-"share/sciver/regression_cases/test_0/evaluator" = ["regression_cases/test_0/evaluator/generate_data.py", "regression_cases/test_0/evaluator/grade.py", "regression_cases/test_0/evaluator/score_trajectory.py"]

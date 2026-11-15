@@ -246,7 +246,7 @@ def page_body(record: dict[str, Any], messages: list[dict[str, Any]], *, task_id
         '<nav class="tm-incident-context" aria-label="返回科研任务">'
         f'<a href="{task_url}">Task Console</a> · '
         f'<a href="{task_supervisor_url(task_id)}">Supervisor</a> · '
-        f'<a href="{task_explorer_url(task_id)}">Explore map</a></nav>'
+        f'<a href="{task_explorer_url(task_id)}">图谱</a></nav>'
         if task_url else '<p class="tm-incident-meta">所属任务暂不可定位 · <a href="/run/">Task List</a></p>'
     )
     script = CHAT_MODULE + (DIALOGUE_SCRIPT if active else "")

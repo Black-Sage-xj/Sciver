@@ -78,7 +78,6 @@ def test_public_first_run_shows_codex_only_and_settings_and_catalog(monkeypatch)
             continue
         assert token in source
 
-
 def test_persist_actions_are_strictly_allowlisted():
     obj = {"profile": "codex", "roles": _roles()}
     assert _validated_value("save_model_tier_template", obj) == obj

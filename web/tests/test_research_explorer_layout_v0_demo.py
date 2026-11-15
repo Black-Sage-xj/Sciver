@@ -22,7 +22,7 @@ def test_v0_reconstructs_the_initial_h_scope_and_cycle_left_graph_right_layout()
         "function renderCycleRail()",
         "function focusCycle(cycle)",
         "左侧 Cycle 从早到晚排序，右侧只绘制两端都在 H-0134–H-0153 原始样本范围内的真实连线",
-        "当前 A+C", "B 前沿分组版", "A0 后续历史版",
+        "当前 A+C", "A0 后续历史版",
     ):
         assert item in page
 
@@ -53,9 +53,9 @@ def test_v0_filters_only_the_initial_h_scope_but_keeps_cross_scope_records_in_de
 
 def test_original_graph_hides_v0_toolbar_entry_but_route_remains_registered():
     original = graph_content()
-    assert 'id="ex-layout-demo-link"' in original
-    assert 'href="/research-explorer-tmp/"' in original
-    assert "布局B" in original
+    assert 'id="ex-edge-menu"' in original
+    assert 'id="ex-layout-demo-link"' not in original
+    assert "布局B" not in original
     for removed in (
         "布局实验 B", "布局实验 A0 原始版", "布局实验 V0 最早版",
         'id="ex-layout-demo-b-link"', 'id="ex-layout-demo-a0-link"', 'id="ex-layout-demo-v0-link"',
@@ -63,7 +63,7 @@ def test_original_graph_hides_v0_toolbar_entry_but_route_remains_registered():
         assert removed not in original
     source = Path(__file__).parents[1] / "tm_observer" / "web.py"
     route_source = source.read_text()
-    assert "from .research_explorer_layout_demo_v0 import explorer_layout_v0_demo_html" in route_source
+    assert "from .research_explorer_layout_demo_v0 import explorer_layout_v0_demo_html" not in route_source
     assert '"/research-explorer-tmp-v0"' in route_source
 
 

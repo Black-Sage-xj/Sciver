@@ -1,84 +1,81 @@
-"""Prompt-only Investigator completion contract: do not resurrect SDK science gates."""
+"""Completion authority belongs to the Native Goal and delivery to the Contract."""
 from pathlib import Path
 import unittest
 
 from theory_master.contracts import role_contract
-from theory_master.identity import identity_files
+from theory_master.identity import identity_files, identity_block
+from theory_master.native_goal import investigator_goal
 from theory_master.prompt_stages import build_initial_prompt, build_continuation_prompt
 from theory_master.stage_registry import stage_card_text
+
+OBJECTIVE = {"hypothesis": "Test P", "decisive_test": "Compare independent A and B", "scope": "Frozen"}
 
 
 class CompleteHandoffPromptTest(unittest.TestCase):
     @staticmethod
-    def _schema(stage):
-        contract = role_contract("investigator", phase=stage)
-        assert set(contract.prompt_schema) == {"findings"}
-        return contract
+    def _context(stage):
+        context = {"frozen_objective": OBJECTIVE}
+        if stage == "judge_rework":
+            context["judge_objections"] = [{"requested_resolution": "Independent B comparison required"}]
+        return context
 
     def test_investigator_identity_mirrors_and_core_semantics(self):
-        src = Path(__file__).resolve().parents[1] / "identities" / "investigator.md"
-        bundled = Path(__file__).resolve().parents[1] / "theory_master" / "resources" / "identities" / "investigator.md"
+        root = Path(__file__).resolve().parents[1]
+        src = root / "identities" / "investigator.md"
+        bundled = root / "theory_master/resources/identities/investigator.md"
         self.assertEqual(src.read_bytes(), bundled.read_bytes())
-        self.assertTrue(any(path.name == "investigator.md" for path in identity_files("investigator")))
-        text = src.read_text(encoding="utf-8")
-        for phrase in ("当前授权", "Judge", "冻结", "科学结论", "Contract"):
+        self.assertIn(bundled, identity_files("investigator"))
+        text = identity_block("investigator")
+        for phrase in ("Native Goal 或 Stage", "Judge", "SDK Setup 和 Contract", "科学限制"):
             self.assertIn(phrase, text)
         self.assertNotIn("剩余工作清单", text)
 
-    def test_investigate_stage_prioritizes_work_before_submit(self):
-        stage = stage_card_text("investigator", "investigate")
-        for phrase in (
-            "Decompose the frozen test", "necessary prerequisites",
-            "independent checks", "combined findings",
-            "whole frozen test", "unfinished science remains unfinished",
-            "scientific statement", "support, falsification", "frozen comparison",
-        ):
-            self.assertIn(phrase, stage)
-        self.assertNotIn("Report unresolved scientific prerequisites in findings[].limitations", stage)
-        self.assertNotIn("a criterion-linked finding is not a reason", stage)
-        self.assertLess(len(stage), 3100)
+    def test_investigate_goal_prioritizes_full_test_before_submit(self):
+        goal = investigator_goal("investigate", self._context("investigate"), layout="v2")
+        for phrase in ("execute the complete decisive test", "partial work is not completion",
+                       "perform independent checks", "Never invent results", "Unperformed tests are not inconclusive"):
+            self.assertIn(phrase, goal)
+        card = stage_card_text("investigator", "investigate")
+        self.assertIn("whole frozen test", card)
+        self.assertIn("this observer/legacy Stage does not replace", card)
+        self.assertIn("limits in each scientific statement", card)
 
     def test_rework_requires_actual_resolution_not_partial_findings(self):
-        stage = stage_card_text("investigator", "judge_rework")
-        for phrase in (
-            "actual requested_resolution", "Native Goal binds those requests",
-            "missing prerequisites", "necessary in-scope work", "exact Judge request",
-            "materially resolve", "If actionable required work remains",
-            "rigorous falsification, non-identifiability or impossibility",
-        ):
-            self.assertIn(phrase, stage)
-        self.assertNotIn("Report unresolved scientific prerequisites in findings[].limitations", stage)
-        self.assertLess(len(stage), 3000)
+        goal = investigator_goal("judge_rework", self._context("judge_rework"), layout="v2")
+        self.assertIn("Independent B comparison required", goal)
+        self.assertIn("Neither a weaker surrogate test nor a partial Finding resolves the Judge request", goal)
+        card = stage_card_text("investigator", "judge_rework")
+        for phrase in ("actual requested_resolution", "exact Judge request", "materially resolve",
+                       "If actionable required work remains, continue"):
+            self.assertIn(phrase, card)
 
     def test_literature_stage_is_not_early_delivery(self):
-        stage = stage_card_text("investigator", "integrate_literature")
-        self.assertIn("Literature integration alone is not research completion", stage)
-        self.assertIn("complete the remaining frozen research", stage)
-        self.assertNotIn("Report unresolved scientific prerequisites in findings[].limitations", stage)
+        card = stage_card_text("investigator", "integrate_literature")
+        self.assertIn("Literature integration alone is not research completion", card)
+        self.assertIn("complete the remaining frozen research", card)
+        self.assertIn("Native Goal determines completion", card)
 
     def test_real_assembled_first_and_rework_prompts_retain_exact_contract(self):
-        objective = {"hypothesis": "Test P", "decisive_test": "Compare independent A and B", "scope": "Frozen"}
         for stage in ("investigate", "judge_rework", "integrate_literature"):
-            contract = self._schema(stage)
-            context = {"frozen_objective": objective}
-            if stage == "judge_rework":
-                context["judge_objections"] = [{"requested_resolution": "Independent B comparison required"}]
-            kwargs = {"role": "investigator", "stage": stage,
-                      "contract_ref": contract.ref, "contract_schema": contract.prompt_projection(context),
-                      "context": context}
-            first = build_initial_prompt(prefix="Cycle C48", write_rule="Only assigned workspace",
-                                         **kwargs)
-            follow = build_continuation_prompt(**kwargs)
-            for prompt in (first, follow):
-                self.assertIn("Compare independent A and B", prompt)
+            contract = role_contract("investigator", phase=stage)
+            context = self._context(stage)
+            kwargs = {"role": "investigator", "stage": stage, "contract_ref": contract.ref,
+                      "contract_schema": contract.prompt_projection(context), "context": context}
+            prompts = (build_initial_prompt(prefix="Cycle C48", write_rule="Only assigned workspace", **kwargs),
+                       build_continuation_prompt(**kwargs))
+            for prompt in prompts:
+                self.assertIn(OBJECTIVE["decisive_test"], prompt)
                 self.assertIn("findings", prompt)
+                self.assertIn("Native Goal", prompt)
                 self.assertNotIn("Report unresolved scientific prerequisites in findings[].limitations", prompt)
                 if stage == "judge_rework":
                     self.assertIn("Independent B comparison required", prompt)
-                    self.assertIn("If actionable required work remains, continue", prompt)
-                elif stage == "investigate":
-                    self.assertIn("unfinished science remains unfinished", prompt)
             self.assertEqual(set(contract.prompt_schema), {"findings"})
+            # Completion and immutable science are checked at the actual runtime
+            # owner, rather than requiring retired wording in every Stage.
+            goal = investigator_goal(stage, context, layout="v2")
+            self.assertIn(OBJECTIVE["decisive_test"], goal)
+            self.assertIn("Native Goal completion does not replace independent Judge adjudication", goal)
 
 
 if __name__ == "__main__":

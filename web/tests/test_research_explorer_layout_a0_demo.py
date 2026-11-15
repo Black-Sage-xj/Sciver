@@ -16,7 +16,7 @@ def test_a0_demo_is_separate_and_links_to_comparison_views():
     assert "研究图谱 · A0 原始布局演示" in page
     assert 'href="/research-explorer/?observer_id=8dd38a9977eef7e5"' in page
     assert 'href="/research-explorer-tmp/?observer_id=8dd38a9977eef7e5"' in page
-    assert 'href="/research-explorer-tmp-b/?observer_id=8dd38a9977eef7e5"' in page
+    assert '/research-explorer-tmp-b/' not in page
 
 
 def test_a0_snapshot_keeps_early_layout_algorithm_and_all_data():

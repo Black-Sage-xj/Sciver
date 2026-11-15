@@ -36,7 +36,8 @@ class _ProposalRetry(Exception):
 
 _CHALLENGER_CANDIDATE_FIELDS = (
     "hypothesis", "scope", "why_now", "goal_advance", "decisive_test",
-    "lineage_anchor_node_id", "lineage_anchor_node_ids", "evolution_operator", "reconsideration_trigger",
+    "lineage_anchor_node_id", "lineage_anchor_node_ids", "lineage_main_node_id",
+    "lineage_other_node_ids", "evolution_operator", "reconsideration_trigger",
 )
 
 
@@ -75,6 +76,33 @@ _REPAIR_REVIEW_PROTOCOL_VERSION = 2
 
 
 class QualificationMixin:
+    def _pause_exhausted_lead_literature(
+        self, state: dict[str, Any], frontier_output: dict[str, Any],
+    ) -> None:
+        reason = (
+            "Research Lead still needs external scholarship after the qualification "
+            "Literature detour and one bounded correction. No candidate is ready "
+            "for qualification; the Hypothesis remains unlocked."
+        )
+        state["role_outputs"]["research_lead_frontier"] = frontier_output
+        state.update(
+            status="needs_attention", phase="qualification", scientific_phase="qualification",
+            qualification_status="pending", resumable=True, execution_active=False,
+            human_attention=reason,
+            attention={
+                "code": "lead_literature_detour_exhausted",
+                "reason": reason,
+                "lead_stage": "frontier_proposal",
+                "detour_limit": 1,
+                "literature_request": json.loads(json.dumps(frontier_output.get("literature_request") or {})),
+                "requested_action": "Provide the missing sources or scientific guidance before resuming qualification.",
+                "resume_behavior": "Resume continues qualification using existing Literature; no additional automatic detour is authorized.",
+            },
+        )
+        self._emit(state, "lead.literature_detour_exhausted", dict(state["attention"]))
+        self._persist(state, project=True)
+        raise RecoveryStop(reason)
+
     def _lock_prequalified_checkpoint(self, state: dict[str, Any]) -> bool:
         checkpoint = state.get("checkpoint") if isinstance(state.get("checkpoint"), dict) else {}
         if checkpoint.get("name") != "pre_hypothesis_lock":
@@ -152,26 +180,35 @@ class QualificationMixin:
         # candidate whose saved SQLite lineage anchor disappeared must be rebuilt.
         working = state.get("qualification_working_set")
         frontier = state.get("role_outputs", {}).get("research_lead_frontier")
+        guidance = state.get("operator_guidance") or {}
+        literature_guidance_restart = (
+            qualification_status == "pending"
+            and isinstance(frontier, dict) and frontier.get("needs_literature") is True
+            and (state.get("qualification_literature_used")
+                 or (state.get("lead_literature_detours") or {}).get("frontier_proposal", 0))
+            and state.get("operator_guidance_pending")
+            and isinstance(guidance, dict) and bool(str(guidance.get("text") or "").strip())
+        )
         candidates = ((frontier or {}).get("candidates") if isinstance(frontier, dict) else None)
         if not isinstance(candidates, list) or not candidates:
             candidates = working.get("candidates") if isinstance(working, dict) else []
         derived = [item for item in candidates or [] if isinstance(item, dict) and item.get("evolution_operator")]
+        from .hypothesis_lineage import lineage_sources
         stale_pending_lineage = False
         if qualification_status == "pending" and derived:
             anchors = _scientific_anchor_types(self)
             stale_pending_lineage = any(
                 (not sources or any(anchors.get(anchor) != "Hypothesis" for anchor in sources))
                 for item in derived
-                for sources in [list(item.get("lineage_anchor_node_ids") or [
-                    str(item.get("lineage_anchor_node_id") or "").strip()
-                ])]
+                for sources in [lineage_sources(item)]
             )
         worker_origin_mismatch = (
             bool(getattr(self, "worker_id", None)) and
             str((state.get("recovery") or {}).get("message") or "") ==
             "selected hypothesis does not originate from the claimed SQLite frontier"
         )
-        if qualification_status != "unqualified" and not stale_pending_lineage and not worker_origin_mismatch:
+        if (qualification_status != "unqualified" and not stale_pending_lineage
+                and not worker_origin_mismatch and not literature_guidance_restart):
             return False
 
         role_outputs = state.setdefault("role_outputs", {})
@@ -181,14 +218,21 @@ class QualificationMixin:
             if isinstance(item, dict) and item.get("id")
         ] if isinstance(frontier, dict) else []
         history = list(state.get("qualification_resume_history") or [])
+        state["qualification_restart_generation"] = max(
+            int(state.get("qualification_restart_generation") or 0), len(history),
+        ) + 1
         reviews = (state.get("frontier_review") or {}).get("reviews") or []
         history.append({
             "at": now(),
-            **({"stale_frontier": json.loads(json.dumps(frontier)),
+            **({"literature_request": json.loads(json.dumps(frontier.get("literature_request") or {}))}
+               if literature_guidance_restart else
+               {"stale_frontier": json.loads(json.dumps(frontier)),
                 "stale_working_set": json.loads(json.dumps(working))}
                if stale_pending_lineage else {}),
             **({"reviews": json.loads(json.dumps(reviews))} if reviews else {
-                "reason": str(state.get("qualification_rationale") or "unqualified qualification"),
+                "reason": ("new operator guidance for an exhausted Literature request"
+                           if literature_guidance_restart else
+                           str(state.get("qualification_rationale") or "unqualified qualification")),
                 "candidate_ids": candidate_ids,
             }),
         })
@@ -223,7 +267,9 @@ class QualificationMixin:
             "qualification_restart": True,
             "qualification_restart_reason": (
                 "stale persisted lineage anchor requires Research Lead reconciliation"
-                if stale_pending_lineage else "previous qualification ended unqualified"
+                if stale_pending_lineage else
+                "new operator guidance for an exhausted Literature request"
+                if literature_guidance_restart else "previous qualification ended unqualified"
             ),
         })
         state["recovery"] = recovery
@@ -498,6 +544,12 @@ class QualificationMixin:
                 "evidence_refs": list(raw.get("evidence_refs") or []),
                 "status": str(raw.get("status") or "provisional"),
             }
+            from .hypothesis_lineage import explicit_lineage
+            explicit = explicit_lineage(raw)
+            if explicit is not None:
+                item["lineage_main_node_id"], item["lineage_other_node_ids"] = explicit
+                item["lineage_anchor_node_ids"] = [explicit[0], *explicit[1]]
+                item["lineage_anchor_node_id"] = explicit[0]
             if "estimand" in raw:
                 # Preserve any already-frozen estimand through SDK normalization;
                 # the repair stage must compare the same object, not two dropped fields.
@@ -663,7 +715,11 @@ class QualificationMixin:
             if isinstance(guidance, dict) and guidance.get("text"):
                 lead_context["operator_guidance"] = str(guidance.get("text"))
             frontier_output = self._call(state, "research_lead", lead_context)
-            if frontier_output.get("needs_literature") is True and not state.get("qualification_literature_used"):
+            literature_used = (
+                state.get("qualification_literature_used")
+                or (state.get("lead_literature_detours") or {}).get("frontier_proposal", 0)
+            )
+            if frontier_output.get("needs_literature") is True and not literature_used:
                 state["qualification_literature_used"] = True
                 literature = self._run_lead_literature_detour(
                     state, frontier_output.get("literature_request") or {},
@@ -674,32 +730,29 @@ class QualificationMixin:
                     state, "research_lead", lead_context,
                     output_key="research_lead_frontier_after_literature",
                 )
+            if frontier_output.get("needs_literature") is True:
+                # Also cover re-proposal and resume after a consumed detour.
+                # A request is never candidate output, even after correction.
+                literature_result = dict(lead_context.get("lead_literature_result") or {})
+                lead_context["lead_literature_result"] = {
+                    **literature_result,
+                    "status": "detour_limit_reached",
+                    "reason": (
+                        "The one authorized Literature detour has been used. "
+                        "Use the available external sources and task evidence to produce "
+                        "1–3 defensible candidates. Do not request another Literature call "
+                        "or invent missing scientific prerequisites."
+                    ),
+                }
+                self._emit(state, "qualification.lead_literature_correction", {
+                    "lead_stage": "frontier_proposal", "literature_calls": 1,
+                })
+                frontier_output = self._call(
+                    state, "research_lead", lead_context,
+                    output_key="research_lead_frontier_after_literature_correction",
+                )
                 if frontier_output.get("needs_literature") is True:
-                    # One bounded Lead correction, never a second Literature call.
-                    literature_result = dict(lead_context.get("lead_literature_result") or {})
-                    lead_context["lead_literature_result"] = {
-                        **literature_result,
-                        "status": "detour_limit_reached",
-                        "reason": (
-                            "The one authorized Literature detour has been used. "
-                            "Use the available external sources and task evidence to produce "
-                            "1–3 defensible candidates. Do not request another Literature call "
-                            "or invent missing scientific prerequisites."
-                        ),
-                    }
-                    self._emit(state, "qualification.lead_literature_correction", {
-                        "lead_stage": "frontier_proposal", "literature_calls": 1,
-                    })
-                    frontier_output = self._call(
-                        state, "research_lead", lead_context,
-                        output_key="research_lead_frontier_after_literature_correction",
-                    )
-                    if frontier_output.get("needs_literature") is True and not state.get("qualification_literature_used"):
-                        state["qualification_literature_used"] = True
-                        self._run_lead_literature_detour(
-                            state, frontier_output.get("literature_request") or {},
-                            lead_stage="frontier_proposal",
-                        )
+                    self._pause_exhausted_lead_literature(state, frontier_output)
             state["role_outputs"]["research_lead_frontier"] = frontier_output
 
         frontier = [normalize_candidate(item) for item in (frontier_output.get("candidates") or []) if isinstance(item, dict)]
@@ -865,6 +918,9 @@ class QualificationMixin:
                 state.get("role_outputs", {}).pop("research_lead_frontier", None)
                 state.pop("qualification_working_set", None)
                 history = list(state.get("qualification_resume_history") or [])
+                state["qualification_restart_generation"] = max(
+                    int(state.get("qualification_restart_generation") or 0), len(history),
+                ) + 1
                 history.append({
                     "reason": reason,
                     "candidate_ids": list(candidate_ids),

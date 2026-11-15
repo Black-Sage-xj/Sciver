@@ -41,7 +41,7 @@ SDK 不依据自然语言、文件名或关键词代做科学判断。系统约�
 | Investigator | 冻结命题内的理论、数值、本地材料和工具研究 | 交付自包含 Findings，不管理 Workflow 或改写冻结目标 |
 | Literature | 获取并核查外部学术来源 | 如实区分实际阅读层级，不把不可读来源当作已验证证据 |
 | Judge | 独立裁决本轮 H；必要时给出有界 objection；任务完成裁决 | 科学裁决不由预算或运行状态推导 |
-| Reporter | 完整报告与 Outcome 短文案 | 不改裁决、不选下一方向、不创建图谱科学对象 |
+| Reporter | 完整报告的标题与正文 | 不改裁决、不选下一方向、不创建图谱科学对象 |
 | Supervisor | 故障诊断、受控工程修复与恢复验证 | 不改科研合同、Evidence 或科学裁决，不越过资源和所有权守卫 |
 | SDK | Stage 调度、合同闭合、身份、账本、持久化和投影 | 不选科学假设，不解释证据，不代签 verdict |
 
@@ -50,6 +50,14 @@ Semantic Annotator 是辅助 B 层模型，只在 SDK 给定的封闭选项中�
 科学选题以尚未满足的 Goal / Research Contract / Final Gate 为主线，或解决其逻辑必需的 prerequisite。Lead 判断科学方向，Challenger 独立审查资格。领域案例、具体选题禁令、实验方法和科学质量判据放在任务合同、Stage Card 或按需 Skill 中。
 
 候选必须提出具体的科学主张及可区分后果，说明相对最近历史命题改变的关系、机制、结构假定、定理或模型族；重述 Goal、列出理想交付、扩展覆盖或限制参数个数均不能单独定义新机制。只有任务合同明确要求的覆盖范围才形成资格义务。Lead 不必预先完成证明或推导；Challenger 应区分尚未求解的明确命题与尚未定义的研究任务。存在性命题须界定对象族，有限搜索失败不构成一般反证。绑定定义、输入资格及判别规则须进入冻结科学正文，不能依赖提案理由补充。
+
+每个 Candidate 只锁定一个可在当前 Cycle 判别的科学命题。Lead 在现有 `hypothesis / scope / decisive_test` 中写清允许输入及取得状态、已有相关对照或逻辑控制、最小决定性结果、支持／反驳／科学未定出口、必要前提和与任务相称的计划资源上界；正反结果均须对 Goal 有信息价值。若完整命题必须先发明模型、取得新数据并完成大范围评分，应提出其中一个有科学判别力的必要子命题，不能把准备工作本身当作科学结果。Challenger 审查完整前提链和最小结果在所报输入、对照或逻辑控制与资源内是否可达；单纯缺少执行资料属于资格或运行障碍，不是已执行检验后的科学未定。换命题才能收束时 `reject`，仅同一命题的定义、输入状态、对照、出口或上界可补足时 `revise`。尚未完成的有界证明、有效负结果和有信息价值的局部必要检验仍有资格；不设跨领域统一样本量或 token 阈值。此处资源上界用于资格审查，不改变 Investigator 现有运行时预算。
+
+Lead 在提交候选前做有界的科学选题研究：核对本地一手历史、相关方法及一个有意义的对照，推得候选在命题层面的必要判别后果；这不要求先完成证明或决定性实验。外部文献若有助于辨认可行机制、检验关键假设、发现反例、比较最近前作或选出更窄的判别问题，Lead 可在 `frontier_proposal` 发起一次聚焦的 Literature detour，说明具体来源问题、本地已知内容及证据将怎样帮助选题；不必先证明文献缺口已阻断工作或一定会改变猜想。`landscape` 用于尚未辨清的方法版图，`targeted_source` 用于已知来源或具体主张，`novelty_check` 用于明确的前作重叠问题；本地证据足够时无需检索，也不每轮例行检索。Literature 只交付可追溯的外部来源、阅读层级和剩余问题；Lead 返回后自己决定科学命题，不能把文献摘要当作猜想或让 Literature 代选。修订复核须重新核查修订新增的模型、输入、验证单位及资源路线；只列取得计划或把缺输入标作科学未定，不构成阻碍关闭。
+
+Lead 触发的文献检索材料存于当前 Cycle 的 `workspace/literature/sdk_retrieval/<source_gap_id>/`；结构化 Literature 输出另存入运行状态与事件。SDK 将来源记录、阅读层级、定位信息、领域图或前作定位及 `remaining_scientific_question` 精简后回传 Lead 的 `lead_literature_result`，不把论文全文灌入 Prompt。锁定前的这一路仅作选题依据，不自动登记为当前 Cycle 的裁决 Evidence，也不自动为每篇论文创建 SQLite `External` 节点。
+
+资格阶段的 Literature detour 已消耗后，Lead 再次请求文献时，SDK 只允许一次使用已有结果的有界纠正；首次返回、候选被拒后的重新提案及恢复执行均使用同一处理路径。纠正后仍有文献需求，则保存最新请求并进入可恢复的 `needs_attention`（`lead_literature_detour_exhausted`），保持 Hypothesis 未锁定，等待补充来源或科学指导。文献请求不能作为空候选进入身份校验；普通 Resume 不授予额外检索额度，也不能将缺失来源视为已经取得的科学结果。新的指导可以启动新的提案尝试；调用账本使用单调递增的资格重启代数，避免有限历史截断后重放旧提案，历史任务没有该计数时兼容使用既有历史长度。
 
 范围与检验要求由当前 Goal / Research Contract / Final Gate 和候选 decisive_test 界定，不从代际、壳层等术语自动推断完整序列禁令。只有任务明确要求时才约束全序列覆盖或独立局部目标；联合支持、匹配和独立样本检查仅在实际经验比较需要时适用，纯理论或存在性证明不额外承担经验样本要求。提案与审查核对适用的更简单解释、已有方法及给定设计下逻辑／统计上可达的结果；合格候选选择不重新审查资格，有限修订保留父候选已绑定的条件。
 
@@ -108,7 +116,13 @@ Judge 的 objection 必须是冻结命题内的最小可执行增量；SDK 验�
 
 终局 Judge 之后，Lead 的 fresh `cycle_synthesis` 只综合认识并给出 Scientific Model `keep|replace`；`replace` 提交完整新正文。SDK 校验、预览并原子提交版本。同一 episode 的 `frontier_maintenance` 只维护现有分支的 `active / parked / closed`，不创建下一轮 H。
 
-Reporter 生成完整报告，再提供 Outcome 的短标题和摘要。合同中的 `decision.title/summary` 是文案接口，不创建独立 Decision 图节点。SQLite 的 H / External、H→H 谱系与 Cycle Outcome 由 SDK 持久化；Canvas 是确定性展示投影。
+Reporter 通过 `title/summary` 交付报告标题与完整 Markdown 正文，`summary` 承载全文。SDK 将同一科学叙事保存为报告笔记和对应 Cycle Outcome 的标题、正文，不创建独立 Decision 图节点。SQLite 的 H / External、H→H 谱系与 Cycle Outcome 由 SDK 持久化；Canvas 是确定性展示投影。
+
+Reporter 的 `report` 正文依次组织为结论摘要、问题与必要条件、主要结果、解释与限制；SDK 在末尾统一追加第五节复现索引。主要结果按科学问题组织，相关已有图片嵌入对应论证位置并附解释性图注，已确认的数值可整理为精简对照表。纯理论结果无需装饰性图片或空表格。必要限定保留在影响解读的位置，完整限制集中说明。
+
+SDK 仅向 Reporter 提供从可用于本轮报告的 Evidence 投影出的 `report_materials`，列明原始引用、文件类型、可用状态和图片入口；范围与限制继续由 `evidence_scope_digest` 承载。只读查看这些素材用于理解已有图片或转录已确立数值，不授予重新分析数据、增加证据或改变裁决的权限。SDK 不读取原始数组来推导新结果，不依据文件名决定科学相关性。
+
+SDK 将已登记图片绑定到真实文件，报告笔记使用相对自身位置的图片路径，图谱 Outcome 正文使用不依赖笔记位置的图片路径；缺失、歧义和未登记引用明确标记。原始大表、数据文件、脚本和日志留在原处，复现索引只列路径与可用状态，机器审计记录折叠显示。历史报告不自动重写。
 
 Cycle 完成与 Task Goal 完成独立。仅由本轮 `supported` 事件触发 fresh `goal_completion`；其结果为 `passed|not_passed` 与理由，不生成规划状态。Goal Gate 评审以独立记录关联触发它的 Cycle Outcome；Outcome 的科学 verdict 不变。Lead 的精简图谱保留完整 H 索引，并显式展示历次 `not_passed` 的原文理由，即使来源 H 的 frontier 已关闭。Lead 对照 Final Gate 和已交付成果判断下一候选的必要性；Challenger 独立核对其 Goal 优先级。失败理由是历史任务裁决，不自动指定下一 H，也不因下一次理由未重述而自动解决。下一 Cycle 重新选题并审查，不能把收口时的临时 synthesis 当作新的长期科学权威。
 
@@ -163,6 +177,8 @@ Task 有稳定整数 ID，Cycle 在 Task 内独立递增。新任务的 Research
 4. 从第一个未提交事务继续；不得重复已提交 Evidence、裁决或 Scientific Model，也不得重复发起昂贵计算。
 
 事务顺序为：终局 Judge → Scientific Synthesis → Scientific Model commit → Frontier / report / Outcome 和展示投影。各层可幂等恢复，下游失败不重做上游科学判断。
+
+Reporter `report` v4 分别返回完整报告 `summary` 与图谱导览 `graph_summary`。导览以本轮结论、关键依据、必要适用范围及本节点未决问题组织阅读上下文，不产生科学裁决、前沿状态或下一轮计划。SDK 原样保存完整报告，将独立导览放入 Cycle Outcome 的 `source_json`，供 Canvas、Web 与 Agent 只读视图使用；新导览不再由报告前缀截取得到。历史 Outcome、缓存旧报告和冻结命题保留原内容，不因合同升级而新增模型调用或回填科学解释。
 
 transport timeout、inactivity watchdog 和进程异常属于调用恢复。中途 progress、delta 或 interrupt 引发的完成事件不能冒充合法 final output。恢复同一 thread 时给最小 continuation；只有合法最终输出才能进入合同闭合与 Evidence 登记。
 

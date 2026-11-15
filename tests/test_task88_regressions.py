@@ -14,6 +14,7 @@ from theory_master.contract_stages import (
 from theory_master.evidence import EvidenceRegistry
 from theory_master.prompt_stages import stage_context
 from theory_master.stage_registry import stage_card_text
+from theory_master.skills import skills_root
 
 
 class Task88RegressionTest(unittest.TestCase):
@@ -182,15 +183,16 @@ class Task88RegressionTest(unittest.TestCase):
         judge_card = stage_card_text("judge", "terminal_assessment")
         self.assertNotIn("independent correctness check", investigator)
         self.assertNotIn("canary", investigator)
-        self.assertIn("Include provenance only for strong evidence-identity claims", investigator)
+        self.assertIn("optional", investigator)
+        self.assertIn("required for", investigator)
         self.assertIn("compact scientific result", judge_card)
         self.assertIn("Do not request raw files", judge_card)
+        self.assertIn("using only the supplied compact scientific result", judge_card)
         self.assertIn("Do not output audit inventories", judge_card)
         self.assertIn("needs_external_scholarship", judge)
         self.assertNotIn("do not reopen", judge.lower())
         skill = (
-            Path(__file__).resolve().parents[1]
-            / "theory_master" / "resources" / "skills" / "numerical-investigation" / "SKILL.md"
+            skills_root() / "numerical-investigation" / "SKILL.md"
         ).read_text(encoding="utf-8")
         self.assertIn("独立正确性检查", skill)
         self.assertIn("canary", skill)
@@ -202,8 +204,7 @@ class Task88RegressionTest(unittest.TestCase):
 
     def test_numerical_skill_gates_downstream_work_on_decisive_provenance(self):
         skill = (
-            Path(__file__).resolve().parents[1]
-            / "theory_master" / "resources" / "skills" / "numerical-investigation" / "SKILL.md"
+            skills_root() / "numerical-investigation" / "SKILL.md"
         ).read_text(encoding="utf-8")
         self.assertIn("决定性输入/provenance gate", skill)
         self.assertIn("source-recoverability audit", skill)

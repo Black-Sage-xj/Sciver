@@ -299,7 +299,7 @@ function App({ sessionId, mode }: { sessionId: string; mode: string }) {
           }
         });
       }
-      if (state.stream_text) {
+      if (state.streaming && state.stream_text) {
         setMessages((previous) => [...previous, {
           id: streamMessageId, role: 'assistant', content: state.stream_text || '', created_at: new Date().toISOString(),
         }]);

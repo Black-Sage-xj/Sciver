@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+
+from audit_adapter_fixture import create_audit_adapter
+from theory_master.audit_adapter import AuditAdapterError, resolve_audit_adapter
 
 MODULE = Path(__file__).resolve().parents[1] / "scripts/run_5cycle_audit_fix_loop.py"
 spec = importlib.util.spec_from_file_location("five_cycle_supervisor", MODULE)
@@ -27,8 +31,12 @@ class FiveCycleSupervisorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
+        self.adapter, environment = create_audit_adapter(self.root)
+        self.environment = patch.dict(os.environ, environment)
+        self.environment.start()
 
     def tearDown(self) -> None:
+        self.environment.stop()
         self.temp.cleanup()
 
     def test_batch_selection_requires_five_new_over_cycles(self) -> None:
@@ -56,7 +64,7 @@ class FiveCycleSupervisorTests(unittest.TestCase):
     def test_batch_audit_prompt_uses_only_trajectory_skill(self) -> None:
         cycles = [self.root / f"cycle-{n:04d}" for n in range(1, 6)]
         prompt = loop.audit_prompt(SimpleNamespace(branch_canvas=None), cycles, self.root / "batch_audit.md")
-        self.assertIn(str(loop.AUDIT_SKILL), prompt)
+        self.assertIn(str(self.adapter.skill), prompt)
         for path in cycles:
             self.assertIn(str(path), prompt)
         self.assertNotIn("audi_list", prompt)
@@ -104,17 +112,52 @@ class FiveCycleSupervisorTests(unittest.TestCase):
         executable.write_text("#!/bin/sh\n", encoding="utf-8")
         executable.chmod(0o755)
         fake = SimpleNamespace(research_root=self.root, max_cycles=5)
-        skill = self.root / "audit-skill.md"
-        skill.write_text("# Offline fixture audit skill\n", encoding="utf-8")
-        with (patch.object(loop.TaskSpec, "from_task_root", return_value=fake),
-              patch.object(loop, "AUDIT_SKILL", skill)):
+        skill = self.adapter.skill
+        with patch.object(loop.TaskSpec, "from_task_root", return_value=fake):
             supervisor = loop.Supervisor(self.root, executable)
             locations = supervisor.check()
             self.assertEqual(locations["reports"], str(self.root / ".theory-master/audit_batches/<batch-id>"))
+            self.assertEqual(locations["audit_skill"], str(self.adapter.skill))
+            self.assertEqual(locations["audit_relay"], str(self.adapter.relay))
+            self.assertEqual(locations["audit_workdir"], str(self.adapter.workdir))
             self.assertFalse((self.root / ".theory-master").exists())
+            skill.unlink()
+            with self.assertRaisesRegex(FileNotFoundError, "Cycle audit skill file not found"):
+                supervisor.check()
+            skill.write_text("# Test-only audit adapter\n", encoding="utf-8")
             executable.chmod(0o644)
             with self.assertRaisesRegex(ValueError, "not executable"):
                 supervisor.check()
+
+    def test_missing_adapter_blocks_batch_before_workflow_and_artifact_creation(self) -> None:
+        executable = self.root / "codex"
+        executable.write_text("#!/bin/sh\n", encoding="utf-8")
+        executable.chmod(0o755)
+        fake = SimpleNamespace(research_root=self.root, max_cycles=5)
+        def unavailable():
+            return resolve_audit_adapter(environ={}, package_root=self.root / "standalone")
+        with patch.object(loop.TaskSpec, "from_task_root", return_value=fake), \
+             patch.object(loop, "resolve_audit_adapter", side_effect=unavailable), \
+             patch.object(loop, "run_workflow") as workflow, \
+             patch.object(loop, "invoke_codex") as model:
+            supervisor = loop.Supervisor(self.root, executable)
+            with self.assertRaisesRegex(AuditAdapterError, "not configured"):
+                supervisor.run(once=True)
+        self.assertFalse((self.root / ".theory-master").exists())
+        workflow.assert_not_called()
+        model.assert_not_called()
+
+    def test_direct_codex_invocation_uses_configured_workdir(self) -> None:
+        self.assertEqual(loop.PACKAGE_ROOT, MODULE.parents[1])
+        batch = self.root / "batch"
+        batch.mkdir()
+        with patch.object(loop.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+            result = loop.invoke_codex(self.root / "codex", prompt="test-only prompt",
+                                       mode="read-only", batch_dir=batch, name="fixture")
+        self.assertEqual(result, (0, ""))
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("-C") + 1], str(self.adapter.workdir))
+        self.assertEqual(run.call_args.kwargs["cwd"], self.adapter.workdir)
 
     def test_registration_is_idempotent(self) -> None:
         manifest = {"batch_id": "batch-one", "cycle_ids": [f"cycle-{n:04d}" for n in range(1, 6)],
@@ -140,7 +183,7 @@ class FiveCycleSupervisorTests(unittest.TestCase):
         audit = loop.audit_prompt(fake, [self.root / f"cycle-{n:04d}" for n in range(1, 6)], self.root / "batch_audit.md")
         repair = loop.repair_prompt(fake, self.root / "batch_audit.md", self.root / "repair_result.md")
         recovery = loop.repair_prompt(fake, self.root / "state.json", self.root / "recovery.md", recovery=True)
-        self.assertIn(str(loop.AUDIT_SKILL), audit)
+        self.assertIn(str(self.adapter.skill), audit)
         self.assertTrue(all(f"cycle-{n:04d}" in audit for n in range(1, 6)))
         self.assertNotIn("read-only authority", audit)
         self.assertNotIn("PASS/RISK/FAIL/NOT_VERIFIABLE", audit)

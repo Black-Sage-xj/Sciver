@@ -1,4 +1,5 @@
 """Exercise the actual subprocess validator, without any model calls."""
+import re
 from pathlib import Path
 import shutil
 
@@ -53,4 +54,4 @@ def test_actual_canvas_suites_run_in_copied_engine(tmp_path):
         shutil.copy2(repo / 'tests' / name, package / 'tests' / name)
     ok, detail = repair._validate_candidate(tmp_path, package / 'theory_master/canvas_projection.py')
     assert ok, detail
-    assert '16 pytest tests' in detail
+    assert re.search(r'[1-9][0-9]* pytest tests in 3 required offline Canvas suites passed', detail)

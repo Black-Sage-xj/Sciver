@@ -1,0 +1,38 @@
+name: Sciver standalone distribution
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installed-wheels:
+    name: Installed wheels / Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install local wheel build tools
+        run: python -m pip install --upgrade pip 'setuptools>=77' wheel
+      - name: Verify cold startup from installed wheels
+        run: python scripts/check_distribution.py --work-dir "$RUNNER_TEMP/sciver-distribution-${{ matrix.python }}"
+      - name: Keep installation and HTTP evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: distribution-python-${{ matrix.python }}
+          path: |
+            ${{ runner.temp }}/sciver-distribution-${{ matrix.python }}/result.json
+            ${{ runner.temp }}/sciver-distribution-${{ matrix.python }}/server.log
+          if-no-files-found: warn
+          retention-days: 7

@@ -96,7 +96,7 @@ class RunListTests(unittest.TestCase):
             self.assertIn('a-model', html)
             self.assertIn('&lt;dangerous&gt;&amp; in research', html)
             self.assertIn('当前任务暂未提供可阅读的科研画布', html)
-            self.assertIn('Explore map', run_detail_body(entry, canvas_available=True))
+            self.assertIn('图谱', run_detail_body(entry, canvas_available=True))
             self.assertNotIn('href="/api/canvas-md/', html)
             self.assertNotIn('onclick=', html)
             elsewhere = base / 'outside'
@@ -1064,7 +1064,7 @@ class EventsFocusedReaderAndUsageHitTests(unittest.TestCase):
             self.assertIsNotNone(link)
             self.assertEqual(link["href"],
                              "/research-explorer/?observer_id=8dd38a9977eef7e5")
-            self.assertEqual(link.select_one("strong").get_text(),"Explore map")
+            self.assertEqual(link.select_one("strong").get_text(),"图谱")
             self.assertEqual(len(page.select("[data-explore-map]")),1)
             self.assertIsNone(page.select_one(".tm-run-placeholder"))
             self.assertIsNone(page.select_one("#tm-tui-controls [data-explore-map]"))

@@ -100,9 +100,9 @@ class QualificationRepairAuditTest(unittest.TestCase):
         lead = stage_card_text("research_lead", "frontier_proposal")
         challenger = stage_card_text("challenger", "candidate_review")
         self.assertIn("Matching, contrary and inconclusive results each need an honest interpretation", lead)
-        self.assertIn("Matching, contrary and inconclusive results must retain scientific meaning", challenger)
+        self.assertIn("Matching, contrary and inconclusive results", challenger)
         self.assertIn("eventual negative/open result is not itself a blocker", challenger)
-        self.assertIn("counterexample, bounded mechanism, negative result or high-risk claim can advance the Goal without completing it", lead)
+        self.assertIn("eventual negative/open result is not itself a blocker when a credible in-scope route and meaningful test remain", challenger)
 
     def test_one_repair_freezes_the_corrected_test_and_audit(self):
         class RevisingBackend(FakeBackend):

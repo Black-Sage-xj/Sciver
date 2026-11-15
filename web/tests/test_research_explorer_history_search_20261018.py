@@ -46,7 +46,7 @@ class ExplorerHistorySearchRegressionTests(unittest.TestCase):
   }
   assert(pageIndex-oldBrowserIndex>70,'stress run must evict the old in-memory trail entry');
   const expectedOldSeq=pageHistory[oldBrowserIndex].state.tmExplorerIndex;
-  const nextSelected=pageHistory[oldBrowserIndex+1].state.tmExplorerView.selected.id;
+  const nextView=JSON.parse(JSON.stringify(pageHistory[oldBrowserIndex+1].state.tmExplorerView));
   history.go(oldBrowserIndex-pageIndex);
   await tick();await tick();await tick();
   assert.equal(pageIndex,oldBrowserIndex);
@@ -55,12 +55,15 @@ class ExplorerHistorySearchRegressionTests(unittest.TestCase):
   assert.equal(elements['ex-forward'].disabled,false,'old browser history entry retains a valid forward direction');
   elements['ex-forward'].onclick();await tick();await tick();await tick();
   assert.equal(pageIndex,oldBrowserIndex+1);
-  assert.equal(history.state.tmExplorerView.selected.id,nextSelected,'forward restores the adjacent browser snapshot');
+  assert.deepEqual(JSON.parse(JSON.stringify(history.state.tmExplorerView)),nextView,
+    'forward restores the full adjacent snapshot, including an unselected view');
 """)
 
     def test_late_search_response_cannot_replace_newer_query(self):
         self._run(r"""
   const query=elements['ex-query'],box=elements['ex-results'],pending=[];
+  const descendants=element=>[element,...(element.children||[]).flatMap(descendants)];
+  const resultText=()=>descendants(box).map(child=>String(child.textContent||'')).join(' ');
   const nativeSetTimeout=ctx.setTimeout;
   ctx.setTimeout=(fn,delay)=>nativeSetTimeout(fn,delay===250?0:delay);
   ctx.fetch=url=>new Promise(resolve=>pending.push({url,resolve}));
@@ -70,12 +73,14 @@ class ExplorerHistorySearchRegressionTests(unittest.TestCase):
   assert.equal(pending.length,2,'second debounced request started');
   pending[1].resolve({ok:true,json:async()=>({results:[{kind:'doc',id:'new',label:'NEW_RESULT',excerpt:'new excerpt'}],partial:true})});
   await tick();await tick();
-  assert(box.children.some(child=>String(child.textContent||'').includes('NEW_RESULT')),'new query is displayed');
+  assert(resultText().includes('NEW_RESULT'),'new query is displayed');
+  assert(box.children.some(child=>child.className==='ex-search-section'),
+    'results are grouped in a visible content section');
   assert(box.children.some(child=>child.className==='ex-search-warning'),'partial-index warning is visible');
   pending[0].resolve({ok:true,json:async()=>({results:[{kind:'doc',id:'old',label:'OLD_RESULT',excerpt:'old excerpt'}],partial:false})});
   await tick();await tick();
-  assert(box.children.some(child=>String(child.textContent||'').includes('NEW_RESULT')),'late old response cannot replace new results');
-  assert(!box.children.some(child=>String(child.textContent||'').includes('OLD_RESULT')),'stale result is discarded');
+  assert(resultText().includes('NEW_RESULT'),'late old response cannot replace new results');
+  assert(!resultText().includes('OLD_RESULT'),'stale result is discarded');
 """)
 
 

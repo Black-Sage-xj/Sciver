@@ -70,12 +70,20 @@ ADDITIONAL = r"""
   latestGraph.events['node:click']({target:{id:'external-dated'}});await tick();await tick();
   assert(elements['ex-reader'].innerHTML.includes('按最近的明确 Cycle 时间锚点估算'),
     'clicking External explains timestamp-based placement');
-  latestGraph.camera.zoom=.60;latestGraph.events.aftertransform();
+  // At the current readable-card boundary, overview and detail are exclusive.
+  const detailBoundary=Number(fs.readFileSync(process.argv[1],'utf8')
+    .match(/const DETAIL_MIN_ZOOM=([0-9.]+);/)[1]);
+  const beforeZoomRenders=latestGraph.renders;
+  latestGraph.camera.zoom=detailBoundary;latestGraph.events.aftertransform();
   assert.equal(elements['ex-compact-labels'].hidden,false);
   assert.equal(elements['ex-source-rail'].hidden,true);
-  latestGraph.camera.zoom=.601;latestGraph.events.aftertransform();
+  latestGraph.camera.zoom=detailBoundary+.001;latestGraph.events.aftertransform();
   assert.equal(elements['ex-compact-labels'].hidden,true);
   assert.equal(elements['ex-source-rail'].hidden,false);
+  assert(latestGraph.getNodeData('external-dated').style.labelText,
+    'External prose becomes readable above the detail boundary');
+  assert.equal(latestGraph.renders,beforeZoomRenders,
+    'changing semantic labels never recomputes graph layout');
 """
 class ExternalTimeTest(unittest.TestCase):
     @unittest.skipUnless(shutil.which('node'), 'Node.js required')

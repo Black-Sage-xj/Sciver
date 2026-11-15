@@ -81,6 +81,8 @@ def _worker_cycle_claim(root: Path, worker: dict[str, Any]) -> dict[str, Any] | 
 
 def _eligible(root: Path, worker: dict[str, Any]) -> tuple[Path, dict[str, Any]] | None:
     from .supervisor_recovery import operational_incident
+    if worker.get('close_requested') or worker.get('dismissed'):
+        return None
     if worker.get('status') not in {'FAILED', 'NEEDS_ATTENTION'} or worker.get('process_alive'):
         return None
     cycle = str(worker.get('current_cycle') or '')

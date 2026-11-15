@@ -50,6 +50,7 @@ def _layout(store: ScienceGraphStore, node_id: str, legacy: dict[str, Any]) -> d
 def _h_text(node: dict[str, Any]) -> str:
     """Render a concise scientific guide; complete claims and evidence stay in linked files."""
     from .hypothesis_display import normalize_hypothesis_display
+    from .outcome_guide import graph_summary_text, hypothesis_reading_summary
 
     status, preferred, frontier_reason = _short_status(node.get("frontiers", []))
     whole = node.get("whole_h_assessment") or {}
@@ -65,6 +66,7 @@ def _h_text(node: dict[str, Any]) -> str:
         fallback_title=node.get("title"),
         scientific_status=node.get("scientific_status"), adjudicated=adjudicated,
     )
+    summary = hypothesis_reading_summary({**node, "summary": summary})
 
     def preview(value: object, limit: int) -> str:
         text = " ".join(str(value or "").split())
@@ -86,6 +88,9 @@ def _h_text(node: dict[str, Any]) -> str:
     dossier_ref = node.get("dossier_ref") or f"notes/hypotheses/{node['id']}"
     lines += ["", "[[" + str(dossier_ref) + "]]"]
 
+    from .hypothesis_lineage import source_role_text
+    if role_text := source_role_text(node):
+        lines.append(role_text)
     outcome = node.get("outcome")
     if outcome:
         verdict_label = ", ".join(outcome.get("original_verdicts") or []) or str(outcome["verdict"])
@@ -93,17 +98,21 @@ def _h_text(node: dict[str, Any]) -> str:
             verdict_label += "（兼容记录为 " + str(outcome["verdict"]) + "）"
         lines += ["", "---", "", "## Cycle " + str(outcome["cycle_id"]) +
                   " · Outcome · " + verdict_label]
-        if outcome.get("summary"):
+        if guide := graph_summary_text(outcome):
+            lines += ["", guide]
+        elif outcome.get("summary"):
             lines += ["", preview(outcome["summary"], 180)]
         questions = outcome.get("open_questions") or []
-        if questions:
+        if questions and not outcome.get("graph_summary"):
             lines += ["", "**未解决：** " + preview(questions[0], 100)]
         if outcome.get("document_ref"):
             lines += ["", "[[" + str(outcome["document_ref"]) + "]]"]
         if outcome.get("report_ref"):
             lines += ["", "[[" + str(outcome["report_ref"]) + "]]"]
-    if status == "parked" and frontier_reason:
-        lines += ["", "**暂停原因：** " + preview(frontier_reason, 90)]
+    if status:
+        label = {"active": "活跃", "parked": "暂缓", "closed": "关闭"}[status]
+        lines += ["", f"**分支状态：** {label}；" +
+                  (frontier_reason or "原因未记录。")]
     if node.get("cycle_count"):
         lines += ["", "Cycle Outcome 共 " + str(node["cycle_count"]) + " 条"]
         for prior in node.get("cycle_outcomes", [])[-4:-1]:
@@ -249,6 +258,8 @@ def canvas_projection(store: ScienceGraphStore) -> dict[str, Any]:
             "toNode": target, "toSide": "left", "edge_type": kind, **extra,
         })
     for e in view["edges"]:
+        if json.loads(e["provenance_json"]).get("lineage_role") == "other":
+            continue
         link(e["id"], e["source_hypothesis"], e["target_hypothesis"],
              "hypothesis_evolution",
              evolution_operator=e["evolution_operator"],

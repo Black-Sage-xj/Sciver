@@ -53,6 +53,7 @@ _INPUT_DESCRIPTIONS = {
     "hypothesis": "Reporter 要叙述的当前 Hypothesis。",
     "scientific_synthesis": "Cycle 终局后的科学综合结论，供 Reporter 形成可读报告。",
     "evidence_scope_digest": "已裁决 Evidence 的范围与限制摘要，防止 Reporter 把结论写得过强。",
+    "report_materials": "Reporter 专用的已登记证据素材索引：图片、表格和脚本的引用、类型、可用状态与稳定图片入口；不注入原始数据内容。",
     "terminal_decision": "已经确定的终局 Decision；Reporter 只能整理表达，不能改 verdict。",
     "report_title": "已经生成的人类可读报告标题。",
     "report_summary": "已经生成的人类可读报告摘要。",

@@ -16,6 +16,7 @@ def write_hypothesis_dossier(
     display_title: str = "", display_summary: str = "", candidate_id: str = "",
     evolution_operator: str = "", lineage_anchor_node_id: str = "",
     lineage_anchor_node_ids: list[str] | None = None,
+    lineage_main_node_id: str = "", lineage_other_node_ids: list[str] | None = None,
 ) -> str:
     """Create one vault-relative H dossier and append non-duplicated frozen Cycle snapshots."""
     if not re.fullmatch(r"H-\d{4,}", hypothesis_id):
@@ -35,6 +36,9 @@ def write_hypothesis_dossier(
     ))
     if lineage_anchor_node_id and lineage_anchor_node_id not in source_ids:
         source_ids.insert(0, lineage_anchor_node_id)
+    role_lines = (["- Main 来源（分支连线）：" + lineage_main_node_id,
+                   "- 其它来源（仅追溯）：" + ("、".join(lineage_other_node_ids or []) or "（无）")]
+                  if lineage_main_node_id else [])
     title, summary = normalize_hypothesis_display(
         hypothesis_id, title=display_title, summary=display_summary,
         fallback_title=display_title or hypothesis_id,
@@ -53,6 +57,7 @@ def write_hypothesis_dossier(
         "- H ID：" + hypothesis_id,
         "- Cycle ID：" + cycle_id,
         "- Candidate ID：" + (candidate_id or "（未知）"),
+        *role_lines,
         "- 上游锚点：" + parent_text,
         "- 上游谱系：" + ("、".join(
             f"{source_id}（{evolution_operator or 'unknown'}）" for source_id in source_ids
@@ -111,6 +116,12 @@ def write_hypothesis_dossier(
                 anchor_index = next((i for i, line in enumerate(cycle_lines) if line.startswith("- 上游锚点：")), -1)
                 if anchor_index >= 0:
                     cycle_lines.insert(anchor_index + 1, "- 上游谱系：" + typed_text)
+            if role_lines:
+                cycle_lines = [line for line in cycle_lines
+                               if not line.startswith(("- Main 来源", "- 其它来源"))]
+                anchor_index = next(i for i, line in enumerate(cycle_lines)
+                                    if line.startswith("- 上游锚点："))
+                cycle_lines[anchor_index:anchor_index] = role_lines
             # splitlines() preserves one trailing empty element; subtract it when
             # restoring the original newline count to keep retries byte-idempotent.
             migrated = prefix + "\n".join(cycle_lines) + ("\n" * max(0, trailing_newlines - 1)) + suffix

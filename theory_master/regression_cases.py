@@ -13,12 +13,20 @@ import shutil
 import sys
 import subprocess
 import sysconfig
+import os
+import tempfile
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from importlib.resources import files
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
-CASES_ROOT = PACKAGE_ROOT / "regression_cases"
+# Wheels carry the public fixture beside the SDK; retain support for older
+# installations that placed it under the interpreter's shared data directory.
+_BUNDLED_CASES = files("theory_master").joinpath("resources", "regression_cases")
+CASES_ROOT = (Path(str(_BUNDLED_CASES)) if _BUNDLED_CASES.joinpath("index.json").is_file()
+              else PACKAGE_ROOT / "regression_cases")
 if not (CASES_ROOT / "index.json").is_file():
     CASES_ROOT = Path(sysconfig.get_path("data")) / "share/sciver/regression_cases"
 INDEX_PATH = CASES_ROOT / "index.json"
@@ -160,6 +168,46 @@ def initialize_case(selector: str | int, destination: Path, *, executable: str =
     return root
 
 
+
+
+def create_test_instance(selector: str = "Test0", destination: Path | None = None, *,
+                         instances_root: Path | None = None, start: bool = True):
+    """Create a fresh fixture task without inheriting scientific state or sessions."""
+    from .task import bootstrap, task_id_scope_root
+    from .specification import TaskSpec
+    case = resolve_case(selector)
+    if destination is None:
+        if instances_root is None:
+            from .onboarding import default_workspace
+            configured = os.environ.get("SCIVER_TEST_ROOT", "").strip()
+            search = os.environ.get("THEORY_MASTER_SEARCH_ROOT", "").strip()
+            instances_root = (Path(configured).expanduser() if configured else
+                              Path(search).expanduser() / "test-instances" if search else
+                              default_workspace() / "test-instances")
+        instances_root = instances_root.expanduser().resolve()
+        instances_root.mkdir(parents=True, exist_ok=True)
+        destination = Path(tempfile.mkdtemp(
+            prefix=case.case_id.replace("_", "") + "-" + datetime.now().strftime("%Y%m%d-%H%M%S") + "-",
+            dir=instances_root))
+    root = materialize_case(case.case_id, destination)
+    scope = task_id_scope_root(root / "research_plan.md")
+    if scope == root or not root.is_relative_to(scope):
+        scope = root.parent
+    binding = bootstrap(root / "research_plan.md", allocation_root=scope)
+    from .onboarding import install_benchmark_inputs
+    install_benchmark_inputs(binding)
+    record = {"case": case.case_id, "task_id": binding.master_id,
+              "task_home": str(root), "research_root": str(binding.research_root),
+              "created_at": datetime.now().astimezone().isoformat(), "operation": "run"}
+    (root / ".theory-master" / "test-instance.json").write_text(json.dumps(record, indent=2) + "\n")
+    outcome = {"status": "prepared"}
+    if start:
+        from .runtime_manager import launch_managed_runtime
+        outcome = launch_managed_runtime(TaskSpec.from_config(binding.config_path),
+                                         operation="run", identifier=str(binding.master_id))
+        if outcome.get("status") != "started":
+            raise RegressionCaseError(f"new test task {binding.master_id} was created but launch failed: {outcome.get('status')}")
+    return binding, outcome
 
 
 def grade_case(selector: str | int, submission: Path) -> dict[str, Any]:

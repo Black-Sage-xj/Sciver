@@ -315,5 +315,193 @@ class RefactorGuardrailsTest(unittest.TestCase):
                 self.assertEqual(json_object(raw), normalize_agent_output(raw).value)
 
 
+class ReporterPresentationTest(unittest.TestCase):
+    def test_registered_materials_preserve_eligibility_and_reporter_only_access(self):
+        from theory_master.report_materials import report_materials
+        from theory_master.prompt_stages import build_initial_prompt, build_continuation_prompt
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            figure = root / "图 (a).svg"
+            figure.write_text('<svg xmlns="http://www.w3.org/2000/svg"/>')
+            table = root / "full.csv"
+            table.write_text("private_raw_array,87654321\n")
+            context = {"cycle_workspace": str(root), "evidence_manifest": {"records": [
+                {"evidence_id": "E-good", "adjudicable": True,
+                 "summary": "A: 1 ms; B: 2 ms; uncertainty is SEM",
+                 "artifact_pointers": [str(figure), str(table)],
+                 "artifact_roles": [{"path": str(table), "role": "result"}]},
+                {"evidence_id": "E-excluded", "adjudicable": False,
+                 "artifact_pointers": ["secret.svg"]},
+            ]}}
+            projected = stage_context("reporter", "report", context)
+            assets = projected["report_materials"]
+            self.assertEqual(assets, report_materials(context))
+            self.assertEqual([row["evidence_id"] for row in assets], ["E-good"])
+            self.assertEqual([a["kind"] for a in assets[0]["assets"]], ["figure", "table"])
+            self.assertEqual(assets[0]["assets"][0]["status"], "available")
+            self.assertIn("%28a%29.svg", assets[0]["assets"][0]["image_ref"])
+            self.assertNotIn("87654321", json.dumps(projected))
+            self.assertNotIn("secret.svg", json.dumps(projected))
+            self.assertNotIn("report_materials", stage_context("judge", "terminal_assessment", context))
+            self.assertNotIn("report_materials", stage_context("research_lead", "cycle_synthesis", context))
+            contract = role_contract("reporter", phase="report")
+            shared = dict(role="reporter", stage="report", contract_ref=contract.contract_id,
+                          contract_schema=contract.prompt_projection(), context=projected)
+            for prompt in (build_initial_prompt(prefix="Test", write_rule="No file writes.", **shared),
+                           build_continuation_prompt(**shared)):
+                self.assertIn('"report_materials"', prompt)
+                self.assertIn("Do not write a reproduction index", prompt)
+                self.assertIn("four ordered sections", prompt)
+                self.assertIn(assets[0]["assets"][0]["image_ref"], prompt)
+
+    def test_missing_ambiguous_and_external_materials_are_explicit(self):
+        from theory_master.report_materials import report_materials, normalize_report_images
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            first, second = root / "a", root / "b"
+            first.mkdir(); second.mkdir()
+            for folder in (first, second):
+                (folder / "same.svg").write_text("different image")
+            context = {"cycle_workspace": str(first), "research_root": str(second),
+                       "evidence_manifest": {"records": [{"adjudicable": True,
+                           "evidence_id": "E-one", "artifact_pointers": [
+                               "same.svg", "missing.png", "https://example.org/image.png",
+                               "https://example.org/image%20(a).png"]}]}}
+            materials = report_materials(context)
+            self.assertEqual([a["status"] for a in materials[0]["assets"]],
+                             ["ambiguous", "missing", "external", "external"])
+            body, warnings = normalize_report_images(
+                "![Missing](missing.png) ![[same.svg|480]] ![External](https://example.org/image.png) "
+                "![Encoded](https://example.org/image%20(a).png) "
+                "![Invented](not-registered.svg)", materials, context)
+            self.assertNotIn("![Missing]", body)
+            self.assertNotIn("![[same.svg", body)
+            self.assertIn("![External](https://example.org/image.png)", body)
+            self.assertIn("![Encoded](https://example.org/image%20%28a%29.png)", body)
+            self.assertEqual(warnings, ["missing.png", "same.svg", "not-registered.svg"])
+
+    def test_image_paths_relocate_without_rewriting_prose_code_or_files(self):
+        from theory_master.report_materials import report_materials, normalize_report_images
+        from urllib.parse import unquote
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            figure = root / "图 (a).svg"
+            figure.write_text('<svg xmlns="http://www.w3.org/2000/svg"/>')
+            context = {"cycle_workspace": str(root), "evidence_manifest": {"records": [
+                {"evidence_id": "E-1", "adjudicable": True, "artifact_pointers": [str(figure)]}]}}
+            materials = report_materials(context)
+            ref = materials[0]["assets"][0]["image_ref"]
+            code = '\n```md\n![Example](unregistered.svg)\n```\n`![[literal.svg]]`'
+            body = f'Bounded result.\n![Curve]({ref} "Title")\n![[图 (a).svg|480]]' + code
+            stable, warnings = normalize_report_images(body, materials, context)
+            self.assertEqual(warnings, [])
+            self.assertIn(code, stable)
+            self.assertIn(f'![[{figure}|480]]', stable)
+            note_body, warnings = normalize_report_images(stable, materials, context, note_dir=root / "notes")
+            self.assertIn('![Curve](../', note_body)
+            self.assertIn('![[../图 (a).svg|480]]', note_body)
+            self.assertIn('../图 (a).svg "Title")', unquote(note_body))
+            self.assertIn(code, note_body)
+            self.assertEqual(warnings, [])
+            self.assertEqual(figure.read_text(), '<svg xmlns="http://www.w3.org/2000/svg"/>')
+
+    def test_saved_numerical_theoretical_and_missing_asset_reports(self):
+        from theory_master.science_graph_store import ScienceGraphStore
+        from theory_master.report_materials import report_materials
+        from urllib.parse import unquote
+
+        class Reporter(ReportingMixin):
+            def _graph_database_path(self):
+                return self.database
+
+            def _evidence_context(self):
+                return self.evidence_context
+
+            def _path_anchors(self):
+                return {"repo_root": str(self.root), "task_home": str(self.root),
+                        "cycle_workspace": str(self.cycle_dir / "workspace")}
+
+            def _call(self, *args, **kwargs):
+                raise AssertionError("The deterministic fixture must never invoke a model")
+
+            def _emit(self, *args, **kwargs):
+                pass
+
+        for sample in ("numerical", "theoretical", "missing"):
+            with self.subTest(sample=sample), tempfile.TemporaryDirectory() as temp:
+                reporter = Reporter()
+                reporter.root = root = Path(temp)
+                reporter.cycle_dir = root / "research" / "1"
+                workspace = reporter.cycle_dir / "workspace"
+                workspace.mkdir(parents=True)
+                (reporter.cycle_dir / "checkpoints").mkdir()
+                reporter.notes_dir = root / "notes"
+                reporter.branch_canvas = None
+                reporter.spec = SimpleNamespace(notes_mirror_dir=None)
+                reporter.database = root / "science_graph.sqlite3"
+                with ScienceGraphStore(reporter.database) as store:
+                    store.add_hypothesis("H-0001", title="Frozen claim")
+                    store.register_cycle_hypothesis(cycle_id="1", hypothesis_id="H-0001")
+                before_graph = reporter.database.read_bytes()
+                figure = workspace / "对比 图.svg"
+                figure.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"/>')
+                table = workspace / "full.csv"
+                table.write_text("raw_private,987654321\n")
+                script = workspace / "analysis.py"
+                script.write_text("# original analysis\n")
+                evidence = {"evidence_id": "E-1", "adjudicable": True,
+                            "summary": "A=1 ms, B=2 ms in the tested domain",
+                            "scope": "tested domain", "limitations": "one supplied sample",
+                            "artifact_pointers": [] if sample == "theoretical" else [str(figure), str(table), str(script)]}
+                reporter.evidence_context = {"evidence_manifest": {"records": [evidence]}}
+                materials = report_materials({**reporter._path_anchors(), **reporter.evidence_context})
+                results = "The conditional derivation establishes the frozen bound."
+                if sample != "theoretical":
+                    results = f"![Comparison]({materials[0]['assets'][0]['image_ref']})\n\n" \
+                              "图 1：比较 A 与 B 的耗时；结果来自 E-1，同一测试条件。\n\n" \
+                              "|条件|耗时（ms）|\n|---|---|\n|A|1|\n|B|2|"
+                if sample == "missing":
+                    figure.unlink()
+                body = "## 结论摘要\nResult within the tested domain.\n\n" \
+                       "## 问题与必要条件\nSame supplied conditions.\n\n" \
+                       f"## 主要结果\n{results}\n\n" \
+                       "## 解释与限制\nOne supplied sample; no extrapolation."
+                report = {"title": "Comparison of conditional results", "summary": body, "graph_summary": {
+                    "conclusion": "Result within the tested domain.", "basis": "Supplied bounded evidence.",
+                    "scope": "One supplied sample; no extrapolation.", "open_question": "",
+                }}
+                role_contract("reporter", phase="report").validate(report, {})
+                state = {"role_outputs": {"reporter": report}, "last_seq": 1,
+                         "scientific_model_version_in": 1, "scientific_model_version_out": 2,
+                         "scientific_synthesis": {"conclusions": ["bounded result"]}}
+                branch = {"title": "Frozen claim", "hypothesis_ref": "H-0001", "decisive_test": "Frozen test"}
+                reporter._write_cycle_report(state, branch, {"verdict": "supported", "rationale": "Bounded evidence"},
+                                             "Frozen claim", "Frozen statement", "supported")
+                note = Path(branch["note_path"]).read_text()
+                headings = ["## 结论摘要", "## 问题与必要条件", "## 主要结果", "## 解释与限制", "## 复现索引"]
+                self.assertEqual([note.index(h) for h in headings], sorted(note.index(h) for h in headings))
+                self.assertEqual(note.count("## 复现索引"), 1)
+                self.assertEqual(reporter.database.read_bytes(), before_graph)
+                self.assertEqual(state["cycle_outcome_record"]["verdict"], "supported")
+                self.assertEqual(state["cycle_outcome_record"]["summary"], branch["summary"])
+                self.assertEqual(state["role_outputs"]["reporter"]["summary"], body)
+                self.assertNotIn("987654321", note)
+                self.assertNotIn("## 复现索引", state["cycle_outcome_record"]["summary"])
+                if sample == "numerical":
+                    self.assertIn("![Comparison](../research/1/workspace/", note)
+                    self.assertIn("图 1：", note)
+                    self.assertIn("|A|1|", note)
+                    self.assertIn(str(figure), unquote(report["summary"]))
+                    self.assertIn(str(table), note)
+                    self.assertIn(str(script), note)
+                elif sample == "theoretical":
+                    self.assertNotIn("![", note)
+                    self.assertNotIn("|---|", note)
+                else:
+                    self.assertNotIn("![Comparison]", note)
+                    self.assertIn("文件缺失", note)
+                    self.assertIn("图片引用不可用", note)
+
+
 if __name__ == "__main__":
     unittest.main()

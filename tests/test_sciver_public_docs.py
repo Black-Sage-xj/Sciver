@@ -28,14 +28,12 @@ class SciverPublicDocsTest(unittest.TestCase):
         for rel_path in BRANDED_DOCS:
             with self.subTest(path=rel_path):
                 contents = (ROOT / rel_path).read_text(encoding="utf-8")
-                if rel_path != "README.md":
-                    self.assertIn("Sciver", contents.splitlines()[0])
                 if rel_path == "README.md":
                     # The old executable name is intentionally documented as an alias.
-                    self.assertEqual(contents.count("TheoryMaster"), 1)
-                    self.assertIn("Sciver", contents[:1500])
-                    self.assertIn("`TheoryMaster`/`tm` naming", contents)
+                    self.assertIn('<h1 align="center">Sciver</h1>', contents)
+                    self.assertIn("historical `TheoryMaster`/`tm` naming", contents)
                 else:
+                    self.assertIn("Sciver", contents.splitlines()[0])
                     self.assertNotRegex(contents, r"\bTheoryMaster\b")
 
     def test_existing_internal_paths_are_preserved_in_examples(self):

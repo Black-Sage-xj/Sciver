@@ -14,6 +14,9 @@ from theory_master.contract_closure import close_agent_output
 from theory_master.core import FakeBackend, TaskSpec, Workflow
 from theory_master.role_registry import ROLES
 
+GUIDE = {"conclusion": "The bounded result holds.", "basis": "Frozen comparison.",
+         "scope": "The supplied test domain.", "open_question": ""}
+
 
 class RoleContractTest(unittest.TestCase):
     def test_every_runtime_role_has_a_versioned_stage_contract(self):
@@ -112,7 +115,7 @@ class RoleContractTest(unittest.TestCase):
         self.assertNotIn("recommended_start_capability", judge.prompt_schema)
         self.assertNotIn("goal_advance", judge.prompt_schema)
         reporter = role_contract("reporter", phase="report")
-        self.assertEqual(set(reporter.prompt_schema), {"title", "summary"})
+        self.assertEqual(set(reporter.prompt_schema), {"title", "summary", "graph_summary"})
         with self.assertRaisesRegex(ValueError, "no phase contract"):
             role_contract("reporter", phase="canvas_maintenance")
         self.assertIn("action=replace supplies only model.summary", projection)
@@ -256,9 +259,10 @@ class RoleContractTest(unittest.TestCase):
     def test_frontier_proposal_lineage_prompt_and_legacy_validation(self):
         frontier = role_contract("research_lead", phase="frontier_proposal")
         prompt = frontier.prompt_projection()
-        self.assertIn('"lineage_anchor_node_ids":', prompt)
+        self.assertIn('"lineage_main_node_id":', prompt)
+        self.assertIn('"lineage_other_node_ids":', prompt)
         self.assertNotIn('"lineage_anchor_node_id":', prompt)
-        self.assertIn("include that H in lineage_anchor_node_ids", prompt)
+        self.assertIn("include that H in main or other sources", prompt)
         self.assertNotIn("lineage_anchor_node_id", frontier.prompt_schema["candidates"][0])
         self.assertIn("lineage_anchor_node_id", frontier.validation_schema["candidates"][0])
 
@@ -363,7 +367,7 @@ class RoleContractTest(unittest.TestCase):
         frontier_prompt = frontier.prompt_projection()
         self.assertIn("Use evolution_operator only from: refine | specialize | generalize | alternative | combine | derive | counter_hypothesis", frontier_prompt)
         self.assertIn("For a root H, omit all lineage fields", frontier_prompt)
-        self.assertIn('"lineage_anchor_node_ids":', frontier_prompt)
+        self.assertIn('"lineage_main_node_id":', frontier_prompt)
         self.assertNotIn('"lineage_anchor_node_id":', frontier_prompt)
         self.assertIn("omit for root H", frontier_prompt)
         self.assertIn("The SDK owns H identity", frontier_prompt)
@@ -530,7 +534,7 @@ class RoleContractTest(unittest.TestCase):
 
     def test_reporter_summary_rejects_machine_payload_dumps(self):
         contract = role_contract("reporter", phase="report")
-        contract.validate({"title": "Readable result", "summary": "## 结论\n\narm=4 increases beta1 under the frozen comparison."}, {})
+        contract.validate({"title": "Readable result", "summary": "## 结论\n\narm=4 increases beta1 under the frozen comparison.", "graph_summary": GUIDE}, {})
         with self.assertRaisesRegex(ValueError, "human-first prose"):
             contract.validate({"title": "Bad report", "summary": "## ModelPatch JSON\n\n```json\n{\"status\":\"supported\"}\n```"}, {})
         with self.assertRaisesRegex(ValueError, "human-first prose"):
@@ -538,8 +542,8 @@ class RoleContractTest(unittest.TestCase):
 
     def test_reporter_is_narrative_only_and_canvas_phase_is_not_registered(self):
         contract = role_contract("reporter", phase="report")
-        self.assertEqual(set(contract.prompt_schema), {"title", "summary"})
-        contract.validate({"title": "Readable result", "summary": "Bounded result within the frozen scope."}, {})
+        self.assertEqual(set(contract.prompt_schema), {"title", "summary", "graph_summary"})
+        contract.validate({"title": "Readable result", "summary": "Bounded result within the frozen scope.", "graph_summary": GUIDE}, {})
         with self.assertRaisesRegex(ValueError, "no phase contract"):
             role_contract("reporter", phase="canvas_maintenance")
 
@@ -825,7 +829,7 @@ class RoleContractTest(unittest.TestCase):
     def test_active_stage_contracts_reject_undeclared_fields_but_keep_free_form_results(self):
         reporter = role_contract("reporter", phase="report")
         with self.assertRaisesRegex(ValueError, "unsupported fields: frontier_status"):
-            reporter.validate({"title": "T", "summary": "Readable prose", "frontier_status": "closed"}, {})
+            reporter.validate({"title": "T", "summary": "Readable prose", "graph_summary": GUIDE, "frontier_status": "closed"}, {})
 
         synthesis = role_contract("research_lead", phase="cycle_synthesis")
         valid_synthesis = {

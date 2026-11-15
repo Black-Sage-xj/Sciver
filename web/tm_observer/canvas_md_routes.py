@@ -11,6 +11,52 @@ from urllib.parse import parse_qs
 
 from .canvas_md import ExplorerError, build_index_payload, read_document, search_payload, vault_root
 
+
+IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+               ".gif": "image/gif", ".webp": "image/webp", ".svg": "image/svg+xml"}
+MAX_IMAGE_BYTES = 20 * 1024 * 1024
+
+
+def canvas_md_image_get(route: str, raw_query: str, search_root: Path,
+                        state: dict[str, Any]) -> tuple[bytes, str]:
+    parts = route.strip("/").split("/")
+    if len(parts) != 5 or parts[:3] != ["api", "canvas-md", "tasks"] or parts[4] != "image":
+        raise ExplorerError("API 不存在", 404)
+    root = vault_root(search_root, parts[3], state)
+    run = next(r for r in state["runs"] if r.get("observer_id") == parts[3])
+    research = Path(run["research_root"]).resolve()
+    query = parse_qs(raw_query, keep_blank_values=True)
+    target = (query.get("path") or [""])[0]
+    source = (query.get("source") or [""])[0]
+    if not target or "\x00" in target or "\x00" in source:
+        raise ExplorerError("无效图片路径", 400)
+    # Only the registered task and its bound research directory are readable.
+    roots = (root, research)
+    candidates = [root / target, research / target, search_root.resolve() / target]
+    if source and (query.get("vault") or [""])[0] != "1":
+        candidates.insert(0, root / Path(source).parent / target)
+    allowed = False
+    for candidate in candidates:
+        path = candidate.resolve()
+        if not any(path.is_relative_to(anchor) for anchor in roots):
+            continue
+        allowed = True
+        if not path.is_file():
+            continue
+        mime = IMAGE_TYPES.get(path.suffix.lower())
+        if not mime:
+            raise ExplorerError("不支持的图片类型", 415)
+        try:
+            with path.open("rb") as stream:
+                data = stream.read(MAX_IMAGE_BYTES + 1)
+        except OSError as exc:
+            raise ExplorerError("无法读取图片", 404) from exc
+        if len(data) > MAX_IMAGE_BYTES:
+            raise ExplorerError("图片超过预览大小限制", 413)
+        return data, mime
+    raise ExplorerError("图片不存在" if allowed else "图片路径不在此任务内", 404 if allowed else 403)
+
+
 def running_worker_markers(root: Path, observer_id: str, state: dict[str, Any]) -> list[dict[str, str]]:
     """Live read-only Worker -> H assignment for a Research Explorer list.
 

@@ -96,6 +96,48 @@ def print_inventory(tests: list[unittest.TestCase]) -> None:
         print(f"invariant overlay from mixed modules: {invariant_overlay}")
 
 
+class CategoryCollection:
+    """Apply semantic categories after pytest has collected every module.
+
+    Collection must include function-based pytest cases and must expose import
+    errors even when the affected module is outside the requested category.
+    """
+
+    def __init__(self, category: str, inventory: bool = False):
+        self.category = category
+        self.inventory = inventory
+
+    @staticmethod
+    def test_id(item) -> str:
+        return ".".join((Path(item.path).stem, *item.nodeid.split("::")[1:]))
+
+    def pytest_collection_modifyitems(self, session, config, items):
+        known_ids = {self.test_id(item) for item in items}
+        if not session.testsfailed:
+            stale = sorted(INVARIANT_TEST_IDS - known_ids)
+            if stale:
+                import pytest
+                raise pytest.UsageError("stale invariant test ids: " + ", ".join(stale))
+        if self.inventory:
+            counts = Counter(MODULE_CATEGORIES.get(Path(item.path).stem) for item in items)
+            invariant_overlay = sum(
+                MODULE_CATEGORIES.get(Path(item.path).stem) != "invariant"
+                and "invariant" in categories_for_test_id(self.test_id(item))
+                for item in items
+            )
+            print(f"total loaded: {len(items)} (pytest functions and unittest cases)")
+            for category in CATEGORIES:
+                print(f"{category}: {counts[category]}")
+            print(f"invariant overlay from mixed modules: {invariant_overlay}")
+        if self.category != "all":
+            selected, deselected = [], []
+            for item in items:
+                target = selected if self.category in categories_for_test_id(self.test_id(item)) else deselected
+                target.append(item)
+            items[:] = selected
+            config.hook.pytest_deselected(items=deselected)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run Sciver tests by semantic test-architecture category."
@@ -115,7 +157,7 @@ def main() -> int:
         "-q",
         "--quiet",
         action="store_true",
-        help="use compact unittest output",
+        help="use compact pytest output",
     )
     args = parser.parse_args()
 
@@ -125,36 +167,38 @@ def main() -> int:
             print(f"test architecture error: {error}", file=sys.stderr)
         return 2
 
-    tests, import_errors = load_all_tests(tests_root=TESTS_ROOT)
-    print_import_diagnostics(import_errors)
-    known_test_ids = {test.id() for test in tests}
-    # A failed module import cannot prove that its invariant IDs were deleted.
-    stale_invariant_ids = sorted(INVARIANT_TEST_IDS - known_test_ids) if not import_errors else []
-    if stale_invariant_ids:
-        for test_id in stale_invariant_ids:
-            print(f"test architecture error: stale invariant test id: {test_id}", file=sys.stderr)
+    try:
+        import pytest
+    except ImportError:
+        print('Install test dependencies with: python -m pip install -e ".[test]"', file=sys.stderr)
         return 2
+    web_root = str(THEORY_MASTER_ROOT / "web")
+    if web_root not in sys.path:
+        sys.path.insert(0, web_root)
+    command = [str(TESTS_ROOT), "-q" if args.quiet else "-ra", "--tb=short"]
     if args.list:
-        print_inventory(tests)
-        return 1 if import_errors else 0
+        command += ["--collect-only", "-q"]
+    plugins = [CategoryCollection(args.category, args.list)]
+    if args.list:
+        class CompactInventory:
+            @pytest.hookimpl(wrapper=True, tryfirst=True)
+            def pytest_collection_finish(self, session):
+                # Keep complete discovery and its error reports, but suppress
+                # pytest's per-test listing after our category inventory. The
+                # original selection is restored before pytest computes exit.
+                collected = session.items
+                session.items = []
+                try:
+                    return (yield)
+                finally:
+                    session.items = collected
 
-    suite = filtered_suite(tests, args.category)
-    selected = suite.countTestCases()
-    print(
-        f"TheoryMaster test category={args.category} selected={selected} "
-        f"import_errors={len(import_errors)}", flush=True,
-    )
-    runner = unittest.TextTestRunner(verbosity=1 if args.quiet else 2)
-    result = runner.run(suite)
-    print(
-        f"RESULT category={args.category} executed={result.testsRun} "
-        f"failures={len(result.failures)} errors={len(result.errors)} "
-        f"skipped={len(result.skipped)} import_errors={len(import_errors)}",
-        flush=True,
-    )
-    # Filtering a category must never silently hide failures to import another
-    # registered test module. A green gate requires complete suite discovery.
-    return 0 if result.wasSuccessful() and not import_errors else 1
+        plugins.append(CompactInventory())
+    print(f"Sciver test category={args.category}", flush=True)
+    result = pytest.main(command, plugins=plugins)
+    # Keep the CLI's failure convention, including import/collection errors and
+    # accidental empty selections. Pytest's full diagnostics remain visible.
+    return 0 if result == 0 else 1
 
 
 if __name__ == "__main__":

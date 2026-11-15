@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 from . import run_monitor
+from .onboarding_ui import first_use_panel
 from .run_controls_ui import control_panel, quota_auto_switch, settings_panel, can_resume_state
 from .important_events import read_important_events, is_milestone, incident_cases
 from .important_review_ui import script as important_review_script
@@ -132,6 +133,7 @@ def run_index_body(state: dict[str, Any], *, query: str = "", status: str = "", 
     )
     return f'''
 <style>{SUPERVISOR_STYLE}</style>
+{first_use_panel() if not all_runs else ""}
 <section class="tm-run-workspace" aria-label="Sciver tasks">
   <div class="tm-run-heading"><div><strong>任务清单</strong><p>{len(filtered)} 个任务 · 每页 {PAGE_SIZE} 个 · 只读监控</p></div>{live_link}<a class="tm-run-refresh" href="/research-chat/?new=1">＋ 建立科研项目</a><a class="tm-run-refresh" href="{html.escape(_index_url(query, status, page), quote=True)}">⟳ 刷新</a></div>
   <form class="tm-run-filters" method="get" action="/run/">
@@ -1678,14 +1680,14 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
                 '<svg viewBox="0 0 24 24"><circle cx="7" cy="7" r="2"/>'
                 '<circle cx="17" cy="9" r="2"/><circle cx="11" cy="18" r="2"/>'
                 '<path d="M9 8l6 1M16 11l-4 5M8 9l2 7"/></svg></span>'
-                '<span class="tm-explore-map-body"><strong>Explore map</strong>'
+                '<span class="tm-explore-map-body"><strong>图谱</strong>'
                 '<span>探索当前任务的 Canvas 图谱与 Markdown</span></span>'
                 '<span class="tm-explore-map-arrow" aria-hidden="true">→</span></a>'
             )
         else:
             explore_map = ('<div class="tm-explore-map tm-explore-map-unavailable" '
                            'data-explore-map><span class="tm-explore-map-body">'
-                           '<strong>Explore map</strong>'
+                           '<strong>图谱</strong>'
                            '<span>当前任务暂未提供可阅读的科研画布</span>'
                            '</span></div>')
         # A concise read-only projection of canonical Textual state, with
@@ -2451,7 +2453,7 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
           // A selected Worker may be dismissed in another tab. Do not reuse
           // its stale control surface for a newly selected Worker.
           if(present && present.dataset.tuiWorker!==incoming.dataset.tuiWorker) {{
-            window.location.reload(); return;
+            window.location.assign('/run/{ident}/?worker='+encodeURIComponent(incoming.dataset.tuiWorker||'worker-1')); return;
           }}
           // Master/Worker controls outside the live pane must follow the
           // freshest Cycle and State. Never leave a stale Pause after OVER.
@@ -2467,8 +2469,7 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
             const newTabs=incoming.querySelector('.tm-worker-tabs');
             // Keep the status of *other* Agents current, even when the selected
             // Worker's own State/Cycle is unchanged. Preserve pending click feedback.
-            if(oldTabs&&newTabs&&!oldTabs.querySelector('button:disabled')
-               &&oldTabs.querySelectorAll('[data-worker-feedback]:not([hidden])').length===0
+            if(oldTabs&&newTabs&&oldTabs.dataset.workerMutating!=='1'
                &&oldTabs.innerHTML!==newTabs.innerHTML)oldTabs.replaceWith(newTabs);
           }}
           if(!present||present.dataset.tuiScreen!==incoming.dataset.tuiScreen) {{

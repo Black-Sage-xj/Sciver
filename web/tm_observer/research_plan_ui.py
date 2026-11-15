@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import html
 
+from .onboarding_ui import first_use_panel
+
 
 def _history_panel(prefix: str, name: str) -> str:
     return f"""<section class="rp-history" id="{prefix}-history" hidden>
@@ -25,6 +27,8 @@ def page_body(runs: list[dict], selected_id: str = "") -> str:
     )
     if selected_id and all(r["observer_id"] != selected_id for r in available):
         raise ValueError("unknown task")
+    if not available:
+        return '<h1>Research Plan</h1><p>先创建任务，再在这里查看和编辑科研计划。</p>' + first_use_panel()
     chosen = selected_id or (available[0]["observer_id"] if available else "")
     options = "".join(
         '<option value="' + html.escape(r["observer_id"], quote=True) + '"' +

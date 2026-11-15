@@ -25,9 +25,12 @@ class IdentityContractConsistencyTest(unittest.TestCase):
 
     def test_reporter_current_contract_is_narrative_only(self):
         current = role_contract("reporter", phase="report")
-        self.assertEqual(current.version, 3)
-        self.assertEqual(set(current.prompt_schema), {"title", "summary"})
-        current.validate({"title": "T", "summary": "S"}, {})
+        self.assertEqual(current.version, 4)
+        self.assertEqual(set(current.prompt_schema), {"title", "summary", "graph_summary"})
+        current.validate({"title": "T", "summary": "S", "graph_summary": {
+            "conclusion": "Bounded result", "basis": "Frozen comparison",
+            "scope": "Test domain", "open_question": "",
+        }}, {})
         with self.assertRaisesRegex(ValueError, "cannot create candidates"):
             current.validate({"title": "T", "summary": "S", "candidates": []}, {})
         with self.assertRaisesRegex(ValueError, "no contract version 1"):

@@ -1,13 +1,13 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "tm-observer"
 version = "0.1.0"
 description = "Sciver research observability and operator controls"
-requires-python = ">=3.11"
-dependencies = []
+requires-python = ">=3.12"
+dependencies = ["sciver==0.1.0"]
 
 [project.scripts]
 tm-observer = "tm_observer.cli:main"
@@ -16,4 +16,15 @@ tm-observer = "tm_observer.cli:main"
 packages = ["tm_observer"]
 
 [tool.setuptools.package-data]
-tm_observer = ["static/*.svg", "*.js", "vendor/*.js", "research_chat_dist/*", "workflow_versions/*.json"]
+tm_observer = [
+  "static/*.svg",
+  "*.js",
+  "vendor/*.js",
+  "vendor/*LICENSE*.txt",
+  "research_chat_dist/*.js",
+  "research_chat_dist/*.css",
+  "research_chat_dist/*.woff",
+  "research_chat_dist/*.woff2",
+  "research_chat_dist/*.ttf",
+  "workflow_versions/*.json",
+]

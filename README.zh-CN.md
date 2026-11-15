@@ -43,7 +43,7 @@ Sciver 面向复杂、开放、需要长期探索的科学问题，帮助研究�
 复制下面这段给编程 Agent, 可以跑一个小的 扩散问题 ,以及看到 web ui：
 
 ```text
-请帮我实际安装并启动 Sciver。先检查 Git 和 Python 3.11+ 是否可用；Windows 请在 WSL2 中操作。若已有 Sciver 仓库，保留其中的改动，进入仓库并从建虚拟环境那一步继续；否则依次运行：
+请帮我实际安装并启动 Sciver。先检查 Git 和 Python 3.12+ 是否可用；Windows 请在 WSL2 中操作。若已有 Sciver 仓库，保留其中的改动，进入仓库并从建虚拟环境那一步继续；否则依次运行：
 
 git clone https://github.com/Black-Sage-xj/Sciver.git
 cd Sciver
@@ -56,7 +56,7 @@ sciver quickstart
 sciver quickstart 会完成离线 Test0 自检并打开网页；遇到依赖或启动错误请排查后重试。确认网页能访问，让服务保持运行，最后给我一个可点击的 Web UI 链接；若在远程环境，请配置安全端口转发并给出转发后的链接。不要启动真实研究。
 ```
 
-自己动手时，在 Linux、macOS 或 Windows 的 WSL2 中使用 **Python 3.11+**：
+自己动手时，在 Linux、macOS 或 Windows 的 WSL2 中使用 **Python 3.12+**：
 
 ```bash
 git clone https://github.com/Black-Sage-xj/Sciver.git
@@ -68,11 +68,11 @@ python -m pip install -e '.[sdk]' -e ./web
 sciver quickstart
 ```
 
-`quickstart` 会校验 Test0 的原创布朗运动数据、初始化任务和 SQLite 图谱，然后启动本地服务，自动打开 [http://127.0.0.1:8787/](http://127.0.0.1:8787/)。默认工作区是 `~/Sciver-workspace`，Test0 任务在其 `test0/` 子目录；计算产物放在工作区内独立的 `.theory-master-tasks/`，不会写回源码。这一步是离线安装自检：不会调用模型、启动研究或生成科研结论。Test0 的运行上限设为 **1 个 Cycle**，只有之后由你显式启动时才会开始研究；重复执行 `quickstart` 会保留已有任务和设置。
+`quickstart` 会校验 Test0 的原创布朗运动数据、初始化任务和 SQLite 图谱，然后启动本地服务，自动打开 [http://127.0.0.1:8787/](http://127.0.0.1:8787/)。默认工作区是 `~/Sciver-workspace`，每次创建的 Test0 任务在独立命名的 `test-instances/test0-*` 子目录；计算产物放在工作区内独立的 `.theory-master-tasks/`，不会写回源码。这一步是离线安装自检：不会调用模型、启动研究或生成科研结论。Test0 的运行上限设为 **1 个 Cycle**，只有之后由你显式启动时才会开始研究；每次执行 `quickstart` 都会创建全新任务、空白科研状态和新的 Agent 会话，从 Cycle 1 开始；历史任务与工作区设置保留。
 
-网页首先进入 **Workspace → Research Chat**，首次打开会弹出简短说明。若只想查看刚创建的 Test0，关闭说明，打开 **Task List → test0** 即可查看任务和研究计划，无需再建项目。
+网页首先进入 **Workspace → Research Chat**，首次打开会弹出简短说明。若只想查看刚创建的 Test0，关闭说明，打开 **Task List → 新创建的 Test0 任务** 即可查看任务和研究计划，无需再建项目。
 
-若要建立自己的项目，可从空白开始，或选择已有目录中的 `research_plan.md`、笔记和数据。导入时自行勾选文件；如果勾选已有计划，Sciver 会以它为参考生成一份新草稿，原目录和原文件保持不变。对话依次询问科研目标、可核验的完成标准、资源或方法限制。检查并可编辑 Research Plan 草稿后，点击「确认建立项目」，项目才会出现在 **Task List**，不会自动开始研究。基础建项无需模型账号；若选择模型辅助完善，选中计划和笔记的文本摘录会发送给模型，并可能消耗额度。
+若要建立自己的项目，可从空白开始，或选择已有目录中的 `research_plan.md`、笔记和数据。导入时自行勾选文件；如果勾选已有计划，Sciver 会以它为参考生成一份新草稿，原目录和原文件保持不变。对话依次询问科研目标、长期研究边界与证据标准、可核验的完成标准、资源或方法限制。检查并可编辑 Research Plan 草稿后，点击「确认建立项目」，项目才会出现在 **Task List**，不会自动开始研究。基础建项无需模型账号；若选择模型辅助完善，选中计划和笔记的文本摘录会发送给模型，并可能消耗额度。
 
 从已有科研项目开始、Research Plan 五节格式与建项后的运行流程，见 [开始自己的科研项目](docs/START_HERE.md)。
 
@@ -100,10 +100,10 @@ sciver web --workspace ~/new-sciver        # 新建空工作区并打开项目�
 也可以单独创建 Test0 并立即打开网页：
 
 ```bash
-sciver test Test0 ~/Sciver-workspace/another-test0 --open
+sciver test Test0 ~/Sciver-workspace/another-test0 --prepare-only --open
 ```
 
-目标目录须为空；`test` 创建任务并校验数据，不会启动模型研究。
+省略 `--prepare-only` 时，`test` 会启动真实模型研究并消耗账号额度。目标目录须为空；上述命令 创建全新任务并校验数据，不会启动模型研究。自动命名任务目录可使用 `sciver test Test0 --root ~/Sciver-workspace --prepare-only`。独立交付、账号配置与排障见[首次使用](docs/first-use.md)和 [wheel 安装](docs/distribution.md)。
 
 ### 开始真实研究前
 
@@ -125,14 +125,14 @@ sciver test Test0 ~/Sciver-workspace/another-test0 --open
 
 ## 运行测试
 
-安装测试依赖并查看可用的 unittest 测试分类：
+安装测试依赖并查看完整 pytest 清单及分类：
 
 ```bash
 python -m pip install -e '.[test]' -e ./web
 python scripts/run_tests.py --list
 ```
 
-运行 CI 使用的完整核心 pytest 门禁：`python scripts/test_profiles.py default`。运行已登记的 unittest 分类测试集：`python scripts/run_tests.py`；只运行不变量测试门禁：`python scripts/run_tests.py --category invariant`。部分集成测试可能需要本地服务或额外依赖。
+运行 CI 使用的完整核心 pytest 门禁：`python scripts/run_tests.py -q`，包括函数式、参数化和 unittest 测试。只运行不变量门禁：`python scripts/run_tests.py --category invariant`；Web 回归使用 `python -m pytest -q web/tests`。浏览器测试需要显式启用本地浏览器环境；真实模型测试须另行授权。
 
 ## 启动 Web Observatory
 

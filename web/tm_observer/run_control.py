@@ -18,8 +18,8 @@ from typing import Any
 
 from .run_monitor import data
 
-ACTIONS = {"set_worker_mode", "add_worker", "cancel_pending_worker", "start_worker_scheduler", "stop_worker_scheduler", "set_worker_route", "set_worker_profile", "set_worker_account", "save_model_tier_template", "inspect_codex_models", "worker_control", "pause", "kill", "abandon_cycle", "max_cycles", "attention_guidance", "attention_takeover", "supervisor", "quota_auto_adjust", "run", "resume", "set_role_route", "set_operator_preference"}
-HIGH_RISK = {"set_worker_mode", "add_worker", "cancel_pending_worker", "start_worker_scheduler", "stop_worker_scheduler", "set_worker_route", "set_worker_profile", "set_worker_account", "save_model_tier_template", "worker_control", "pause", "kill", "abandon_cycle", "attention_guidance"}
+ACTIONS = {"set_worker_mode", "add_worker", "cancel_pending_worker", "start_worker_scheduler", "stop_worker_scheduler", "set_worker_route", "set_task_profile", "set_worker_profile", "set_worker_account", "save_model_tier_template", "inspect_codex_models", "worker_control", "pause", "kill", "abandon_cycle", "max_cycles", "attention_guidance", "attention_takeover", "supervisor", "quota_auto_adjust", "run", "resume", "set_role_route", "set_operator_preference"}
+HIGH_RISK = {"set_worker_mode", "add_worker", "cancel_pending_worker", "start_worker_scheduler", "stop_worker_scheduler", "set_worker_route", "set_worker_profile", "set_worker_account", "set_task_profile", "save_model_tier_template", "worker_control", "pause", "kill", "abandon_cycle", "attention_guidance"}
 VALID_REQUEST_ID = re.compile(r"[0-9a-f]{32}\Z")
 
 
@@ -113,6 +113,12 @@ def _validated_value(action: str, value: Any) -> Any:
                 or value.get("account") not in {"1", "2", "keep"}):
             raise OperatorError("无效 Worker 账号分配")
         return value
+    if action == "set_task_profile":
+        from theory_master.backend_config import MODEL_PROFILES
+        if (not isinstance(value, dict) or set(value) != {"profile"}
+                or not isinstance(value["profile"], str) or value["profile"] not in MODEL_PROFILES):
+            raise OperatorError("无效任务模型档位")
+        return value
     if action == "set_worker_profile":
         from theory_master.backend_config import MODEL_PROFILES
         if (not isinstance(value, dict) or set(value) != {"worker_id", "profile"}
@@ -141,7 +147,7 @@ def _validated_value(action: str, value: Any) -> Any:
                 {"worker_id", "operation"}, {"worker_id", "operation", "account"})
                 or not isinstance(value.get("worker_id"), str)
                 or not re.fullmatch(r"worker-[1-9][0-9]*", value["worker_id"])
-                or value.get("operation") not in {"pause", "kill", "resume", "release", "preserve_release", "dismiss"}
+                or value.get("operation") not in {"pause", "kill", "resume", "release", "preserve_release", "dismiss", "close"}
                 or ("account" in value and
                     (value["operation"] != "resume" or value["account"] not in {"1", "2"}))):
             raise OperatorError("无效 Worker 操作或账号迁移")
@@ -234,7 +240,7 @@ def execute(run: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
             receipt = receipts / f"{req_id}.json"
             if receipt.is_file():
                 saved = json.loads(receipt.read_text(encoding="utf-8"))
-                if saved.get("action") != action or (action in {"worker_control", "set_worker_route", "set_worker_profile", "set_worker_account"} and saved.get("value") != value):
+                if saved.get("action") != action or (action in {"worker_control", "set_worker_route", "set_worker_profile", "set_worker_account", "set_task_profile"} and saved.get("value") != value):
                     raise OperatorError("request_id 不可复用于不同操作", 409)
                 if saved.get("phase") == "rejected_no_effect":
                     raise OperatorError("先前保全请求已确认未执行；请刷新后重新发起新请求", 409)
@@ -279,6 +285,10 @@ def execute(run: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
                     os.fsync(handle2.fileno())
                 os.replace(temp, receipt)
                 return {"ok": True, "outcome": outcome}
+            if action == "set_task_profile":
+                from .worker_console import registered_workers
+                if registered_workers(run):
+                    raise OperatorError("请选择具体 Agent 修改模型档位", 409)
             from .run_monitor import data as snapshot_data
             state = snapshot_data(run)
             actual_cycle = str(state.get("cycle_id") or run.get("cycle") or "")
@@ -314,7 +324,7 @@ def execute(run: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
             receipts.mkdir(mode=0o700, exist_ok=True)
             # Reserve the request ID BEFORE performing the SDK write. A crash
             # leaves a pending marker and never silently retries an action.
-            pending = {"action": action, "phase": "pending", "at": datetime.now(timezone.utc).isoformat()}
+            pending = {"action": action, "value": value, "phase": "pending", "at": datetime.now(timezone.utc).isoformat()}
             fd = os.open(receipt, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as result_file:
                 json.dump(pending, result_file, ensure_ascii=False)
@@ -326,7 +336,7 @@ def execute(run: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
                 raise
             except (ValueError, OSError, RuntimeError) as exc:
                 raise OperatorError(f"任务操作结果不确定，请核查状态：{type(exc).__name__}", 409) from exc
-            safe_outcome = {"action": action, "phase": "applied", "outcome": outcome, "at": pending["at"]}
+            safe_outcome = {**pending, "phase": "applied", "outcome": outcome}
             temporary = receipts / f".{req_id}.{os.getpid()}.tmp"
             with temporary.open("x", encoding="utf-8") as result_file:
                 json.dump(safe_outcome, result_file, ensure_ascii=False)

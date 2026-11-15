@@ -233,7 +233,8 @@ def project(research_root: Path, *, secondary: str = "", cycle_dir: Path | None 
                 if isinstance(event, dict):
                     events.append(event)
             parts["secondary"] = ""  # Web uses structured role-colored events instead of terminal transcription.
-    from theory_master.backend_config import read_task_role_overrides, read_task_role_activations, task_route_catalog
+    from theory_master.backend_config import (read_task_role_overrides, read_task_role_activations,
+                                             read_task_model_profile, task_route_catalog)
     current_agents = state.get("agents") if isinstance(state.get("agents"), dict) else {}
     historical_route_agents = state.get("project_agents") if isinstance(state.get("project_agents"), dict) else {}
     frozen_routes = state.get("runtime_role_routes") if isinstance(state.get("runtime_role_routes"), dict) else {}
@@ -245,7 +246,7 @@ def project(research_root: Path, *, secondary: str = "", cycle_dir: Path | None 
     active_id = state.get("active_invocation_id")
     current_turn = state.get("current_turn_role") or state.get("current_agent")
     active_role = None
-    if worker_id and state.get("execution_active"):
+    if state.get("execution_active"):
         if isinstance(active_id, str) and active_id:
             active_role = next((name for name in (
                 "research_lead", "challenger", "investigator", "literature", "judge", "reporter")
@@ -265,12 +266,16 @@ def project(research_root: Path, *, secondary: str = "", cycle_dir: Path | None 
     worker_activation_modes = worker_route_activations(research_root, worker_id) if worker_id else {}
     pending = {}
     activation_modes = {}
+    task_profile = None
     if worker_id is None:
         try:
             pending = read_task_role_overrides(research_root)
             activation_modes = read_task_role_activations(research_root)
+            task_profile = read_task_model_profile(research_root)
         except (OSError, TypeError, ValueError):
             pass
+    configured_routes = worker_expected_routes if worker_id else (pending if task_profile else None)
+    configured_modes = worker_activation_modes if worker_id else activation_modes
     for role in ("research_lead", "challenger", "investigator", "literature", "judge", "reporter"):
         agent = current_agents.get(role) if isinstance(current_agents.get(role), dict) else {}
         frozen = frozen_routes.get(role) if isinstance(frozen_routes.get(role), dict) else {}
@@ -283,13 +288,13 @@ def project(research_root: Path, *, secondary: str = "", cycle_dir: Path | None 
                       if item.get("model") and item.get("provider")), {})
         old = pending.get(role)
         pending_reason = ""
-        if worker_expected_routes is not None:
-            target = worker_expected_routes[role]
+        if configured_routes is not None and role in configured_routes:
+            target = configured_routes[role]
             current = (route.get("model"), route.get("provider"),
                        route.get("reasoning_effort") or frozen.get("reasoning_effort"))
             desired = (target.model, target.provider, target.reasoning_effort)
             if current != desired:
-                if worker_activation_modes.get(role) == "next_cycle":
+                if configured_modes.get(role) == "next_cycle":
                     pending_reason = "next_cycle"
                 elif role == active_role:
                     pending_reason = "active_invocation"
@@ -298,7 +303,7 @@ def project(research_root: Path, *, secondary: str = "", cycle_dir: Path | None 
             if pending_reason:
                 old = target
             else:
-                # Saved Worker configuration is authoritative for an idle
+                # Saved configuration is authoritative for an idle
                 # role's NEXT invocation. Do not confuse an old scientific
                 # invocation snapshot with a still-running model selection.
                 route = {"model": target.model, "provider": target.provider,
@@ -308,22 +313,22 @@ def project(research_root: Path, *, secondary: str = "", cycle_dir: Path | None 
             "model": str(route.get("model") or ""),
             "provider": str(route.get("provider") or ""),
             "reasoning_effort": str(route.get("reasoning_effort") or frozen.get("reasoning_effort") or ""),
-            **({"pending_reason": pending_reason} if worker_id else {}),
+            **({"pending_reason": pending_reason} if worker_id or task_profile else {}),
             "pending": ({"model": old.model, "provider": old.provider, "reasoning_effort": old.reasoning_effort,
                          "activation": (worker_activation_modes.get(role, "next_invocation") if worker_id else
                                         activation_modes.get(role, "next_invocation"))}
                         if old is not None else None),
         }
     # A tier is an explicit configured preset, NOT something inferred from
-    # similar-looking model names. Worker-local route edits stay distinguishable.
+    # similar-looking model names. Role-specific edits stay distinguishable.
     from theory_master.backend_config import read_model_profile, build_model_profile
     from theory_master.worker_runtime import (read_worker_profile, effective_worker_profile,
                                                worker_route_overrides)
-    explicit_profile = read_worker_profile(research_root, worker_id) if worker_id else None
+    explicit_profile = read_worker_profile(research_root, worker_id) if worker_id else task_profile
     preset = ((effective_worker_profile(research_root, worker_id) if worker_id else None)
-              or read_model_profile())
+              or task_profile or read_model_profile())
     tier_labels = {"test": "Codex 一档", "codex": "Codex 二档", "advanced": "Codex 三档"}
-    overridden = worker_route_overrides(research_root, worker_id) if worker_id else {}
+    overridden = worker_route_overrides(research_root, worker_id) if worker_id else pending
     expected_routes = worker_expected_routes
     preset_routes = build_model_profile(preset)
     for role, info in role_settings.items():

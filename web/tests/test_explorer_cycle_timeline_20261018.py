@@ -1,4 +1,4 @@
-"""Chronology uses first frozen H only, with branch-following fixed positions."""
+"""Frozen Cycle metadata stays authoritative while tree spacing follows branches."""
 from __future__ import annotations
 
 import json
@@ -15,14 +15,7 @@ from test_research_explorer_g6 import SCRIPT
 NODE_CHECK = r"""
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const src=fs.readFileSync(process.argv[1],'utf8');
-const start=src.indexOf('const TIMELINE_STEP=');
-const end=src.indexOf('function g6Data(',start);
-assert(start>=0&&end>start);
-const helper=`const CARD_W=352,CARD_H=154;
-  function knownType(n){return n.semantic?.type||'Unknown'}
-  function stable(a,b){return String(a).localeCompare(String(b),'en',{numeric:true})}
-  `+src.slice(start,end)+`\n;timelineCoordinates`;
-const timeline=vm.runInNewContext(helper,{});
+const {treeCoordinates:timeline}=require(require('node:path').join(require('node:path').dirname(process.argv[1]),'research_explorer_layout_c.js'));
 const raw=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const cycleStart=src.indexOf('let hypothesisCycleCache=null;');
 const cycleEnd=src.indexOf('function compactCycleLabel(',cycleStart);
@@ -41,18 +34,9 @@ const known=nodes.filter(n=>n.data.semantic.type==='Hypothesis'&&Number.isIntege
 const unknown=nodes.filter(n=>n.data.semantic.type==='Hypothesis'&&
   !Number.isInteger(n.data.semantic.cycle)&&!Number.isInteger(n.data.placementCycle));
 assert(known.length>0);
-for(const n of unknown)assert(x(n.id)>Math.max(...known.map(h=>x(h.id))),
-  `Unknown Cycle ${n.id} must stay in the separate undated area`);
-for(const a of known)for(const b of known){
- if(a.data.semantic.cycle<b.data.semantic.cycle)
-  assert(x(a.id)<x(b.id),`Cycle ${a.data.semantic.cycle} (${a.id}) must be left of Cycle ${b.data.semantic.cycle} (${b.id})`);
- if(a.data.semantic.cycle===b.data.semantic.cycle)
-  assert.equal(x(a.id),x(b.id),'same frozen Cycle shares one vertical column');
-}
-for(const n of nodes)if(Number.isInteger(n.data.placementCycle))for(const h of known){
- if(n.data.placementCycle<h.data.semantic.cycle)assert(x(n.id)<x(h.id));
- if(n.data.placementCycle>h.data.semantic.cycle)assert(x(n.id)>x(h.id));
-}
+const projection=timeline(nodes,edges);
+for(const [child,parent] of projection.parent)
+ assert.equal(x(child)-x(parent),416,'tree parent/child spacing ignores unrelated Cycle columns');
 for(const n of nodes){
  assert(Number.isFinite(n.style.x)&&Number.isFinite(n.style.y),`finite position ${n.id}`);
 }
@@ -68,7 +52,7 @@ console.log('PASS',known.length,'dated',unknown.length,'unknown',nodes.length,'n
 
 
 @pytest.mark.skipif(shutil.which('node') is None, reason='requires Node.js')
-def test_cycle_column_and_external_satellite_geometry(tmp_path: Path):
+def test_tree_geometry_preserves_frozen_cycle_and_source_metadata(tmp_path: Path):
     fixture = {
         'realFixture': False,
         'nodes': [

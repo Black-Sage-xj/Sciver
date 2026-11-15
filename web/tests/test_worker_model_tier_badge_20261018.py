@@ -54,3 +54,10 @@ def test_model_heading_is_one_clickable_button_for_six_agents():
     assert trigger["data-model-preset-profile"]=="codex"
     assert trigger["aria-haspopup"]=="dialog"
     assert not soup.select("tbody [data-model-preset-open]")
+
+
+def test_saved_profile_is_role_matrix_not_one_agent_route():
+    """Every shipped preset covers all six canonical model routes."""
+    from theory_master.backend_config import MODEL_PROFILES
+    assert all(set(MODEL_PROFILES[name]) == set(ROLES)
+               for name in ("test", "codex", "advanced"))

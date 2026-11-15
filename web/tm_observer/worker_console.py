@@ -44,9 +44,12 @@ def registered_workers(run: dict[str, Any]) -> list[dict[str, Any]]:
         effective = ("ORPHANED" if raw_status in _ACTIVE_WORKER_STATES
                      and not _verified_active_worker(root, value, path.parent.name)
                      else raw_status)
-        value = {key: value.get(key) for key in ("worker_id", "target_h_id", "current_cycle", "account")}
+        value = {key: value.get(key) for key in (
+            "worker_id", "target_h_id", "current_cycle", "account", "close_requested", "close_error")}
         value["raw_status"] = raw_status
         value["status"] = effective
+        if value.get("close_requested"):
+            value["status"] = "CLOSE_FAILED" if value.get("close_error") else "CLOSING"
         rows.append(value)
     return sorted(rows, key=lambda row: int(row["worker_id"].split("-")[1]))
 
@@ -129,7 +132,7 @@ def requested_worker_slots(run: dict[str, Any], worker_count: int) -> int:
     """Only explicit + requests create waiting cards, not old capacity limits."""
     path = Path(str(run.get("research_root") or "")).resolve() / ".theory-master" / "worker_mode.json"
     try:
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 4096:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 1048576:
             return worker_count
         mode = json.loads(path.read_text(encoding="utf-8"))
         requested = mode.get("requested_agents")
@@ -149,12 +152,19 @@ def tab_bar(run: dict[str, Any], workers: list[dict[str, Any]], selected: str | 
     plus = ('<button type="button" class="tm-worker-add" data-worker-add '
             'aria-label="新增 Agent" title="新增独立科研 Agent">'
             '<span aria-hidden="true">+</span> 新增 Agent</button>')
-    def dismiss(worker_id: str, number: str, status: str, cycle: str) -> str:
-        if len(workers) < 2 or status not in {"OVER", "COMPLETE", "RELEASED", "STOPPED", "CANCELLED", "FAILED_START"}:
+    def close(worker: dict[str, Any], number: str) -> str:
+        worker_id = worker["worker_id"]
+        if worker_id == "worker-1":
             return ""
-        return (f'<button type="button" class="tm-worker-dismiss" data-worker-dismiss="{worker_id}" '
-                f'data-cycle="{html.escape(cycle, quote=True)}" data-status="{html.escape(status, quote=True)}" '
-                f'aria-label="收起 Agent {number}" title="收起已结束 Agent；保留科研数据">×</button>')
+        closing = worker.get("close_requested") and not worker.get("close_error")
+        preserving = worker.get("status") == "PRESERVING"
+        disabled = ' disabled aria-busy="true"' if closing or preserving else ''
+        title = ('正在安全暂停并关闭' if closing else '科研保全完成后可关闭' if preserving
+                 else '关闭此 Agent；保留 Cycle、日志和历史结果')
+        return (f'<button type="button" class="tm-worker-dismiss" data-worker-close="{worker_id}" '
+                f'data-cycle="{html.escape(str(worker.get("current_cycle") or ""), quote=True)}" '
+                f'data-status="{html.escape(str(worker.get("status") or ""), quote=True)}" '
+                f'aria-label="关闭 Agent {number}" title="{title}"{disabled}>×</button>')
     runner_link = ""
     if not workers:
         # Legacy single-Agent consoles still have one real Task console, not
@@ -178,14 +188,15 @@ def tab_bar(run: dict[str, Any], workers: list[dict[str, Any]], selected: str | 
             worker_id = worker["worker_id"]
             number = worker_id.split("-")[1]
             status = html.escape(str(worker.get("status") or "UNKNOWN").upper())
+            label = {"CLOSING": "关闭中…", "CLOSE_FAILED": "关闭失败 · 重试"}.get(status, status)
             cls = "is-selected" if worker_id == selected else ""
             href = f"/run/{ident}/?worker={quote(worker_id)}"
             links.append(f'<span class="tm-worker-card{" tm-worker-first" if index == 0 else ""}">'
                          f'<a class="tm-worker-tab {cls}" href="{href}" '
                          f'aria-current="{"page" if worker_id == selected else "false"}">'
                          f'<span class="tm-worker-dot" data-status="{status}"></span>'
-                         f'Agent {number}<small>{status}</small></a>'
-                         f'{dismiss(worker_id, number, status, str(worker.get("current_cycle") or ""))}</span>')
+                         f'Agent {number}<small>{label}</small></a>'
+                         f'{close(worker, number)}</span>')
     count = len(workers)
     waiting = max(0, requested_worker_slots(run, count) - count)
     existing_numbers = {int(w["worker_id"].split("-")[1]) for w in workers}
@@ -198,9 +209,9 @@ def tab_bar(run: dict[str, Any], workers: list[dict[str, Any]], selected: str | 
                      'title="等待独立科研前沿和可用资源">'
                      '<span class="tm-worker-dot" data-status="WAITING"></span>'
                      f'Agent {number}<small>待分配</small></span>'
-                     + (f'<button type="button" data-worker-cancel class="tm-worker-cancel" '
-                        f'aria-label="撤销待分配 Agent {number}" title="撤销最近一个待分配 Agent">×</button>'
-                        if offset == min(waiting, 24)-1 else '') + '</span>')
+                     f'<button type="button" data-worker-cancel class="tm-worker-cancel" '
+                     f'aria-label="撤销待分配 Agent {number}" title="撤销一个待分配请求">×</button>'
+                     '</span>')
     if waiting > 24:
         links.append(f'<small class="tm-worker-more">另有 {waiting - 24} 个新增请求等待分配</small>')
     feedback = ('<span class="tm-worker-feedback" data-worker-feedback hidden '
@@ -228,6 +239,8 @@ STYLE = '''
 .tm-worker-dot[data-status=RUNNING]{background:#38bc74}
 .tm-worker-dot[data-status=PAUSED],.tm-worker-dot[data-status=NEEDS_ATTENTION]{background:#e2b04a}
 .tm-worker-dot[data-status=FAILED],.tm-worker-dot[data-status=ORPHANED]{background:#f47676}
+.tm-worker-dot[data-status=CLOSING]{background:#e2b04a}
+.tm-worker-dot[data-status=CLOSE_FAILED]{background:#f47676}
 .tm-worker-dot[data-status=WAITING]{background:#98a3b5}
 .tm-worker-add{display:inline-flex;align-items:center;gap:6px;padding:9px 12px;
  border:1px dashed #6482a2;background:#233144;color:#dce7f5;
@@ -236,8 +249,8 @@ STYLE = '''
 .tm-worker-add:hover{background:#2e445b;border-color:#93b8dd}
 .tm-worker-card:has(.tm-worker-dismiss)>.tm-worker-tab,
 .tm-worker-card:has(.tm-worker-cancel)>.tm-worker-tab{padding-right:34px}
-.tm-worker-dismiss,.tm-worker-cancel{position:absolute;right:6px;top:7px;width:24px;height:24px;
- display:grid;place-items:center;background:transparent;border:0;color:#b5c0d0;
+.tm-worker-dismiss,.tm-worker-cancel{position:absolute;right:6px;top:50%;transform:translateY(-50%);
+ width:24px;height:24px;padding:0;margin:0;box-sizing:border-box;display:grid;place-items:center;background:transparent;border:0;color:#b5c0d0;
  font-size:20px;border-radius:6px;cursor:pointer;line-height:1}
 .tm-worker-dismiss:hover,.tm-worker-cancel:hover{background:#ef444426;color:#ff8888}
 .tm-worker-dismiss:focus-visible,.tm-worker-cancel:focus-visible{outline:2px solid #ff8888;outline-offset:1px}

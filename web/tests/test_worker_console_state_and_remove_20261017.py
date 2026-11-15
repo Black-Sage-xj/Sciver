@@ -91,8 +91,8 @@ def test_terminal_worker_hide_keeps_cycle_data(tmp_path):
     spec = SimpleNamespace(research_root=root, branch_canvas=root/'branch_canvas.json')
     run={'research_root':str(root),'observer_id':'a'*16}
     page=BeautifulSoup(tab_bar(run,registered_workers(run),'worker-2'), 'html.parser')
-    assert page.select_one('[data-worker-dismiss="worker-2"]')
-    assert not page.select_one('[data-worker-dismiss="worker-1"]')
+    assert page.select_one('[data-worker-close="worker-2"]')
+    assert not page.select_one('[data-worker-close="worker-1"]')
     assert worker_action(spec, 'worker-2', 'dismiss')['history_preserved'] is True
     assert read_mode(root)['desired_agents']==1
     assert [w['worker_id'] for w in registered_workers(run)]==['worker-1']

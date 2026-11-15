@@ -19,3 +19,13 @@
 
 - `tests/test_worker_per_worker_cycle_quota_20261018.py`
 - `web/tests/test_worker_model_tier_badge_20261018.py`
+
+## 普通 Task Runner 的整档设置（2026-11-01）
+
+没有注册 Worker 的普通任务同样可在 MODEL 标题选择六阶段档位。网页发送 `set_task_profile`，携带当前 Cycle、状态及 Runner launch ID；有 Worker 时仍通过 `set_worker_profile` 只修改选中的 Worker。
+
+Task 档位及六角色快照原子保存到 `.theory-master/web-role-routes.json`，记录明确的 `profile` 与逐角色 `activation=next_invocation`；替换旧任务逐角色配置，保持全局默认和其他任务独立。后续手工角色覆盖保留档位身份并标为兼容覆盖。既有 SDK 安全调用边界加载新路由，正在执行的调用、冻结 Cycle 起始路由和科学状态保持其原有记录。
+
+模型目录检查及模板保存复用同一目标状态元信息，普通任务必须携带实际 launch ID；Worker 请求保持其独立的 Cycle/状态校验。目录检查只读取账号目录，配置保存本身不启动科研调用。
+
+回归：`tests/test_task_model_profile_20261101.py`、`web/tests/test_task_model_preset_ui_20261101.py`，以及已有热路由、Worker 隔离与模型编辑器测试。

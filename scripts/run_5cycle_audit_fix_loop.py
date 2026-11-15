@@ -20,15 +20,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-PACKAGE_ROOT = REPO_ROOT / "tool/theory_master"
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE_ROOT))
+from theory_master.audit_adapter import AuditAdapter, resolve_audit_adapter  # noqa: E402
 from theory_master.backends import CodexBackend, resolve_routes  # noqa: E402
 from theory_master.observability.collector import Collector  # noqa: E402
 from theory_master.specification import TaskSpec, list_cycle_dirs  # noqa: E402
 from theory_master.workflow import Workflow  # noqa: E402
 
-AUDIT_SKILL = REPO_ROOT / "tool/.codex/skills/tm-audit-review/SKILL.md"
 COUNT = 5
 SCHEMA = "theory-master/audit-batch/v1"
 
@@ -82,10 +81,11 @@ def control_disposition(batch_root: Path) -> str:
     return "continue"
 
 
-def audit_prompt(spec: TaskSpec, cycles: list[Path], report: Path) -> str:
+def audit_prompt(spec: TaskSpec, cycles: list[Path], report: Path, *, adapter: AuditAdapter | None = None) -> str:
+    adapter = adapter or resolve_audit_adapter()
     cycle_lines = "\n".join(f"- {p.name}: {p}" for p in cycles)
     return (
-        f"读取 {AUDIT_SKILL}，按该 Skill 审计下面这些 TheoryMaster Cycle 的具体对话：\n"
+        f"读取 {adapter.skill}，按该 Skill 审计下面这些 TheoryMaster Cycle 的具体对话：\n"
         f"{cycle_lines}\n将审计结果写入 {report}。"
     )
 
@@ -102,15 +102,16 @@ Run focused tests and the full TheoryMaster unit test suite if code changes. Wri
 
 
 def invoke_codex(executable: Path, *, prompt: str, mode: str, batch_dir: Path, name: str,
-                 report: Path | None = None) -> tuple[int, str]:
+                 report: Path | None = None, adapter: AuditAdapter | None = None) -> tuple[int, str]:
     """A separate exec call starts a fresh Codex session; all streams stay local."""
-    cmd = [str(executable), "exec", "--sandbox", mode, "-C", str(REPO_ROOT), "--skip-git-repo-check"]
+    adapter = adapter or resolve_audit_adapter()
+    cmd = [str(executable), "exec", "--sandbox", mode, "-C", str(adapter.workdir), "--skip-git-repo-check"]
     if report is not None and mode == "read-only":
         cmd += ["--output-last-message", str(report)]
     cmd += [prompt]
     with (batch_dir / f"{name}.stdout.log").open("w", encoding="utf-8") as out, \
          (batch_dir / f"{name}.stderr.log").open("w", encoding="utf-8") as err:
-        result = subprocess.run(cmd, cwd=REPO_ROOT, stdout=out, stderr=err, check=False)
+        result = subprocess.run(cmd, cwd=adapter.workdir, stdout=out, stderr=err, check=False)
     body = report.read_text(encoding="utf-8") if report and report.is_file() else ""
     return result.returncode, body
 
@@ -161,8 +162,7 @@ class Supervisor:
         """Read-only preflight for configuration and supervisor paths."""
         if not self.codex.is_file() or not os.access(self.codex, os.X_OK):
             raise ValueError(f"Codex executable is missing or not executable: {self.codex}")
-        if not AUDIT_SKILL.is_file():
-            raise FileNotFoundError(f"trajectory-audit skill missing: {AUDIT_SKILL}")
+        self.adapter = resolve_audit_adapter()
         if self.root.exists() and not self.root.is_dir():
             raise ValueError(f"batch root is not a directory: {self.root}")
         for path in (self.root / "supervisor.lock", self.root / "PAUSE", self.root / "STOP", self.state_path):
@@ -171,6 +171,8 @@ class Supervisor:
         if self.state_path.exists():
             read_json(self.state_path)
         return {"task_root": str(self.spec.research_root), "codex": str(self.codex),
+                "audit_skill": str(self.adapter.skill), "audit_relay": str(self.adapter.relay),
+                "audit_workdir": str(self.adapter.workdir),
                 "state": str(self.state_path), "lock": str(self.root / "supervisor.lock"),
                 "pause": str(self.root / "PAUSE"), "stop": str(self.root / "STOP"),
                 "reports": str(self.root / "<batch-id>"), "history": str(self.root / "history.jsonl")}
@@ -202,7 +204,7 @@ class Supervisor:
         pending["recovery_attempts"] += 1
         report = batch_dir / "recovery_repair_result.md"
         rc, _ = invoke_codex(self.codex, prompt=repair_prompt(self.spec, cycle / "research_state.json", report, recovery=True),
-                             mode="workspace-write", batch_dir=batch_dir, name="recovery_repair")
+                             mode="workspace-write", batch_dir=batch_dir, name="recovery_repair", adapter=self.adapter)
         pending["recovery_report"] = str(report)
         return (rc == 0 and report.is_file() and
                 re.search(r"^engineering-recoverable: yes$", report.read_text(encoding="utf-8"), re.I | re.M) is not None)
@@ -261,8 +263,8 @@ class Supervisor:
             pending["audit_status"] = "completed"
             self._save(state)
         if pending.get("audit_status") != "completed":
-            rc, body = invoke_codex(self.codex, prompt=audit_prompt(self.spec, cycles, audit), mode="read-only",
-                                    batch_dir=batch_dir, name="audit", report=audit)
+            rc, body = invoke_codex(self.codex, prompt=audit_prompt(self.spec, cycles, audit, adapter=self.adapter), mode="read-only",
+                                    batch_dir=batch_dir, name="audit", report=audit, adapter=self.adapter)
             pending["audit_status"] = "completed" if rc == 0 and body.strip() else "failed"
             self._save(state)
         if pending.get("audit_status") != "completed":
@@ -274,7 +276,7 @@ class Supervisor:
             self._save(state)
         if pending.get("repair_status") != "completed":
             rc, _ = invoke_codex(self.codex, prompt=repair_prompt(self.spec, audit, repair), mode="workspace-write",
-                                 batch_dir=batch_dir, name="repair")
+                                 batch_dir=batch_dir, name="repair", adapter=self.adapter)
             pending["repair_status"] = "completed" if rc == 0 and has_report(repair) else "failed"
             self._save(state)
         if pending.get("repair_status") != "completed":

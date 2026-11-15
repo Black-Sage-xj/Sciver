@@ -289,3 +289,5 @@ def _reporter_structure(output: dict[str, Any], _context: Mapping[str, Any]) -> 
         raise ValueError(f"reporter summary must be human-first prose; machine dump marker is forbidden: {marker}")
     if "candidates" in output:
         raise ValueError("reporter cannot create candidates; scientific frontier authority belongs to Research Lead")
+    from .outcome_guide import validate_graph_summary
+    validate_graph_summary(output.get("graph_summary"))

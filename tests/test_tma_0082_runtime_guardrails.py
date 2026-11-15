@@ -20,6 +20,17 @@ def test_dead_scheduler_pid_reconciles_stale_running_to_failed(tmp_path, monkeyp
     meta.write_text(json.dumps({"status": "RUNNING", "pid": 4321,
                                 "start_ticks": 99, "cycles_started": 7}))
     monkeypatch.setattr(worker_runtime, "process_identity_alive", lambda pid, ticks: False)
+    provenance = {
+        "schema": "theory-master/runtime-source-provenance/v1",
+        "source_root": str(tmp_path / "sdk"),
+        "sdk_git_root": str(tmp_path / "sdk"),
+        "sdk_git_sha": "a" * 40,
+        "module_paths": {"workflow.py": str(tmp_path / "sdk/theory_master/workflow.py")},
+        "module_sha256": {"workflow.py": "b" * 64},
+        "source_coherent": True,
+        "source_coherence_errors": [],
+    }
+    monkeypatch.setattr(worker_runtime, "runtime_source_provenance", lambda: provenance)
 
     status = worker_runtime.scheduler_status(root)
 
@@ -31,7 +42,7 @@ def test_dead_scheduler_pid_reconciles_stale_running_to_failed(tmp_path, monkeyp
     assert persisted["status"] == "FAILED"
     assert persisted["pid"] is None
     assert persisted["cycles_started"] == 7
-    assert persisted["runtime_source_provenance"]["sdk_git_sha"]
+    assert persisted["runtime_source_provenance"] == provenance
 
 
 def test_terminal_scheduler_state_is_not_rewritten(tmp_path, monkeypatch):

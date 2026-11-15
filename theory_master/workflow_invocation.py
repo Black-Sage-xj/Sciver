@@ -310,7 +310,9 @@ class InvocationMixin:
             "round": context.get("round"),
             "judge_rework_count": state.get("judge_rework_count"),
             "qualification_repair_count": state.get("qualification_repair_count"),
-            "qualification_restart_generation": len(state.get("qualification_resume_history") or []),
+            "qualification_restart_generation": state.get(
+                "qualification_restart_generation", len(state.get("qualification_resume_history") or []),
+            ),
             "branch_id": branch.get("candidate_id") or branch.get("id"),
             "candidate_ids": candidate_ids,
             "repair_hash": context.get("repair_hash") if stage == "repair_verification" else None,
@@ -574,6 +576,8 @@ class InvocationMixin:
                 if isinstance(row, (list, tuple)) and id_index < len(row)
                 and isinstance(row[id_index], str) and row[id_index]
             ]
+        if actual == "research_lead" and stage == "frontier_proposal":
+            validation_context["_require_explicit_lineage"] = True
         lead_graph_stage = actual == "research_lead" and stage in {
             "frontier_proposal", "frontier_maintenance",
         }

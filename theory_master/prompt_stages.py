@@ -5,6 +5,7 @@ import json
 from typing import Any, Mapping
 
 from .evidence import adjudicable_manifest_records
+from .report_materials import report_materials
 from .cycle_criteria import criterion_rows
 from .scientific_objective import SCIENCE_FIELDS, frozen_science_view, locked_science_view
 
@@ -77,7 +78,7 @@ STAGE_CONTEXT_FIELDS: dict[tuple[str, str], tuple[str, ...]] = {
     ),
     ("reporter", "report"): (
         "hypothesis", "judge_decision", "scientific_synthesis",
-        "scientific_model_summary", "evidence_scope_digest",
+        "scientific_model_summary", "evidence_scope_digest", "report_materials",
     ),
 }
 
@@ -173,6 +174,8 @@ def _candidate_digest(value: Any, *, limit: int | None = None) -> list[dict[str,
             "id": row.get("id"), "title": row.get("title"),
             "why_now": row.get("why_now"), "goal_advance": row.get("goal_advance"),
             "lineage_anchor_node_id": row.get("lineage_anchor_node_id"),
+            "lineage_main_node_id": row.get("lineage_main_node_id"),
+            "lineage_other_node_ids": row.get("lineage_other_node_ids"),
             "evolution_operator": row.get("evolution_operator"), "status": row.get("status"),
             "evidence_refs": list(row.get("evidence_refs") or []),
             "rationale": row.get("rationale"),
@@ -339,6 +342,7 @@ def _literature_digest(value: Any) -> dict[str, Any]:
     return {key: val for key, val in {
         "status": value.get("status"),
         "reason": value.get("reason"),
+        "remaining_scientific_question": value.get("remaining_scientific_question"),
         "evidence_records": [{
             k: row.get(k) for k in (
                 "evidence_id", "source_ref", "paper_title", "year", "doi_or_url",
@@ -692,6 +696,7 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
             "scientific_synthesis": _scientific_synthesis_view(context.get("scientific_synthesis")),
             "scientific_model_summary": _model_summary(context.get("scientific_model")),
             "evidence_scope_digest": _evidence_scope_digest(context),
+            "report_materials": report_materials(context),
         }.items() if value not in (None, "", [], {})}
     if role == "judge" and stage == "goal_completion":
         plan_path = str(context.get("research_plan_path") or "").strip()

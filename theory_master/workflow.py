@@ -138,7 +138,7 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
         self.events_path = spec.research_root / "events.jsonl"
         self.collector = collector
         self.stop_before = str(stop_before or "").strip().lower().replace("-", "_") or None
-        if self.stop_before not in {None, "hypothesis_lock", "judge"}:
+        if self.stop_before not in {None, "hypothesis_lock", "investigator", "judge"}:
             raise ValueError(f"unsupported workflow stop checkpoint: {stop_before}")
         if collector is not None:
             backend.collector = collector  # type: ignore[attr-defined]
@@ -745,6 +745,24 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
                     branch, finalized, active_title, active_hypothesis = self._qualify_and_lock(
                         state, run_id, prior_cycle
                     )
+            if self.stop_before == "investigator":
+                state.update({
+                    "status": "checkpoint_reached",
+                    "phase": "post_hypothesis_lock",
+                    "checkpoint": {
+                        "name": "post_hypothesis_lock",
+                        "hypothesis_id": state["hypothesis_lock"]["id"],
+                        "reached_at": now(),
+                    },
+                    "resumable": True,
+                    "execution_active": False,
+                })
+                self._emit(state, "workflow.checkpoint_reached", {
+                    "checkpoint": "post_hypothesis_lock",
+                    "hypothesis_id": state["hypothesis_lock"]["id"],
+                })
+                self._persist(state, project=True)
+                raise RecoveryStop("post_hypothesis_lock checkpoint reached")
             if not resuming:
                 self._write_replay_checkpoint(state, "investigator_start")
             judge, verdict = self._investigate_and_judge(state, branch, finalized)
@@ -901,7 +919,7 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
                 self._emit(state, "workflow.stopped", {
                     "reason": "checkpoint_reached",
                     "checkpoint": dict(state.get("checkpoint") or {}),
-                    "resumable": False,
+                    "resumable": bool(state.get("resumable")),
                 })
             self._persist(state)
             if self.collector is not None:

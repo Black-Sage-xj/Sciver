@@ -102,6 +102,7 @@ class SelfContainedFindingTests(unittest.TestCase):
             if filename.name == "investigator.md":
                 text = filename.read_text(encoding="utf-8")
                 self.assertIn("科学结论必须准确反映实际方法", text)
+                self.assertIn("交付字段与机器元数据由当前 SDK Setup 和 Contract 定义", text)
         for stage in STAGES:
             self.assertIn("statement", role_contract("investigator", phase=stage).prompt_projection())
         self.assertIn("limits in each scientific statement",

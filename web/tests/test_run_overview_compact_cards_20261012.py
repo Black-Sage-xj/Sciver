@@ -50,4 +50,8 @@ class CompactOverviewCardsTests(unittest.TestCase):
         self.assertIn('setInterval(loadCodexQuota,300000)',page)
         self.assertIn('paintCodexQuota();',page)
         self.assertIn('Codex 1',page)
-        self.assertIn("const weekText=windows.length>1?windowLabel(windows[1])",page)
+        self.assertEqual(card.select_one('[data-quota-value]').get_text(strip=True),
+                         '额度窗口剩余：查询中…')
+        self.assertIn('hidden', card.select_one('[data-quota-week]').attrs)
+        self.assertEqual(card.select_one('[role="progressbar"]')['aria-label'],
+                         '额度窗口剩余额度')

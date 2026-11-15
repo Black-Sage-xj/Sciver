@@ -1,39 +1,75 @@
 from __future__ import annotations
 
 import json
+import os
 
 import tempfile
-import subprocess
 import sys
-import importlib.util
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+
+from audit_adapter_fixture import create_audit_adapter
 
 from theory_master.observability import cycle_audit_relay, error_relay
 from theory_master.supervisor import _handle_failed_state
 
 
 class ErrorRelayTest(unittest.TestCase):
-    def test_legacy_relay_locations_are_metadata_only(self):
-        expected = Path(__file__).resolve().parents[3]
-        self.assertEqual(error_relay.REPO_ROOT, expected)
-        self.assertEqual(error_relay.RELAY_STARTER, expected / "tool/python_script/start_origin_tmux_relay.py")
-        # Optional operator launchers are not bundled with the public SDK.
-        import inspect
-        source = inspect.getsource(error_relay.spawn_repair_agent)
-        self.assertNotIn("subprocess", source)
-        self.assertNotIn("RELAY_STARTER", source)
-        self.assertNotIn("RESUME_STARTER", source)
+    def test_compatibility_handoff_delegates_only_to_internal_incident_registry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            cycle = Path(temporary)
+            incident = {"incident_id": "fixture-incident"}
+            with patch.object(error_relay, "register_cycle_incident", return_value=(incident, True)) as register, \
+                 patch.object(error_relay, "record_repair_handoff") as record, \
+                 patch("subprocess.run") as run, patch("subprocess.Popen") as popen:
+                result = error_relay.spawn_repair_agent(
+                    {"run_dir": str(cycle), "phase": "investigating"},
+                    {"error": "fixture failure", "event": "run.failed", "role": "investigator"},
+                )
+            self.assertEqual(result, "incident:fixture-incident:sdk_internal_hold")
+            register.assert_called_once()
+            self.assertEqual(register.call_args.args, (cycle,))
+            self.assertEqual(register.call_args.kwargs["summary"], "fixture failure")
+            self.assertEqual(register.call_args.kwargs["kind"], "system_failure")
+            self.assertEqual(register.call_args.kwargs["fields"]["role"], "investigator")
+            record.assert_called_once()
+            self.assertEqual(record.call_args.kwargs["incident"], incident)
+            self.assertEqual(record.call_args.kwargs["status"], "blocked")
+            self.assertEqual(record.call_args.kwargs["target"], "sdk:internal_hold")
+            self.assertEqual(record.call_args.kwargs["policy_version"], 4)
+            run.assert_not_called()
+            popen.assert_not_called()
 
-    def test_legacy_repair_never_executes_an_external_launcher(self):
-        with tempfile.TemporaryDirectory() as temp:
-            state = {"run_dir": temp, "run_id": "fixture", "status": "FAILED"}
-            with patch("subprocess.run", side_effect=AssertionError("external launch forbidden")), \
-                 patch("subprocess.Popen", side_effect=AssertionError("external launch forbidden")):
-                target = error_relay.spawn_repair_agent(state, {"error": "fixture failure"})
-            self.assertTrue(target.endswith(":sdk_internal_hold"))
+    def test_missing_cycle_fails_before_creating_incident_or_external_process(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            missing = Path(temporary) / "missing-cycle"
+            with patch.object(error_relay, "register_cycle_incident") as register, \
+                 patch("subprocess.run") as run, patch("subprocess.Popen") as popen:
+                with self.assertRaisesRegex(FileNotFoundError, "cycle directory not found"):
+                    error_relay.spawn_repair_agent({"run_dir": str(missing)}, {"error": "fixture"})
+            self.assertFalse(missing.exists())
+            register.assert_not_called()
+            run.assert_not_called()
+            popen.assert_not_called()
+
+    def test_compatibility_handoff_preserves_existing_scientific_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            cycle = Path(temporary)
+            state = cycle / "research_state.json"
+            original = '{"status":"failed","branches":[{"status":"supported","evidence":["fixture"]}]}\n'
+            state.write_text(original, encoding="utf-8")
+            evidence = cycle / "evidence.md"
+            evidence.write_text("# Preserved evidence\n", encoding="utf-8")
+            with patch("subprocess.run") as run, patch("subprocess.Popen") as popen:
+                result = error_relay.spawn_repair_agent(
+                    {"run_dir": str(cycle), "status": "FAILED"}, {"error": "fixture failure"})
+            self.assertTrue(result.endswith(":sdk_internal_hold"))
+            self.assertEqual(state.read_text(encoding="utf-8"), original)
+            self.assertEqual(evidence.read_text(encoding="utf-8"), "# Preserved evidence\n")
+            run.assert_not_called()
+            popen.assert_not_called()
 
     def test_failed_relay_compatibility_records_internal_hold_no_tmux(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -77,14 +113,14 @@ class ErrorRelayTest(unittest.TestCase):
                 "run_dir": str(cycle), "run_id": "cycle-0023", "goal_id": "g",
                 "status": "OVER", "phase": "complete",
             }
-            with patch.object(cycle_audit_relay, "AUDIT_SKILL", Path(temp) / "SKILL.md"), \
+            adapter, environment = create_audit_adapter(Path(temp))
+            with patch.dict(os.environ, environment), \
                  patch("theory_master.observability.cycle_audit_relay.subprocess.run") as run:
-                cycle_audit_relay.AUDIT_SKILL.write_text("# audit\n", encoding="utf-8")
                 run.return_value = SimpleNamespace(returncode=0, stdout="started", stderr="")
                 self.assertEqual(cycle_audit_relay.spawn_cycle_audit_agent(state), "started")
             cmd = run.call_args.args[0]
             self.assertEqual(cmd[0], sys.executable)
-            self.assertEqual(Path(cmd[1]), cycle_audit_relay.RELAY_STARTER)
+            self.assertEqual(Path(cmd[1]), adapter.relay)
 
 
     def test_cycle_audit_relay_retries_one_transient_start_failure(self):
@@ -97,10 +133,10 @@ class ErrorRelayTest(unittest.TestCase):
             }
             first = SimpleNamespace(returncode=2, stdout="", stderr="transient marker failure")
             second = SimpleNamespace(returncode=0, stdout="agent:TM审计-cycle-0023.0\n", stderr="")
-            with patch.object(cycle_audit_relay, "AUDIT_SKILL", Path(temp) / "SKILL.md"), \
+            adapter, environment = create_audit_adapter(Path(temp))
+            with patch.dict(os.environ, environment), \
                  patch("theory_master.observability.cycle_audit_relay.subprocess.run", side_effect=[first, second]) as run, \
                  patch("theory_master.observability.cycle_audit_relay.time.sleep"):
-                cycle_audit_relay.AUDIT_SKILL.write_text("# audit\n", encoding="utf-8")
                 result = cycle_audit_relay.spawn_cycle_audit_agent(state)
             self.assertEqual(result, "agent:TM审计-cycle-0023.0")
             self.assertEqual(run.call_count, 2)

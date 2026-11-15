@@ -1,4 +1,4 @@
-# 2026-10-17 ResearchGraph V2 迁移记录
+# ResearchGraph V2 迁移与验证规范
 
 ## 已注册旧任务的启动兼容（2026-10-23）
 
@@ -6,15 +6,19 @@
 
 查看页面、任务发现和 TaskSpec 加载不执行转换。命令行旧任务可先运行 `python -m theory_master.task_graph_upgrade /absolute/task/home`，再正常 resume。升级沿用既有导入器的科学语义，历史 Cycle 裁决不升级为新的全 H 裁决。
 
-> 本文记录旧 Canvas 切换到 SQLite 时的事实和保全边界。2026-10-18 起，**“每 H 唯一 Outcome”不再是现行科学语义**；现行规范见 [ResearchGraph设计文档.md](./ResearchGraph设计文档.md)。此前的唯一 H Outcome 行保留为兼容的全 H 状态，不得覆盖每轮独立的 Cycle Outcome。
+> 本文规定旧 Canvas 切换到 SQLite 时的验证和保全边界。2026-10-18 起，**“每 H 唯一 Outcome”不再是现行科学语义**；现行规范见 [ResearchGraph设计文档.md](./ResearchGraph设计文档.md)。此前的唯一 H Outcome 行保留为兼容的全 H 状态，不得覆盖每轮独立的 Cycle Outcome。
 
-## V2 切换时的事实
+## V2 切换的保全要求
 
-- 正式 `exploration.canvas` 已由 `science_graph.sqlite3` 原位生成。原始 Canvas 保留 `exploration.canvas.before-outcome-add9efdaebd1.bak` 和 `exploration.canvas.before-sqlite-add9efdaebd1.bak`；原始 SHA-256 为 `add9efdaebd1364f326df816b136826259647a64e03cb52c2c4be92ae98321af`。
-- 备份含 Canvas、Research Plan、Worker runtime、branch claims、Cycle 状态与调度器状态，目录为任务 1 `.theory-master/migration-backups/researchgraph-v2-20261017-full-cutover/`。
-- 原始 275 节点、326 边及全部位置已归档；迁移时为 95 H、95 旧式 H Outcome、112 条历史 Cycle evaluation、163 个投影 H/E 节点、214 条显示边。后续真实运行已增加 Cycle evaluation，迁移数量不可当作现值。
+- 转换前记录原始 Canvas 的 SHA-256，并保留全字节备份。备份名和目录由当前迁移操作生成，不依赖某个历史任务的固定路径或摘要。
+- 备份范围包含 Canvas、Research Plan、Worker runtime、branch claims、Cycle 状态与调度器状态；备份只保存在操作者控制的任务数据目录，不随公开源码分发。
+- 转换前后分别统计 H、External、Decision、Cycle evaluation、节点与边，逐项核对来源映射、位置和引用。不同任务的计数可以不同，不能把固定样本的统计数字当作成功标准。
 - 旧 Decision 的 supported/rejected 仅是该轮冻结检验的局部裁决，不自动成为宽泛历史 H 的全命题状态。旧 Finding/StageSummary 没有明确 Judge 授权时以 External 保存。
 - 旧 Canvas 全字节、原始节点与边、Decision ID、报告及 Evidence 链接必须保持可追溯。`exploration.canvas` 是 SQLite 的只读投影，不是独立写入权威。
+
+## 可合成的迁移验收
+
+在临时目录手写最小旧 Canvas：包含冻结命题、带明确 Cycle 归属的局部裁决和一个未裁决来源，并分别建立报告与 Evidence 文件。记录原始文件哈希后运行预览和转换，检查科学身份、局部裁决范围、引用及 SQLite 完整性。随后重放同一转换验证幂等；对缺失来源、重复归属、人工修改、已有数据库、活跃 Worker claim 和未退出的 Runner 分别验证拒绝行为。失败不得覆盖原始资料或留下可误用的数据库。这些确定性检查不调用模型，也不代表新的科研结论。
 
 ## 向每 Cycle 一个 Outcome 整理
 

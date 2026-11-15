@@ -19,7 +19,7 @@ def mode_snapshot(run: dict[str, Any]) -> dict[str, Any]:
     path = root / ".theory-master" / "worker_mode.json"
     default = {"enabled": False, "desired_agents": 2}
     try:
-        if path.is_symlink() or (path.exists() and path.stat().st_size > 4096):
+        if path.is_symlink() or (path.exists() and path.stat().st_size > 1048576):
             return default
         raw = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
         if (raw.get("schema") == "theory-master/worker-mode/v1"
@@ -54,23 +54,25 @@ def script(ident: str) -> str:
       window.__tmAddAgentConsole = true;
       const ident = __TASK_ID__;
       document.addEventListener('click', async event => {
-        const button = event.target.closest?.('[data-worker-add],[data-worker-cancel],[data-worker-dismiss]');
+        const button = event.target.closest?.('[data-worker-add],[data-worker-cancel],[data-worker-close]');
         if (!button || button.disabled) return;
         event.preventDefault();
         const nav = button.closest('.tm-worker-tabs');
         const info = nav?.querySelector('[data-worker-feedback]');
         const isCancel = button.hasAttribute('data-worker-cancel');
-        const isDismiss = button.hasAttribute('data-worker-dismiss');
-        const ctx = isDismiss ? button : document.querySelector('[data-worker-request-context]');
+        const isClose = button.hasAttribute('data-worker-close');
+        const ctx = isClose ? button : document.querySelector('[data-worker-request-context]');
         if (!ctx) {
           if (info) { info.hidden = false; info.textContent = '无法读取任务状态，请刷新页面。'; }
           return;
         }
-        if (isDismiss && !confirm('收起已结束的 Agent？科研 Cycle、日志和历史结果会保留，正在运行的 Agent 无法收起。')) return;
-        const action = isDismiss ? 'worker_control' : isCancel ? 'cancel_pending_worker' : 'add_worker';
-        const value = isDismiss ? {worker_id: button.dataset.workerDismiss, operation: 'dismiss'} : null;
-        const label = isDismiss ? '收起' : isCancel ? '撤销待分配请求' : '申请新增';
+        const workerId = button.dataset.workerClose;
+        if (isClose && !confirm('关闭 Agent ' + workerId.split('-')[1] + '？\n此 Agent 将退出调度；运行中的工作会先在安全边界暂停。\n当前 Cycle 不再继续，已有科研记录和日志保留。')) return;
+        const action = isClose ? 'worker_control' : isCancel ? 'cancel_pending_worker' : 'add_worker';
+        const value = isClose ? {worker_id: workerId, operation: 'close'} : null;
+        const label = isClose ? '关闭' : isCancel ? '撤销待分配请求' : '申请新增';
         button.disabled = true;
+        if (nav) nav.dataset.workerMutating = '1';
         if (info) { info.hidden = false; info.textContent = '正在' + label + ' Agent…'; }
         try {
           const response = await fetch('/api/run/' + ident + '/action', {
@@ -80,11 +82,21 @@ def script(ident: str) -> str:
               request_id: crypto.randomUUID().replace(/-/g, ''),
               expected_cycle: ctx.dataset.cycle || '',
               expected_status: ctx.dataset.status || '',
-              expected_launch_id: isDismiss ? '' : ctx.dataset.launch})
+              expected_launch_id: isClose ? '' : ctx.dataset.launch})
           });
           const result = await response.json();
           if (!response.ok || !result.ok) throw new Error(result.error || '操作未完成');
-          location.reload();
+          const outcome = result.outcome || {};
+          if (isClose && outcome.status === 'closing') {
+            // Keep the card until the worker process has actually exited.
+            // The regular console poll will display durable CLOSING/errors.
+            button.setAttribute('aria-busy', 'true');
+            if (info) info.textContent = '正在安全暂停并关闭此 Agent，科研记录会保留。';
+          } else if (isClose && new URL(location.href).searchParams.get('worker') === workerId) {
+            location.assign('/run/' + ident + '/?worker=worker-1');
+          } else {
+            location.reload();
+          }
         } catch (error) {
           button.disabled = false;
           if (info) {
@@ -92,6 +104,8 @@ def script(ident: str) -> str:
             info.textContent = label + '失败：' + String(error.message || error)
               + '。请刷新任务状态后再试。';
           }
+        } finally {
+          if (nav) delete nav.dataset.workerMutating;
         }
       });
     })();'''.replace('__TASK_ID__', json.dumps(ident))

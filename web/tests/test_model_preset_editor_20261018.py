@@ -1,4 +1,4 @@
-"""Clickable MODEL header, six profile previews, Worker-only guarded save."""
+"""Public MODEL presets and Worker-only guarded save."""
 import json
 from pathlib import Path
 from unittest import mock
@@ -8,9 +8,10 @@ from bs4 import BeautifulSoup
 
 from tm_observer.model_preset_ui import dialog_html, script
 from tm_observer.run_control import OperatorError, _validated_value, execute
+from theory_master.backend_config import MODEL_PROFILES
 
 
-def test_dialog_has_six_distinct_six_agent_model_effort_configs(monkeypatch):
+def test_dialog_has_three_public_six_agent_model_effort_configs():
     soup=BeautifulSoup(dialog_html(),"html.parser")
     assert soup.select_one("#tm-model-preset-dialog form")
     assert [o["value"] for o in soup.select("[data-model-preset-select] option")] == [
@@ -31,7 +32,7 @@ def test_preset_save_is_immediate_intent_but_never_interrupts_active_turn():
     assert '结束后再切换' in text
     assert '不必等待下一个 Cycle' in text
     source = script('a' * 16, 'worker-1')
-    assert "action:'set_worker_profile'" in source
+    assert "action:selectedWorker?'set_worker_profile':'set_task_profile'" in source
     assert '未运行的角色下一次调用使用新档位' in source
     assert '运行中的角色本次调用结束后使用新档位' in source
     assert '下一 Cycle 生效' not in source
@@ -87,7 +88,7 @@ def test_exact_worker_identity_guard_and_sdk_save_route(tmp_path):
             execute(run,wrong)
 
 
-def test_full_console_contains_preset_modal_and_stable_delegated_handler(tmp_path):
+def test_full_console_contains_preset_modal_and_stable_delegated_handler(tmp_path, monkeypatch):
     from tm_observer.run_views import run_detail_body
     root=tmp_path/'research'
     worker=root/'.theory-master/workers/worker-1'

@@ -155,19 +155,20 @@ def test_g10_only_plan_change_or_own_h_deleted_or_closed(tmp_path):
     assert check(hypothesis_id=None)["reason"] == "research_plan_changed"
 
 
-def paused_cycle(tmp_path: Path, *, state_status: str = "paused", worker_status: str = "PAUSED"):
+def paused_cycle(tmp_path: Path, *, state_status: str = "paused", worker_status: str = "PAUSED",
+                 worker_id: str = "worker-1"):
     spec, root = task(tmp_path)
     claims = CycleClaims(root, tmp_graph(spec))
-    claim = claims.claim_cycle("worker-1")
+    claim = claims.claim_cycle(worker_id)
     cycle = reserve_cycle_number(root, "g")
-    claims.bind_cycle("worker-1", claim["claim_id"], claim["fencing_epoch"], cycle)
-    claims.bind_hypothesis("worker-1", claim["claim_id"], claim["fencing_epoch"], "H-0001")
-    claims.update("worker-1", claim["claim_id"], claim["fencing_epoch"], action="pause")
+    claims.bind_cycle(worker_id, claim["claim_id"], claim["fencing_epoch"], cycle)
+    claims.bind_hypothesis(worker_id, claim["claim_id"], claim["fencing_epoch"], "H-0001")
+    claims.update(worker_id, claim["claim_id"], claim["fencing_epoch"], action="pause")
     (root / cycle / "research_state.json").write_text(json.dumps({
-        "worker_id": "worker-1", "status": state_status, "resumable": True,
+        "worker_id": worker_id, "status": state_status, "resumable": True,
         "hypothesis_lock": {"id": "H-0001"},
         "recovery": {"kind": "RuntimeError", "message": "Traceback transient", "at": "t"}}))
-    wr.save_worker(root, "worker-1", status=worker_status, current_cycle=cycle, account=None,
+    wr.save_worker(root, worker_id, status=worker_status, current_cycle=cycle, account=None,
                    claim_id=claim["claim_id"], epoch=claim["fencing_epoch"], pid=None)
     return spec, root, claims, claim, cycle
 
@@ -202,14 +203,14 @@ def test_resume_after_goal_seal_is_refused_without_launch(tmp_path, monkeypatch)
 
 
 def test_dismiss_refuses_live_cycle_claim_and_allows_goal_stopped(tmp_path):
-    spec, root, claims, claim, _cycle = paused_cycle(tmp_path)
-    wr.save_worker(root, "worker-2", status="OVER")
-    wr.save_worker(root, "worker-1", status=wr.STOPPED_GOAL_COMPLETED)
+    spec, root, claims, claim, _cycle = paused_cycle(tmp_path, worker_id="worker-2")
+    wr.save_worker(root, "worker-1", status="OVER")
+    wr.save_worker(root, "worker-2", status=wr.STOPPED_GOAL_COMPLETED)
     with pytest.raises(ValueError, match="still owns a research claim"):
-        wr.worker_action(spec, "worker-1", "dismiss")
-    claims.update("worker-1", claim["claim_id"], claim["fencing_epoch"], action="stopped_goal")
-    wr.save_worker(root, "worker-1", claim_id=None, epoch=None)
-    assert wr.worker_action(spec, "worker-1", "dismiss")["status"] == "hidden"
+        wr.worker_action(spec, "worker-2", "dismiss")
+    claims.update("worker-2", claim["claim_id"], claim["fencing_epoch"], action="stopped_goal")
+    wr.save_worker(root, "worker-2", claim_id=None, epoch=None)
+    assert wr.worker_action(spec, "worker-2", "dismiss")["status"] == "hidden"
 
 
 def test_dispatch_treats_waiting_and_goal_stop_as_non_incidents(tmp_path):

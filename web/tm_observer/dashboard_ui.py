@@ -1243,7 +1243,7 @@ def _breadcrumb(active: str, parent: str | None, leaf: str | None = None) -> tup
     elif active == "explorer":
         if task_parent:
             segments += [("Task List", "/run/"), ("Task Console", task_parent)]
-        segments.append(("Explore map", None))
+        segments.append(("图谱", None))
     elif active == "workflow":
         if parent == "/workflow-stage-preview/":
             segments += [("Workflow", "/workflow-stage-preview/"),
@@ -1274,6 +1274,7 @@ def _breadcrumb(active: str, parent: str | None, leaf: str | None = None) -> tup
 
 
 from .supervisor_bell_ui import BELL_HTML, BELL_STYLE, BELL_SCRIPT
+from .research_chat_widget import WIDGET_STYLE, widget_html
 
 
 def dashboard_shell(title: str, body: str, active: str = "workflow", *,
@@ -1304,9 +1305,11 @@ def dashboard_shell(title: str, body: str, active: str = "workflow", *,
         + f'<span class="tm-nav-text">{label}</span></a>'
         for key, label, url in _VIEWS
     )
+    chat_widget = widget_html(task_console.removeprefix("/run/").strip("/") if task_console else "") if active != "research_chat" else ""
+    chat_style = WIDGET_STYLE if chat_widget else ""
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">{THEME_BOOTSTRAP_SCRIPT}<title>{html.escape(title)}</title>{STYLE}{BELL_STYLE}</head>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">{THEME_BOOTSTRAP_SCRIPT}<title>{html.escape(title)}</title>{STYLE}{BELL_STYLE}{chat_style}</head>
 <body class="tm-{active}-view"><div class="tm-app">
 <div class="tm-sidebar-edge" data-sidebar-edge aria-hidden="true"></div>
 <aside class="tm-sidebar" aria-label="Primary navigation">
@@ -1424,4 +1427,4 @@ def dashboard_shell(title: str, body: str, active: str = "workflow", *,
     if(event.key===key)apply(event.newValue);
   }});
 }})();
-</script>{BELL_SCRIPT}</body></html>"""
+</script>{BELL_SCRIPT}{chat_widget}</body></html>"""

@@ -57,3 +57,15 @@ def test_worker_console_passes_account_pin_to_initial_and_live_quota(tmp_path):
     doc=BeautifulSoup(body,"html.parser")
     assert doc.select_one("[data-quota-account]").get_text(strip=True)=="Codex 2"
     assert "5 小时剩余：0%" in doc.select_one("[data-quota-value]").get_text(strip=True)
+
+
+def test_worker_quota_missing_duration_does_not_invent_five_hour_or_week_labels():
+    snapshot = json.loads(json.dumps(SNAPSHOT))
+    for account in snapshot["accounts"]:
+        for key in ("primary", "secondary"):
+            account[key].pop("window_duration_mins")
+    doc = BeautifulSoup(_codex_quota_metric_card(snapshot, worker_account="2"), "html.parser")
+    assert doc.select_one("[data-quota-account]").get_text(strip=True) == "Codex 2"
+    assert doc.select_one("[data-quota-value]").get_text(strip=True) == "时长未知窗口剩余：0%"
+    assert doc.select_one("[data-quota-week]").get_text(strip=True) == "时长未知窗口剩余：84%"
+    assert doc.select_one('[role="progressbar"]')["aria-label"] == "时长未知窗口剩余额度"

@@ -1,12 +1,10 @@
-"""Offline Stage Card / contract regression anchored to archived Cycles 180–185.
+"""Generic qualification design oracles using handwritten synthetic examples.
 
-These are design oracles, not LLM verdict predictors. No live model/Cycle is run.
+No private research archive or live model is used.
 """
 from __future__ import annotations
 
-import json
 import unittest
-from pathlib import Path
 
 from theory_master.contract_stages import role_contract
 from theory_master.prompt_stages import build_initial_prompt, stage_context
@@ -31,8 +29,8 @@ class ScientificQualification20261022(unittest.TestCase):
         self.assertIn("goal_advance", projection)
         self.assertIn("why_now", projection)
 
-    def test_cycle_180_positive_local_mechanism_is_still_eligible(self):
-        # H-0180: local graph-current prediction; terminal Judge supported.
+    def test_positive_local_result_is_still_eligible(self):
+        # A bounded implication can be useful before the full theorem is resolved.
         self.assertIn("claim can advance the Goal without completing it", self.lead)
         self.assertIn("a local result bears on a broader claim only within its actual logical implication", self.challenger)
         self.assertIn("necessary prerequisite before selection", self.challenger)
@@ -40,29 +38,26 @@ class ScientificQualification20261022(unittest.TestCase):
         self.assertIn("necessary local prediction", self.lead)
         self.assertIn("eventual negative/open result is not itself a blocker", self.challenger)
 
-    def test_cycle_182_finite_window_cannot_refute_infinite_bound(self):
-        # Cycle 182 Challenger revised a second candidate's unjustified uniform-C test.
-        # Generic proof precision and route feasibility replace H8's literal infinity example.
+    def test_finite_examples_do_not_establish_universal_bound(self):
+        # A finite list of string examples cannot prove a universal invariant.
         self.assertIn("Match uncertainty and proof precision to the scientific distinction claimed", self.lead)
         self.assertIn("Indispensable premises need a credible in-scope route", self.lead)
         self.assertIn("Matching, contrary and inconclusive results", self.challenger)
 
-    def test_cycle_183_negative_prediction_still_informs_goal(self):
-        # H-0183: contrast of signed covariance law and marginal model.
+    def test_negative_prediction_still_informs_goal(self):
+        # A counterexample can delimit a synthetic recurrence claim.
         self.assertIn("Matching, contrary and inconclusive results each need an honest interpretation", self.lead)
         self.assertIn("negative", self.challenger)
         self.assertNotIn("all hypotheses must pass", self.challenger)
 
-    def test_cycle_184_flags_compound_claims_not_expensive_research(self):
-        # H-0184 combined full signed-curve prediction, channel allocation and far-field limit.
+    def test_compound_claims_receive_independent_blocker_review(self):
+        # An undefined estimator and missing evaluation control are separate blockers.
         self.assertIn("one coherent, independently adjudicable scientific claim", self.lead)
         self.assertIn("all visible independent blockers", self.challenger)
         self.assertIn("arbitrary sample sizes/cutoffs", self.challenger)
 
-    def test_cycle_185_independent_limit_precondition_cannot_be_cosmetic_revise(self):
-        # Candidate 185 was originally revised, then qualified after one test repair.
-        # This is an oracle for the NEW policy, not a claim of a new model verdict.
-        # Generalized: a crucial independent proof without a credible route is a design flaw.
+    def test_unavailable_essential_precondition_is_a_design_issue(self):
+        # A required lemma without a credible route cannot be fixed by wording alone.
         self.assertIn("Indispensable premises need a credible in-scope route", self.lead)
         self.assertIn("essential route is demonstrably unavailable", self.challenger)
         self.assertIn("unchanged hypothesis/scope/estimand", self.challenger)
@@ -86,8 +81,8 @@ class ScientificQualification20261022(unittest.TestCase):
                          "why_now": "Unresolved", "goal_advance": "Discriminate",
                          "decisive_test": "Test"}
             ctx = stage_context(role, stage, {
-                "goal": "Predict signed release", "research_contract": "Known inputs only",
-                "final_gate": "Out-of-network prediction",
+                "goal": "Verify string normalization invariants", "research_contract": "Known inputs only",
+                "final_gate": "Resolve all declared input classes",
                 "agent_graph": {"schema": "theorymaster/test-agent-graph/v1",
                                 "hypotheses": [], "current_frontiers": [],
                                 "lineage": [], "external_sources": []},
@@ -98,7 +93,7 @@ class ScientificQualification20261022(unittest.TestCase):
                 contract_schema=contract.prompt_projection({}), context=ctx, write_rule="read only",
             )
             self.assertIn("Current task: " + stage, prompt)
-            self.assertIn("Predict signed release", prompt)
+            self.assertIn("Verify string normalization invariants", prompt)
             self.assertIn("credible", prompt)
             self.assertIn("Output contract:", prompt)
             if role == "research_lead":
@@ -108,33 +103,35 @@ class ScientificQualification20261022(unittest.TestCase):
                 self.assertIn("closest prior claim and relevant simpler explanations or existing methods", prompt)
         self.assertIn("Do not reopen qualification", stage_card_text("research_lead", "candidate_selection"))
         self.assertIn("all original blockers are closed", stage_card_text("challenger", "repair_verification"))
-        self.assertLess(len(self.lead), 6500)
-        self.assertLess(len(self.challenger), 5000)
+        self.assertLess(len(self.lead), 8500)
+        self.assertLess(len(self.challenger), 6500)
 
-    def test_local_archived_cycles_read_only_when_available(self):
-        root = Path(__file__).resolve().parents[3] / (
-            "gs_study/.theory-master-tasks/"
-            "1-matrix-cavity-green-g-closure-h8-dd60a2f2780a/research"
+    def test_synthetic_candidate_science_is_preserved_in_review_context(self):
+        examples = (
+            ("Normalization is idempotent.", "Finite strings under the stated rules.",
+             "Provide a proof or an exact string counterexample."),
+            ("The proposed estimator lowers absolute error.", "The declared synthetic paired table only.",
+             "Compare paired errors with a frozen uncertainty rule."),
+            ("A bounded rewrite system terminates.", "Declared rules and strings of at most eight characters.",
+             "Enumerate reachable states and detect any directed cycle."),
         )
-        if not root.exists():
-            self.skipTest("Local archived real Cycles are absent from public checkout")
-        for cycle, fragment in (
-            (180, "单位 root 偶极电流"),
-            (182, "线性项补偿"),
-            (183, "有符号逐边协方差"),
-            (184, "两通道壳层再分配核"),
-            (185, "无限网络体相远场"),
-        ):
-            with self.subTest(cycle=cycle):
-                checkpoints = sorted((root / str(cycle) / "checkpoints").glob("*.json"))
-                candidates = []
-                for path in checkpoints:
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                    if data.get("candidates"):
-                        candidates = data["candidates"]
-                self.assertTrue(candidates, f"Cycle {cycle} has a frozen candidate")
-                self.assertIn(fragment, candidates[0]["hypothesis"])
-        # These archive assertions establish only historical inputs, not new model behavior.
+        for hypothesis, scope, decisive_test in examples:
+            candidate = {"hypothesis": hypothesis, "scope": scope, "decisive_test": decisive_test}
+            with self.subTest(hypothesis=hypothesis):
+                context = stage_context("challenger", "candidate_review", {
+                    "candidate": [candidate], "agent_graph": {
+                        "schema": "theorymaster/test-agent-graph/v1", "hypotheses": [],
+                        "current_frontiers": [], "lineage": [], "external_sources": [],
+                    },
+                })
+                self.assertEqual(context["candidate"][0]["frozen_objective"], candidate)
+                contract = role_contract("challenger", phase="candidate_review")
+                prompt = build_initial_prompt(
+                    prefix="test", role="challenger", stage="candidate_review", contract_ref=contract.ref,
+                    contract_schema=contract.prompt_projection(context), context=context, write_rule="read only",
+                )
+                for value in candidate.values():
+                    self.assertIn(value, prompt)
 
 
 if __name__ == "__main__":

@@ -71,7 +71,7 @@ class StaticReviewFixesTest(unittest.TestCase):
             card = stage_card_text("investigator", stage)
             self.assertNotIn("an empty remaining_scientific_question", card)
             self.assertNotIn("actionable_no_progress_correction", card)
-            self.assertIn("findings", str(role_contract("investigator", phase=stage).prompt_schema))
+            self.assertIn("findings", card)
             self.assertNotIn("Report unresolved scientific prerequisites in findings[].limitations", card)
             projected = stage_context("investigator", stage, {"hypothesis_lock": {"hypothesis": "H"}, "actionable_no_progress_correction": "OLD"})
             self.assertNotIn("actionable_no_progress_correction", projected)
@@ -135,8 +135,11 @@ class StaticReviewFixesTest(unittest.TestCase):
 
     def test_reporter_has_no_canvas_maintenance_contract(self):
         report = role_contract("reporter", phase="report")
-        self.assertEqual(set(report.prompt_schema), {"title", "summary"})
-        report.validate({"title": "Evidence report", "summary": "Scoped scientific result"}, {})
+        self.assertEqual(set(report.prompt_schema), {"title", "summary", "graph_summary"})
+        report.validate({"title": "Evidence report", "summary": "Scoped scientific result", "graph_summary": {
+            "conclusion": "Scoped scientific result", "basis": "Frozen comparison",
+            "scope": "Test domain", "open_question": "",
+        }}, {})
         with self.assertRaisesRegex(ValueError, "no phase contract"):
             role_contract("reporter", phase="canvas_maintenance")
 
@@ -165,16 +168,16 @@ class StaticReviewFixesTest(unittest.TestCase):
         procedure = procedure_card_text("research_lead", "frontier_proposal")
         challenger = stage_card_text("challenger", "candidate_review")
         self.assertLess(len(lead) + len(procedure), 10500)
-        for phrase in ("unmet Goal, Research Contract, Final Gate or necessary prerequisite",
-                       "discriminating consequence", "local contrary result",
-                       "new source of uncertainty", "blocking external scholarly gap"):
-            self.assertIn(phrase, lead)
-        for phrase in ("Frontier labels describe opportunities independently of graph leaves", "unmarked is unknown, not closed",
-                       "search formal research history beyond declared parents and recent Cycles across H, Outcomes and External records"):
+        for phrase in ("consequential unmet Goal", "necessary prerequisite",
+                       "scientifically distinct", "claim can advance the Goal without completing it",
+                       "new source of uncertainty", "novelty_check"):
+            self.assertIn(phrase, lead + procedure)
+        for phrase in ("independently of graph leaves and Judge verdicts",
+                       "unmarked is unknown, not closed", "agent_graph",
+                       "relevant goal_gate_attention rows, including closed H"):
             self.assertIn(phrase, procedure)
-        self.assertIn("lineage_anchor_node_ids", str(role_contract(
-            "research_lead", phase="frontier_proposal").prompt_schema))
-        self.assertIn("eventual negative/open result is not itself a blocker", challenger)
+        self.assertIn("Do not demand the research answer at qualification", challenger)
+        self.assertIn("credible in-scope route", challenger)
 
     def test_lead_second_literature_request_gets_one_correction_no_new_search(self):
         class RepeatedRequestBackend(FakeBackend):

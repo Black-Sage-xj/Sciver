@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import html
 import json
+import hashlib
+from pathlib import Path
+from functools import lru_cache
 from typing import Any
 
 from .project_setup_ui import setup_panel
@@ -105,6 +108,19 @@ _SCRIPT = """<script>
   const root = document.querySelector('.tm-research-chat');
   if (!root) return;
   const error = root.querySelector('.tm-research-error');
+  const embedded = root.dataset.embedded === 'true';
+  const chatHref = path => {
+    const url = new URL(path, location.origin);
+    if (embedded) {
+      url.searchParams.set('embed', '1');
+      const task = root.dataset.taskId || new URLSearchParams(location.search).get('task_id');
+      if (task) url.searchParams.set('task_id', task);
+    }
+    return url.pathname + url.search;
+  };
+  const navigateChat = path => location.assign(chatHref(path));
+  if (embedded) root.querySelectorAll('a[href^="/research-chat/"]').forEach(link => link.href = chatHref(link.getAttribute('href')));
+
   const historyToggle = root.querySelector('[data-research-history-toggle]');
   if (historyToggle) {
     const historyKey = 'tm-research-chat-history-collapsed-v1';
@@ -115,15 +131,28 @@ _SCRIPT = """<script>
       historyToggle.setAttribute('aria-label', label);
       historyToggle.title = label;
       historyToggle.textContent = collapsed ? '‹' : '›';
+      root.querySelector('[data-research-embedded-history]')?.setAttribute('aria-expanded', String(!collapsed));
     };
     let collapsed = false;
-    try { collapsed = localStorage.getItem(historyKey) === '1'; } catch (_err) {}
+    try { collapsed = embedded || localStorage.getItem(historyKey) === '1'; } catch (_err) { collapsed = embedded; }
     setHistoryCollapsed(collapsed);
-    historyToggle.addEventListener('click', () => {
+    const toggleHistory = () => {
       const next = !root.classList.contains('history-collapsed');
       setHistoryCollapsed(next);
-      try { localStorage.setItem(historyKey, next ? '1' : '0'); } catch (_err) {}
-    });
+      if (!embedded) { try { localStorage.setItem(historyKey, next ? '1' : '0'); } catch (_err) {} }
+    };
+    historyToggle.addEventListener('click', toggleHistory);
+    root.querySelector('[data-research-embedded-history]')?.addEventListener('click', toggleHistory);
+    if (embedded) {
+      root.addEventListener('click', event => {
+        if (!event.target.closest('.tm-research-history,[data-research-embedded-history]')) setHistoryCollapsed(true);
+      });
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && !root.classList.contains('history-collapsed')) {
+          event.preventDefault();setHistoryCollapsed(true);
+        }
+      });
+    }
   }
   async function request(path, body) {
     const response = await fetch(path, {method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-TM-Operator-Intent':'1'},body:JSON.stringify(body || {})});
@@ -178,6 +207,8 @@ _SCRIPT = """<script>
       const savedTask = localStorage.getItem(taskKey);
       if (savedTask && Array.from(taskSelect.options).some(option => option.value === savedTask)) taskSelect.value = savedTask;
     } catch (_err) {}
+    const contextTask = root.dataset.taskId;
+    if (contextTask && Array.from(taskSelect.options).some(option => option.value === contextTask)) taskSelect.value = contextTask;
     if (!taskSelect.value && taskSelect.options.length > 1) taskSelect.selectedIndex = 1;
     const rememberTask = () => { try { localStorage.setItem(taskKey, taskSelect.value); } catch (_err) {} };
     rememberTask();
@@ -302,7 +333,7 @@ _SCRIPT = """<script>
         }
         await request('/api/research-chat/' + encodeURIComponent(pendingSessionId) + '/message', {content});
         clearActiveDraft();
-        location.assign('/research-chat/?session=' + encodeURIComponent(pendingSessionId));
+        navigateChat('/research-chat/?session=' + encodeURIComponent(pendingSessionId));
       } catch (err) {
         // A timed-out POST may still have been accepted; inspect persisted history before inviting a duplicate send.
         if (pendingSessionId) {
@@ -311,7 +342,7 @@ _SCRIPT = """<script>
             const state = await response.json();
             if (response.ok && Array.isArray(state.messages) && state.messages.some(message => message.role === 'user' && message.content === content)) {
               clearActiveDraft();
-              location.assign('/research-chat/?session=' + encodeURIComponent(pendingSessionId));
+              navigateChat('/research-chat/?session=' + encodeURIComponent(pendingSessionId));
               return;
             }
           } catch (_readErr) {}
@@ -364,7 +395,7 @@ _SCRIPT = """<script>
     button.disabled = true;
     try {
       const data = await request('/api/research-chat/session', {mode,task_id:taskId || undefined});
-      location.assign('/research-chat/?session=' + encodeURIComponent(data.session_id));
+      navigateChat('/research-chat/?session=' + encodeURIComponent(data.session_id));
     } catch (err) {
       button.disabled = false;
       if (error) error.textContent = String(err.message || err);
@@ -395,6 +426,12 @@ _SCRIPT = """<script>
   }));
 })();
 </script>"""
+
+
+@lru_cache(maxsize=1)
+def _asset_version() -> str:
+    bundle = Path(__file__).resolve().parent / "research_chat_dist" / "research-chat.js"
+    return hashlib.sha256(bundle.read_bytes()).hexdigest()[:12]
 
 
 def _e(value: Any) -> str:
@@ -436,12 +473,14 @@ def _action(value: Any) -> str:
     )
 
 
-def page_body(snapshot: dict[str, Any], *, mode: str = "research") -> str:
+def page_body(snapshot: dict[str, Any], *, mode: str = "research", embedded: bool = False, task_id: str = "") -> str:
     is_supervisor = mode == "supervisor"
     tasks = snapshot.get("tasks") or []
     sessions = snapshot.get("sessions") or []
     session = snapshot.get("session") if isinstance(snapshot.get("session"), dict) else None
     sid = str(session.get("id") or "") if session else ""
+    valid_tasks = {str(task.get("id")): str(task.get("label") or task.get("id")) for task in tasks if isinstance(task, dict)}
+    task_id = str(session.get("task_id") or "") if session else (task_id if task_id in valid_tasks else "")
     model = str(session.get("model") or "gpt-6-sol") if session else "gpt-6-sol"
     models = tuple(snapshot.get("available_models") or ("gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol"))
     model_options = "".join(f'<option value="{_e(item)}"{" selected" if item == model else ""}>{_e(item)}</option>' for item in models)
@@ -478,6 +517,17 @@ def page_body(snapshot: dict[str, Any], *, mode: str = "research") -> str:
             '<h3>暂无通知触发的 Supervisor 对话</h3>'
             '<p>从待处理通知打开一次 Supervisor 对话后，它会保存在右侧历史列表中。</p>'
             '</div></div>'
+        )
+    elif not valid_tasks:
+        from .onboarding_ui import first_use_panel
+        body = (
+            '<div class="tm-research-entry"><h2>科研对话需要一个项目任务</h2>'
+            '<p>创建任务后，再回来选择项目并开始对话。发送聊天消息会调用模型并消耗账号额度。</p>'
+            + setup_panel(str(snapshot.get("workspace") or ""))
+            + '<details><summary>命令行与官方 Test0 入门</summary>' + first_use_panel() + '</details>'
+            + '<details class="tm-research-migrate"><summary>从已有工作迁移初始化（高级功能）</summary>'
+            '<p>已有科研资料时可使用模型协助迁移；发送消息会消耗模型额度。</p>'
+            '<button type="button" data-research-mode="migration">迁移已有工作并初始化任务</button></details></div>'
         )
     else:
         cards = (
@@ -520,9 +570,12 @@ def page_body(snapshot: dict[str, Any], *, mode: str = "research") -> str:
             '<button type="button" data-research-mode="migration">迁移已有工作并初始化任务</button></details>'
             '</div>'
         )
+    if embedded and not session:
+        body = body.replace('选择推荐问题，或直接输入自己的问题；新对话会自动保存在右侧历史中。', '结合项目记录，讨论问题与下一步。')
+        body = body.replace('直接输入任何科研问题，不必选择上面的推荐内容…', '问问研究进展、证据或下一步…')
     streaming = bool(session and session.get("streaming"))
     asset_tags = ('<link rel="stylesheet" href="/research-chat/assets/research-chat.css">'
-                  '<script type="module" src="/research-chat/assets/research-chat.js"></script>' if session else "")
+                  f'<script type="module" src="/research-chat/assets/research-chat.js?v={_asset_version()}"></script>' if session else "")
     if session and not is_supervisor:
         title = str(session.get("title") or "Research Chat")
         toolbar_title = (
@@ -540,8 +593,18 @@ def page_body(snapshot: dict[str, Any], *, mode: str = "research") -> str:
                        f'{(" disabled" if not session or streaming else "")}>{model_options}</select>')
     history_action = ('' if is_supervisor else
                       '<a class="tm-research-new" href="/research-chat/?new=1" aria-label="新对话" title="新对话">＋ 新对话</a>')
+    if embedded:
+        toolbar_title = f'<h2 data-research-title-label>{_e(session.get("title") if session else "新对话")}</h2>'
+        toolbar_control = ('<button type="button" class="tm-research-compact-action" data-research-embedded-history '
+                           'aria-label="历史对话" aria-controls="tm-research-history-list" aria-expanded="false" title="历史对话">'
+                           '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8m0-5v5h5m4-1v5l3 2"/></svg></button>'
+                           '<a class="tm-research-compact-action" href="/research-chat/?new=1" aria-label="新对话" title="新对话">'
+                           '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></a>')
+    context_html = (f'<div class="tm-research-context" title="{_e(valid_tasks.get(task_id, task_id))}">'
+                    f'{_e(valid_tasks.get(task_id, task_id))}</div>' if embedded and session and task_id else '')
     return (
-        f'{asset_tags}<style>{_STYLE}</style><section class="tm-research-chat{" supervisor-mode" if is_supervisor else ""} '
+        f'{asset_tags}<style>{_STYLE}</style><section class="tm-research-chat{" supervisor-mode" if is_supervisor else ""}" '
+        f'data-embedded="{str(embedded).lower()}" data-task-id="{_e(task_id)}" '
         f'data-session="{_e(sid)}" data-mode="{"supervisor" if is_supervisor else "research"}" '
         f'data-session-mode="{_e(session.get("mode") or "") if session else ""}" '
         f'data-streaming="{str(streaming).lower()}" data-next-chat-mode="project" '
@@ -551,7 +614,7 @@ def page_body(snapshot: dict[str, Any], *, mode: str = "research") -> str:
         f'{toolbar_control}'
         '</header>'
         '<div class="tm-research-layout">'
-        f'<main class="tm-research-main">{body}</main>'
+        f'<main class="tm-research-main">{context_html}{body}</main>'
         '<aside class="tm-research-history" aria-label="历史对话">'
         f'<div class="tm-research-history-head"><h3>{"Supervisor 历史" if is_supervisor else "历史对话"}</h3>'
         '<button type="button" class="tm-research-history-toggle" data-research-history-toggle '
@@ -561,3 +624,70 @@ def page_body(snapshot: dict[str, Any], *, mode: str = "research") -> str:
         '</aside></div><p class="tm-research-error" role="alert"></p></section>'
         f'{_SCRIPT}'
     )
+
+
+_EMBED_STYLE = """
+html,body{height:100%;margin:0;overflow:hidden;background:#111114;color:#f4f4f5;color-scheme:dark;font:13px/1.5 system-ui,sans-serif}
+*{box-sizing:border-box}button,input,textarea,select{font:inherit}button,a{touch-action:manipulation}button{cursor:pointer}
+[hidden]{display:none!important}a{color:#bfdbfe}
+.tm-chat-embedded{padding:0 12px 10px}
+.tm-chat-embedded .tm-research-chat{position:relative}
+.tm-chat-embedded .tm-research-toolbar{gap:3px;margin:0;min-height:42px;flex:0 0 42px;border-bottom:1px solid #27272f}
+.tm-chat-embedded .tm-research-toolbar h2{font-size:12px;font-weight:550;color:#c7c9d1}
+.tm-research-compact-action{display:grid;place-items:center;width:28px;height:28px;border:0;border-radius:7px;background:transparent;color:#aab2c1;text-decoration:none}
+.tm-research-compact-action:hover{background:#292c36;color:#fff}
+.tm-research-compact-action svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+.tm-chat-embedded .tm-research-layout,.tm-chat-embedded .tm-research-chat.history-collapsed .tm-research-layout{display:flex;flex:1;min-height:0;overflow:hidden}
+.tm-chat-embedded .tm-research-main{width:100%;flex:1;min-width:0}
+.tm-chat-embedded .tm-research-history{position:absolute;inset:42px 0 0 auto;z-index:5;width:min(280px,100%);height:auto;max-height:none;padding:12px;border:1px solid #41414a;border-radius:10px;background:#1b1b22;box-shadow:-14px 0 35px #0007}
+.tm-chat-embedded .history-collapsed .tm-research-history{display:none}
+.tm-chat-embedded .tm-research-history-list{flex-direction:column;max-height:none;overflow:auto}
+.tm-chat-embedded .tm-research-history-list a{flex:none}
+.tm-chat-embedded .tm-research-context{flex:0 0 auto;padding:8px 2px 0;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#939dad}
+.tm-chat-embedded .tm-research-entry{gap:12px;padding:18px 0 8px;margin:0;flex:1;max-height:none;overflow:auto}
+.tm-chat-embedded .tm-research-empty{margin:0;text-align:left}
+.tm-chat-embedded .tm-research-empty h3{font-size:18px;margin:0 0 5px}
+.tm-chat-embedded .tm-research-empty p{font-size:11px;line-height:1.5}
+.tm-chat-embedded .tm-research-task-picker{gap:5px;font-size:10px}
+.tm-chat-embedded .tm-research-task-picker select{min-height:34px;padding:6px 8px;font-size:12px;max-width:100%}
+.tm-chat-embedded .tm-research-recommend-label,.tm-chat-embedded .tm-research-start span,.tm-chat-embedded .tm-research-migrate{display:none}
+.tm-chat-embedded .tm-research-starts{display:flex;gap:6px;flex:0 0 auto}
+.tm-chat-embedded .tm-research-start{min-height:0;flex:1;border-radius:8px;padding:7px 5px;background:#1d2029}
+.tm-chat-embedded .tm-research-start strong{font-size:11px;margin:0;white-space:nowrap}
+.tm-chat-embedded .tm-research-direct{margin-top:auto;border-radius:13px;padding:10px;gap:6px}
+.tm-chat-embedded .tm-research-direct-head label{font-size:12px}.tm-chat-embedded .tm-research-direct-head span{display:none}
+.tm-chat-embedded .tm-research-direct textarea{font-size:13px;min-height:76px;max-height:140px}
+.tm-chat-embedded .tm-research-direct-footer{gap:8px;align-items:flex-end;flex-wrap:nowrap}
+.tm-chat-embedded .tm-research-direct-settings{gap:5px;flex-wrap:wrap}
+.tm-chat-embedded .tm-research-direct-settings label{font-size:0;gap:0}
+.tm-chat-embedded .tm-research-direct select{max-width:148px;min-height:28px;font-size:10px;padding:4px}
+.tm-chat-embedded .tm-research-direct-hint,.tm-chat-embedded .tm-research-prompt-count,.tm-chat-embedded .tm-research-direct-clear{display:none}
+.tm-chat-embedded .tm-research-direct-send{min-width:48px;min-height:30px;padding:5px 8px;font-size:11px}
+.tm-chat-embedded #tm-research-chat-app{min-height:0}
+.tm-chat-embedded #tm-research-chat-app .tm-aui-shell,.tm-chat-embedded #tm-research-chat-app .tm-aui-thread{min-height:0;height:100%}
+.tm-chat-embedded #tm-research-chat-app .tm-aui-viewport{min-height:0}
+.tm-chat-embedded .tm-aui-message-list{gap:16px;padding:14px 0 20px}
+.tm-chat-embedded .tm-aui-assistant-content,.tm-chat-embedded .tm-aui-user-bubble{font-size:13px;line-height:1.7}
+.tm-chat-embedded .tm-aui-user-bubble{max-width:92%;padding:9px 11px;border-radius:13px}
+.tm-chat-embedded #tm-research-chat-app .tm-aui-composer-wrap{padding:6px 0 0}
+.tm-chat-embedded .tm-aui-composer{padding:9px 10px;border-radius:13px;gap:7px}
+.tm-chat-embedded .tm-aui-input{font-size:13px;min-height:40px;max-height:120px}
+.tm-chat-embedded .tm-aui-model-picker select{max-width:137px;font-size:10px;padding:7px 23px 7px 7px}
+.tm-chat-embedded .tm-aui-select-wrap select{min-width:72px;font-size:10px;padding:7px 23px 7px 7px}
+.tm-chat-embedded .tm-aui-composer-toolbar{gap:5px}.tm-chat-embedded .tm-aui-composer-settings{gap:5px}
+.tm-chat-embedded .tm-aui-effort-picker>span:first-child{display:none}
+.tm-chat-embedded .tm-aui-composer-actions{gap:4px}.tm-chat-embedded .tm-aui-send,.tm-chat-embedded .tm-aui-stop{width:29px;height:29px}
+.tm-chat-embedded .tm-aui-composer-note{display:none}
+.tm-chat-embedded .tm-research-action{flex:0 0 auto;max-height:45%;overflow:auto;margin:8px 0}
+.tm-chat-embedded .tm-research-error{flex:0 0 auto;max-height:70px;overflow:auto;margin:6px 0 0}
+.tm-chat-embedded :focus-visible{outline:2px solid #93c5fd;outline-offset:2px}
+"""
+
+
+def embedded_page(snapshot: dict[str, Any], *, task_id: str = "") -> str:
+    """Render the shared chat without the dashboard or a recursive launcher."""
+    return ('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>Sciver · Research Chat</title></head><body class="tm-chat-embedded">'
+            + page_body(snapshot, embedded=True, task_id=task_id)
+            + f'<style>{_EMBED_STYLE}</style><script src="/research-chat/widget.js" defer></script></body></html>')

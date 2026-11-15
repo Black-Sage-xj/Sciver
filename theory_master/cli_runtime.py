@@ -75,7 +75,13 @@ def literature_startup_check(routes=None) -> dict[str, object]:
 def smoke(live: bool) -> int:
     root = Path(tempfile.mkdtemp(prefix="theory-master-smoke-"))
     plan = root / "research_plan.md"
-    plan.write_text("# Smoke\n\n## Goal\n\nExercise isolated workflow.\n\n## Research Contract\n\nNo scientific claim or external file access.\n\n## Required Context\n\n- TM-SMOKE\n", encoding="utf-8")
+    plan.write_text(
+        "# Goal\n\nExercise an isolated workflow.\n\n"
+        "# Research Contract\n\nNo scientific claim or external file access.\n\n"
+        "# Final Gate\n\nThe fake workflow records a supported terminal verdict.\n\n"
+        "# Required Context\n\n- TM-SMOKE: synthetic offline self-check input.\n",
+        encoding="utf-8",
+    )
     binding = bootstrap(plan)
     spec = TaskSpec.from_config(binding.config_path)
     backend = CodexBackend(root, routes=DEFAULT_ROUTES) if live else CanonicalFakeBackend()
@@ -97,6 +103,9 @@ def _collector(spec: TaskSpec, *, cycle_audit: bool | None = None, error_repair:
     from theory_master.observability.collector import Collector
     if cycle_audit is None:
         cycle_audit = _env_flag("THEORY_MASTER_CYCLE_AUDIT", default=False)
+    if cycle_audit:
+        from .audit_adapter import resolve_audit_adapter
+        resolve_audit_adapter()
     if error_repair is None:
         error_repair = _env_flag("THEORY_MASTER_ERROR_REPAIR", default=True)
     if attention_takeover is None:

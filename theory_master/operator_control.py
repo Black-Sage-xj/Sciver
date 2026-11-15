@@ -25,7 +25,7 @@ from .worker_runtime import PreservationPreflightRejected
 
 def dispatch(specified: dict[str, Any]) -> dict[str, Any]:
     action = specified.get("action")
-    if action not in {"set_worker_mode", "add_worker", "cancel_pending_worker", "start_worker_scheduler", "stop_worker_scheduler", "set_worker_route", "set_worker_profile", "set_worker_account", "save_model_tier_template", "inspect_codex_models", "worker_control", "pause", "kill", "abandon_cycle", "max_cycles", "attention_guidance", "attention_takeover", "supervisor", "quota_auto_adjust", "run", "resume", "set_role_route", "set_operator_preference"}:
+    if action not in {"set_worker_mode", "add_worker", "cancel_pending_worker", "start_worker_scheduler", "stop_worker_scheduler", "set_worker_route", "set_task_profile", "set_worker_profile", "set_worker_account", "save_model_tier_template", "inspect_codex_models", "worker_control", "pause", "kill", "abandon_cycle", "max_cycles", "attention_guidance", "attention_takeover", "supervisor", "quota_auto_adjust", "run", "resume", "set_role_route", "set_operator_preference"}:
         raise ControlRejected("unknown operator action")
     root = Path(str(specified["task_root"])).resolve(strict=True)
     binding = TaskBinding.load(root)
@@ -126,6 +126,16 @@ def dispatch(specified: dict[str, Any]) -> dict[str, Any]:
             raise ControlRejected("invalid Worker account preference")
         return set_worker_account_preference(spec.research_root,
                                              value["worker_id"], value["account"])
+    if action == "set_task_profile":
+        from .backend_config import MODEL_PROFILES, save_task_model_profile
+        from .worker_runtime import list_workers
+        if (not isinstance(value, dict) or set(value) != {"profile"}
+                or not isinstance(value["profile"], str) or value["profile"] not in MODEL_PROFILES):
+            raise ControlRejected("invalid task model tier selection")
+        if any(not worker.get("dismissed") for worker in list_workers(spec.research_root)):
+            raise ControlRejected("select a registered Worker to change its model tier")
+        return {"configured": save_task_model_profile(spec.research_root, value["profile"]),
+                "effective_at": "next_safe_role_invocation", "applies_to_current_turn": False}
     if action == "set_worker_profile":
         from .worker_runtime import save_worker_profile
         from .backend_config import MODEL_PROFILES

@@ -1,11 +1,14 @@
 """No production task is changed: SDK preferences and model wiring fixture tests."""
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+
+from audit_adapter_fixture import create_audit_adapter
 
 from theory_master.operator_preferences import read, write
 from theory_master.operator_control import dispatch
@@ -70,11 +73,9 @@ class WebOperatorPreferencesTests(unittest.TestCase):
             write(root,kind='model',key='cycle_audit',value='gpt-6-sol')
             from theory_master.observability.cycle_audit_relay import spawn_cycle_audit_agent
             import subprocess
-            skill = root / 'audit-skill.md'
-            skill.write_text('# Offline audit fixture\n', encoding='utf-8')
-            with (patch('theory_master.observability.cycle_audit_relay.subprocess.run',
-                        return_value=SimpleNamespace(returncode=0,stdout='ok',stderr='')) as cli,
-                  patch('theory_master.observability.cycle_audit_relay.AUDIT_SKILL', skill)):
+            _, environment = create_audit_adapter(root)
+            with patch.dict(os.environ, environment), patch('theory_master.observability.cycle_audit_relay.subprocess.run',
+                       return_value=SimpleNamespace(returncode=0,stdout='ok',stderr='')) as cli:
                 result=spawn_cycle_audit_agent({'run_dir':str(cycle),'cycle_id':'1'})
                 self.assertEqual(result,'ok')
                 command=cli.call_args.args[0]

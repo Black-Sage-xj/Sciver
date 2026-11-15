@@ -23,22 +23,22 @@ def _fake_sqlite_lineage(context: dict[str, Any]) -> dict[str, Any]:
     active = [row for row in frontiers if isinstance(row, dict)
               and "active" in (row.get("states") or []) and row.get("id")]
     if active:
-        return {"lineage_anchor_node_ids": [str(active[-1]["id"])],
+        return {"lineage_main_node_id": str(active[-1]["id"]), "lineage_other_node_ids": [],
                 "evolution_operator": "specialize"}
     hypotheses = graph.get("hypotheses") or []
     for row in reversed(hypotheses):
         if isinstance(row, dict):
             hypothesis_id = str(row.get("id") or row.get("hypothesis_id") or "").strip()
             if hypothesis_id:
-                return {"lineage_anchor_node_ids": [hypothesis_id],
+                return {"lineage_main_node_id": hypothesis_id, "lineage_other_node_ids": [],
                         "evolution_operator": "alternative"}
         elif isinstance(row, list) and row:
             hypothesis_id = str(row[0] or "").strip()
             if hypothesis_id:
-                return {"lineage_anchor_node_ids": [hypothesis_id],
+                return {"lineage_main_node_id": hypothesis_id, "lineage_other_node_ids": [],
                         "evolution_operator": "alternative"}
         elif isinstance(row, str) and row.strip():
-            return {"lineage_anchor_node_ids": [row.strip()],
+            return {"lineage_main_node_id": row.strip(), "lineage_other_node_ids": [],
                     "evolution_operator": "alternative"}
     return {}
 
@@ -182,7 +182,15 @@ class FakeBackend:
                                          "needs_external_scholarship": False} if more else None),
                          "rationale": "one controlled check remains" if more else "deterministic smoke verdict"}
         elif role == "reporter":
-            value = {"title": "TheoryMaster smoke report", "summary": "SDK-independent workflow smoke completed."}
+            value = {
+                "title": "TheoryMaster smoke report", "summary": "SDK-independent workflow smoke completed.",
+                "graph_summary": {
+                    "conclusion": "The bounded offline workflow smoke completed.",
+                    "basis": "The supplied fake Judge decision is the sole decision source.",
+                    "scope": "Offline synthetic fixture; no new scientific evidence.",
+                    "open_question": "",
+                },
+            }
         else: raise ValueError(role)
         if self.collector is not None:
             self.collector.on_codex(

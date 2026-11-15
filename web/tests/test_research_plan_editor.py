@@ -38,6 +38,116 @@ class ResearchPlanEditorTests(unittest.TestCase):
         self.run = {"observer_id": self.ident, "task_name": "test-plan",
                     "task_root": str(self.task), "research_root": str(self.task)}
 
+    def bind_external_runtime(self):
+        external = tempfile.TemporaryDirectory()
+        self.addCleanup(external.cleanup)
+        research = Path(external.name) / "data" / "research"
+        research.mkdir(parents=True)
+        (research / "untouched.txt").write_text("runtime is not a plan access root")
+        config = self.task / "theory-master.config.json"
+        config.write_text(json.dumps({
+            "schema": "theory-master/system/v1", "path_model": "theory-master/task-path/v2",
+            "task_home": str(self.task), "plan_path": str(self.path), "research_root": str(research),
+        }), encoding="utf-8")
+        (self.task / ".theory-master" / "task.json").write_text(json.dumps({
+            "schema": "theory-master/task/v2", "config_path": str(config),
+        }), encoding="utf-8")
+        self.ident = hashlib.sha256(str(research.resolve()).encode()).hexdigest()[:16]
+        self.run.update(observer_id=self.ident, research_root=str(research))
+        return research, config
+
+    def test_verified_external_runtime_read_save_and_task_root_search(self):
+        research, config = self.bind_external_runtime()
+        binding_before = (self.task / ".theory-master" / "task.json").read_bytes()
+        config_before = config.read_bytes()
+        for search_root in (self.repo, self.task):
+            with self.subTest(search_root=search_root):
+                before = read_plan(search_root, self.run)
+                goal = before["sections"][0]
+                updated = save_section(search_root, self.run, {
+                    "section": "Goal", "text": goal["text"].replace("Original goal", "Changed goal"),
+                    "expected_revision": goal["revision"], "change_reason": "Correct scoped plan",
+                })
+                self.assertEqual(updated["sections"][1:], before["sections"][1:])
+                self.assertEqual(self.path.read_text(), PLAN.replace("Original goal", "Changed goal"))
+                self.path.write_text(PLAN)
+        self.assertEqual(config.read_bytes(), config_before)
+        self.assertEqual((self.task / ".theory-master" / "task.json").read_bytes(), binding_before)
+        self.assertEqual([p.name for p in research.iterdir()], ["untouched.txt"])
+
+    def test_external_runtime_requires_exact_canonical_binding_and_config(self):
+        research, config = self.bind_external_runtime()
+        marker = self.task / ".theory-master" / "task.json"
+        doc, binding = json.loads(config.read_text()), json.loads(marker.read_text())
+        goal = read_plan(self.repo, self.run)["sections"][0]
+        payload = {"section": "Goal", "text": "\nDenied replacement\n",
+                   "expected_revision": goal["revision"], "change_reason": "Must not write"}
+        cases = (
+            ({"schema": "invalid"}, {}, 403),
+            ({"config_path": str(self.repo / "other.config.json")}, {}, 403),
+            ({}, {"schema": "invalid"}, 403),
+            ({}, {"path_model": "invalid"}, 403),
+            ({}, {"task_home": str(self.repo)}, 409),
+            ({}, {"plan_path": str(research / "research_plan.md")}, 409),
+            ({}, {"research_root": str(research / "changed")}, 409),
+        )
+        for marker_delta, config_delta, status in cases:
+            with self.subTest(marker=marker_delta, config=config_delta):
+                marker.write_text(json.dumps({**binding, **marker_delta}))
+                config.write_text(json.dumps({**doc, **config_delta}))
+                for operation in (lambda: read_plan(self.repo, self.run),
+                                  lambda: save_section(self.repo, self.run, payload)):
+                    with self.assertRaises(ResearchPlanError) as caught:
+                        operation()
+                    self.assertEqual(caught.exception.status, status)
+                self.assertEqual(self.path.read_text(), PLAN)
+        marker.write_text(json.dumps(binding))
+        config.unlink()
+        with self.assertRaises(ResearchPlanError) as caught:
+            read_plan(self.repo, self.run)
+        self.assertEqual(caught.exception.status, 403)
+
+    def test_external_runtime_rejects_symlinks_and_forged_paths(self):
+        research, config = self.bind_external_runtime()
+        for path in (config, self.task / ".theory-master" / "task.json", self.path):
+            with self.subTest(path=path):
+                original = path.read_bytes()
+                target = path.with_suffix(".copy")
+                target.write_bytes(original)
+                path.unlink()
+                path.symlink_to(target)
+                with self.assertRaises(ResearchPlanError):
+                    read_plan(self.repo, self.run)
+                path.unlink()
+                path.write_bytes(original)
+        forged_research = research / "arbitrary-runtime"
+        forged = {**self.run, "research_root": str(forged_research),
+                  "observer_id": hashlib.sha256(str(forged_research).encode()).hexdigest()[:16]}
+        with self.assertRaises(ResearchPlanError) as caught:
+            read_plan(self.repo, forged)
+        self.assertEqual(caught.exception.status, 409)
+        alias = self.repo / "task-alias"
+        alias.symlink_to(self.task, target_is_directory=True)
+        with self.assertRaises(ResearchPlanError):
+            read_plan(self.repo, {**self.run, "task_root": str(alias)})
+        with self.assertRaises(ResearchPlanError):
+            read_plan(self.repo, {**self.run, "task_root": str(research)})
+        metadata = self.task / ".theory-master"
+        moved = self.task / "moved-metadata"
+        metadata.rename(moved)
+        metadata.symlink_to(moved, target_is_directory=True)
+        with self.assertRaises(ResearchPlanError):
+            read_plan(self.repo, self.run)
+
+    def test_search_root_itself_without_canonical_binding_stays_rejected(self):
+        with self.assertRaises(ResearchPlanError) as caught:
+            read_plan(self.task, self.run)
+        self.assertEqual(caught.exception.status, 403)
+
+    def test_external_runtime_http_read_write_and_conflict(self):
+        self.bind_external_runtime()
+        self._assert_http_read_write_and_conflict()
+
     def test_read_and_isolated_section_update(self):
         before = read_plan(self.repo, self.run)
         goal = before["sections"][0]
@@ -192,6 +302,9 @@ class ResearchPlanEditorTests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout), ["2026-10-24", "2026-10-24 03:36:36（北京时间）", "2026-10-24"])
 
     def test_http_page_auth_boundary_write_and_conflict(self):
+        self._assert_http_read_write_and_conflict()
+
+    def _assert_http_read_write_and_conflict(self):
         cache = StateCache(self.repo, ttl_s=500)
         cache._state = {"runs": [self.run]}
         cache._at = time.monotonic()

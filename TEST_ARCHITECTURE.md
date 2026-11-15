@@ -1,7 +1,7 @@
 # Sciver 测试架构
 
 > 状态：现行测试系统指导原则
-> 范围：`tool/theory_master/tests/` 与 `tool/theory_master/scripts/run_tests.py`
+> 范围：`tests/` 与 `scripts/run_tests.py`
 > 设计权威：Sciver 当前设计按 scope 分为 `design/SDK设计文档.md`、`design/Canvas设计文档.md`、`design/ResearchPlan设计文档.md`；本文只规定“如何测试当前设计”。
 
 ## 1. 核心原则
@@ -83,30 +83,30 @@ Sciver 处于持续演化阶段。一次有意的架构修改可以合法改变 
 查看分类规模：
 
 ```bash
-PYTHONPATH=tool/theory_master python tool/theory_master/scripts/run_tests.py --list
+python scripts/run_tests.py --list
 ```
 
 架构重构时优先跑：
 
 ```bash
-PYTHONPATH=tool/theory_master python tool/theory_master/scripts/run_tests.py --category invariant
-PYTHONPATH=tool/theory_master python tool/theory_master/scripts/run_tests.py --category architecture
+python scripts/run_tests.py --category invariant
+python scripts/run_tests.py --category architecture
 ```
 
 修历史故障时：
 
 ```bash
-PYTHONPATH=tool/theory_master python tool/theory_master/scripts/run_tests.py --category regression
+python scripts/run_tests.py --category regression
 ```
 
 最终验收：
 
 ```bash
-PYTHONPATH=tool/theory_master python tool/theory_master/scripts/run_tests.py --category all
-PYTHONPATH=tool/theory_master python -m theory_master smoke
+python scripts/run_tests.py --category all
+python -m theory_master smoke
 ```
 
-原来的 `unittest discover` 仍然有效；分类运行器只是增加语义层，不替换 Python 标准测试机制。
+默认分类运行器使用完整 pytest 收集，覆盖函数式、参数化与 unittest 用例。仅需旧 unittest 诊断时可显式使用 `--unittest-only`；该模式不能代替完整交付门禁。
 
 ## 5. 架构重构时如何处理红灯
 

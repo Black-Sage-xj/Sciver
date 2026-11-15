@@ -69,11 +69,11 @@ class RealBrowserSmokeTests(unittest.TestCase):
         session_id = None
         base = f'http://127.0.0.1:{driver_port}'
 
-        def command(method: str, path: str, body=None):
+        def command(method: str, path: str, body=None, *, timeout=4):
             data = json.dumps(body).encode('utf-8') if body is not None else None
             request = Request(base + path, data=data, method=method,
                               headers={'Content-Type': 'application/json'})
-            with urlopen(request, timeout=4) as response:
+            with urlopen(request, timeout=timeout) as response:
                 return json.loads(response.read()) if response.status != 204 else {}
 
         try:
@@ -88,12 +88,14 @@ class RealBrowserSmokeTests(unittest.TestCase):
                     if time.time() >= deadline:
                         self.fail('geckodriver did not become ready')
                     time.sleep(0.1)
+            # Browser startup can exceed the short local-command deadline on a
+            # busy test host; page interaction assertions retain that deadline.
             created = command('POST', '/session', {
                 'capabilities': {'alwaysMatch': {
                     'browserName': 'firefox',
                     'moz:firefoxOptions': {'args': ['-headless']},
                 }}
-            })['value']
+            }, timeout=30)['value']
             session_id = created.get('sessionId') or created.get('session_id')
             self.assertTrue(session_id, 'WebDriver must return a session id')
 

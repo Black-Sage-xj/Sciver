@@ -12,7 +12,7 @@ import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, unquote
+from urllib.parse import parse_qs, quote, unquote, urlencode
 
 from .archify_views import StaticViewManager, default_archify_root, default_state_dir
 from .access_settings import AccessSettings, AccessSettingsError, is_local_host
@@ -34,22 +34,19 @@ from .current_flow import current_flow_body, flow_node_ids
 from .field_notes import save_override, sync_machine_defaults
 from .sequence_views import SequenceBuildResult, build_run_sequence
 from .stage_flow import field_note_catalog, field_note_keys, stage_workflow_body, stage_workflow_guide_body
+from .workflow_versions import workflow_snapshot
 from .agent_workflow_architecture import agent_workflow_architecture_body
 from .run_views import run_index_body, run_detail_body
 from .task_settings_ui import workspace_settings_body
+from .onboarding_ui import first_use_panel
 from .goal_drafts import GoalDraftError, view_goal, save_goal_draft
 from .research_plan_editor import ResearchPlanError, read_plan, save_section, history_plan
 from .research_plan_ui import page_html as research_plan_html
 from .run_control import execute as execute_run_action, OperatorError
 from .services_worker_accounts import section_html as worker_account_section_html, snapshot as services_workers_snapshot
 from .canvas_md import ExplorerError, vault_root
-from .canvas_md_routes import canvas_md_get
+from .canvas_md_routes import canvas_md_get, canvas_md_image_get
 from .research_explorer_ui import explorer_html
-from .research_explorer_layout_demo import explorer_layout_demo_html
-from .research_explorer_layout_demo_a0 import explorer_layout_a0_demo_html
-from .research_explorer_layout_demo_v0 import explorer_layout_v0_demo_html
-from .research_explorer_layout_b import explorer_layout_b_html
-from .research_explorer_layout_c import explorer_layout_c_html
 from .research_chat import ResearchChatError, snapshot as research_chat_snapshot
 from .navigation_model import task_console_url
 
@@ -160,6 +157,18 @@ def architecture_html(manager: StaticViewManager | None) -> str:
     # It deliberately does not depend on the third-party Archify renderer.
     body = agent_workflow_architecture_body()
     return _page("Sciver Observatory — Agent Workflow Architecture", body, active="architecture")
+
+
+def _workflow_unavailable_html(title: str, error: Exception, *, active: str) -> str:
+    return _page(
+        title,
+        '<h1>' + html.escape(title) + '</h1>'
+        '<div class="card warning" role="alert">无法读取当前工作流的源文件。'
+        '请检查 Sciver 安装是否完整，重新安装后刷新页面。</div>'
+        '<details><summary>错误详情</summary><pre>' + html.escape(str(error)) + '</pre></details>'
+        '<p><a href="/">返回 Task Console</a> · <a href="/services/">查看 Services</a></p>',
+        active=active,
+    )
 
 
 def workflow_html(manager: StaticViewManager | None) -> str:
@@ -337,7 +346,9 @@ def services_html(state: dict, manager: StaticViewManager | None,
     None keeps the workspace default parent (Workflow).
     """
     return _page("Sciver Observatory — Services",
-                 codex_usage_body(quota_snapshot), active="services",
+                 codex_usage_body(quota_snapshot)
+                 + '<details class="card"><summary>首次配置与账号登录步骤</summary>'
+                 + first_use_panel() + '</details>', active="services",
                  back_href=back_href)
 
 
@@ -450,7 +461,9 @@ function accountCard(a, activeAccount, cachedSnapshot = false) {
   const heading = '<div class="tm-account-header"><h2>' + label + '</h2>' + action + '</div>';
   const base = '<div class="card tm-account-card' + (isActive ? ' is-active' : '') + '">' + heading;
   if (!a.ok) {
-    return base + '<p class="warning" role="alert">额度查询失败：' + escapeHtml(a.error || '未知错误') + '</p></div>';
+    const login = account ? '<p class="small">首次使用或登录过期时，在运行 Sciver 的终端执行 <code>sciver codex-account login-' +
+      (account === 'account-1' ? '1' : '2') + '</code>，再执行 <code>sciver codex-account status</code>，完成后点击“立即刷新”。</p>' : '';
+    return base + '<p class="warning" role="alert">额度查询失败：' + escapeHtml(a.error || '未知错误') + '</p>' + login + '</div>';
   }
   const allowed = a.ordinary_usage_allowed === true ? 'Available' : (a.ordinary_usage_allowed === false ? 'Blocked' : 'Unknown');
   const count = Number.isInteger(a.reset_credits?.available_count) && a.reset_credits.available_count >= 0
@@ -502,6 +515,13 @@ async function loadUsage(options = {}) {
     const validCodexAccounts = accounts.filter(a => a?.ok === true);
     lastRenderedAccounts = accounts;
     lastCodexActive = payload.active_account;
+    if (!validCodexAccounts.length && !hasCodexSnapshot) {
+      target.innerHTML = accounts.length
+        ? accounts.map(a => accountCard(a, selectedService?.active_account || payload.active_account, lastUsageCached)).join('')
+        : '<div class="card">尚未配置可用账号，请展开下方“首次配置与账号登录步骤”，完成登录后点击“立即刷新”。</div>';
+      if (sync) sync.textContent = '· 尚无可验证额度，请完成登录或重试';
+      return;
+    }
     if (!validCodexAccounts.length)
       throw new Error('没有收到可验证的 Codex 账号额度，继续显示历史快照');
     const visibleAccounts = accounts;
@@ -1001,6 +1021,9 @@ def make_handler(
                 return
             self.send_response(status)
             self.send_header("Content-Type", content_type)
+            if content_type.startswith("image/"):
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Content-Security-Policy", "sandbox; default-src 'none'; style-src 'unsafe-inline'")
             self.send_header("Cache-Control", cache_control)
             if etag:
                 self.send_header("ETag", etag)
@@ -1054,6 +1077,10 @@ def make_handler(
                     self.send_header("Content-Length", "0")
                     self.end_headers()
                 return
+            if path == "/research-chat/widget.js":
+                script = Path(__file__).resolve().parent / "research_chat_widget.js"
+                self._send(script.read_bytes(), "text/javascript; charset=utf-8")
+                return
             if path.startswith("/research-chat/assets/"):
                 relative = path.removeprefix("/research-chat/assets/")
                 dist = Path(__file__).resolve().parent / "research_chat_dist"
@@ -1106,7 +1133,7 @@ def make_handler(
                                HTTPStatus.SERVICE_UNAVAILABLE, retry_after=1)
                 return
             if path in {"/research-chat", "/research-chat/"}:
-                from .research_chat_ui import page_body
+                from .research_chat_ui import page_body, embedded_page
                 query = parse_qs(self.path.partition("?")[2])
                 selected = (query.get("session") or [None])[0]
                 if (query.get("new") or [""])[0] == "1":
@@ -1117,8 +1144,11 @@ def make_handler(
                     self._send((json.dumps({"error": str(exc)}, ensure_ascii=False) + "\n").encode("utf-8"),
                                "application/json; charset=utf-8", HTTPStatus(exc.status))
                     return
-                self._send(_page("Research Chat", page_body(view), active="research_chat").encode("utf-8"),
-                           "text/html; charset=utf-8")
+                embedded = (query.get("embed") or [""])[0] == "1"
+                task_id = (query.get("task_id") or [""])[0]
+                page = (embedded_page(view, task_id=task_id) if embedded else
+                        _page("Research Chat", page_body(view, task_id=task_id), active="research_chat"))
+                self._send(page.encode("utf-8"), "text/html; charset=utf-8")
                 return
             if path.startswith("/api/research-chat/") and path.endswith("/progress"):
                 parts = path.strip("/").split("/")
@@ -1261,6 +1291,11 @@ def make_handler(
                 return
             if path.startswith("/api/canvas-md/tasks/"):
                 try:
+                    if path.endswith("/image"):
+                        data, content_type = canvas_md_image_get(
+                            path, self.path.partition("?")[2], cache.search_root, state)
+                        self._send(data, content_type)
+                        return
                     data, status = canvas_md_get(path, self.path.partition("?")[2], cache.search_root, state)
                 except ExplorerError as exc:
                     data = (json.dumps({"error": str(exc)}, ensure_ascii=False) + "\n").encode("utf-8")
@@ -1759,33 +1794,33 @@ def make_handler(
                 except ValueError:
                     self._send(b"task not found\n", "text/plain; charset=utf-8", HTTPStatus.NOT_FOUND)
                     return
-            elif path in {"/research-explorer-tmp-c", "/research-explorer-tmp-c/"}:
+            elif path in {"/research-explorer-tmp-c", "/research-explorer-tmp-c/",
+                          "/research-explorer-tmp-b", "/research-explorer-tmp-b/",
+                          "/research-explorer-tmp", "/research-explorer-tmp/",
+                          "/research-explorer-tmp-v0", "/research-explorer-tmp-v0/",
+                          "/research-explorer-tmp-a0", "/research-explorer-tmp-a0/"}:
                 query = parse_qs(self.path.partition("?")[2], keep_blank_values=True)
                 selected = (query.get("observer_id") or [""])[0]
-                payload = explorer_layout_c_html(cache.search_root, state, selected).encode("utf-8")
-            elif path in {"/research-explorer-tmp-b", "/research-explorer-tmp-b/"}:
-                query = parse_qs(self.path.partition("?")[2], keep_blank_values=True)
-                selected = (query.get("observer_id") or [""])[0]
-                payload = explorer_layout_b_html(cache.search_root, state, selected).encode("utf-8")
-            elif path in {"/research-explorer-tmp", "/research-explorer-tmp/"}:
-                query = parse_qs(self.path.partition("?")[2], keep_blank_values=True)
-                selected = (query.get("observer_id") or [""])[0]
-                payload = explorer_layout_demo_html(cache.search_root, state, selected).encode("utf-8")
-            elif path in {"/research-explorer-tmp-v0", "/research-explorer-tmp-v0/"}:
-                query = parse_qs(self.path.partition("?")[2], keep_blank_values=True)
-                selected = (query.get("observer_id") or [""])[0]
-                payload = explorer_layout_v0_demo_html(cache.search_root, state, selected).encode("utf-8")
-            elif path in {"/research-explorer-tmp-a0", "/research-explorer-tmp-a0/"}:
-                query = parse_qs(self.path.partition("?")[2], keep_blank_values=True)
-                selected = (query.get("observer_id") or [""])[0]
-                payload = explorer_layout_a0_demo_html(cache.search_root, state, selected).encode("utf-8")
+                target_params = {"observer_id": selected} if selected else {}
+                target = "/research-explorer/" + ("?" + urlencode(target_params) if target_params else "")
+                self.send_response(HTTPStatus.SEE_OTHER)
+                self.send_header("Location", target)
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             elif path in {"/research-explorer", "/research-explorer/"}:
                 query = parse_qs(self.path.partition("?")[2], keep_blank_values=True)
                 selected = (query.get("observer_id") or [""])[0]
-                legacy_view = (query.get("view") or [""])[0] == "legacy"
-                payload = explorer_html(cache.search_root, state, selected, legacy=legacy_view).encode("utf-8")
+                payload = explorer_html(cache.search_root, state, selected).encode("utf-8")
             elif path in {"/architecture", "/architecture/"}:
-                payload = architecture_html(static_manager).encode("utf-8")
+                try:
+                    payload = architecture_html(static_manager).encode("utf-8")
+                except (OSError, ValueError, KeyError, TypeError, SyntaxError) as exc:
+                    payload = _workflow_unavailable_html("Architecture 暂时不可用", exc,
+                                                         active="architecture").encode("utf-8")
+                    self._send(payload, "text/html; charset=utf-8", HTTPStatus.SERVICE_UNAVAILABLE)
+                    return
             elif path in {"/workflow", "/workflow/"}:
                 # Older Workflow links/bookmarks must resolve to the current page.
                 query_string = self.path.partition("?")[2]
@@ -1802,15 +1837,26 @@ def make_handler(
                 workflow_version = (query.get("workflow_version") or [None])[0]
                 display_mode = (query.get("view") or ["overview"])[0]
                 try:
+                    workflow_snapshot(workflow_version)
+                except ValueError as exc:
+                    payload = _page("Workflow version not found", f"<h1>404</h1><p>{html.escape(str(exc))}</p>").encode("utf-8")
+                    self._send(payload, "text/html; charset=utf-8", HTTPStatus.NOT_FOUND)
+                    return
+                if display_mode not in {"overview", "full"}:
+                    payload = _page("Invalid Workflow view", "<h1>400</h1><p>Unsupported Workflow display mode</p>").encode("utf-8")
+                    self._send(payload, "text/html; charset=utf-8", HTTPStatus.BAD_REQUEST)
+                    return
+                try:
                     page = stage_workflow_html(
                         selected_request_id,
                         field_notes_state_dir=notes_state_dir,
                         workflow_version=workflow_version,
                         display_mode=display_mode,
                     )
-                except ValueError as exc:
-                    payload = _page("Workflow version not found", f"<h1>404</h1><p>{html.escape(str(exc))}</p>").encode("utf-8")
-                    self._send(payload, "text/html; charset=utf-8", HTTPStatus.NOT_FOUND)
+                except (OSError, ValueError, KeyError, TypeError, SyntaxError) as exc:
+                    payload = _workflow_unavailable_html("Workflow 暂时不可用", exc,
+                                                         active="workflow").encode("utf-8")
+                    self._send(payload, "text/html; charset=utf-8", HTTPStatus.SERVICE_UNAVAILABLE)
                     return
                 payload = page.encode("utf-8")
             elif path in {"/services", "/services/"}:

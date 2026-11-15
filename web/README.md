@@ -1,8 +1,8 @@
 # Sciver Web Observatory
 
-The public website now uses the **shadcn/ui Dashboard-inspired dark shell** with five visible pages (local-first):
+The public website now uses the **shadcn/ui Dashboard-inspired dark shell** with local-first research and operator pages:
 
-- `/` opens the remembered task console when available, otherwise the task list (`/run/`).
+- `/` opens Workspace → Research Chat (`/research-chat/`); Task List (`/run/`) opens prepared and existing tasks.
 - **Run** (`/run/`) is the task index and operator console entry: task search/status filters and stable `observer_id` details. When a task has a valid notebook Canvas, its Canvas / MD panel links to Research Explorer; unsupported tasks show a disabled placeholder.
 - **Research Explorer** (`/research-explorer/?observer_id=<stable-id>`) displays the original Canvas with pan/zoom and scientific edges alongside Markdown, KaTeX, Obsidian-style links, backlinks and full-text search. It uses the documented `canvas-md` API; editing is disabled.
 
@@ -37,9 +37,9 @@ The retired TMCR engineering-request UI is not the current write boundary.
 
 ## Install and run
 
-For first-time setup, use `sciver quickstart` from the main [quick start](../README.md#quick-start-test0--web-ui). To reopen the local workspace, use `sciver web`. Both open the browser after the server responds; pass `--no-open` on headless machines.
+For first-time setup, use `sciver quickstart` from the main [quick start](../README.md#quick-start-give-this-to-your-agent). To reopen the local workspace, use `sciver web`. Both open the browser after the server responds; pass `--no-open` on headless machines.
 
-The landing page is Workspace → Research Chat. Its first-visit guide can create a project from scratch or copy selected files from an existing research directory. It asks for the goal, completion criteria, and constraints before showing an editable Research Plan preview. Only the final confirmation creates a task; the Task List then shows it without starting a run. Local Web login is disabled by default and can be enabled in Settings; `sciver web --reset-login` recovers access after stopping the server.
+The landing page is Workspace → Research Chat. Its first-visit guide can create a project from scratch or copy selected files from an existing research directory. It asks for the goal, research boundaries and evidence standards, completion criteria, and constraints before showing an editable Research Plan preview. Only the final confirmation creates a task; the Task List then shows it without starting a run. Local Web login is disabled by default and can be enabled in Settings; `sciver web --reset-login` recovers access after stopping the server.
 
 From the repository root, after configuring the SDK dependencies and provider:
 
@@ -78,3 +78,18 @@ systemctl --user status tm-observer.service
 ```
 
 The installer records the Python and Node executables and restarts on failure. Uninstall with `python -m tm_observer service-uninstall`. Set up your own authenticated HTTPS reverse proxy or SSH tunnel for remote access.
+
+
+## Delivery checks and first use
+
+Both packages require Python 3.12 or newer. Ordinary wheels include the prebuilt
+frontend, fonts, vendor license, workflow history and guide; Node.js is required
+only when rebuilding frontend source. See [standalone installation](../docs/distribution.md)
+and [first use](../docs/first-use.md) for offline setup and account configuration.
+
+The first-visit guide covers setup, model usage and task navigation. Research
+Explorer includes an outcome/edge guide. Chat drafts persist per conversation;
+settings Save/Revert and Worker close actions have explicit local browser
+regressions. Run `python -m pytest -q web/tests` from the repository root. Enable
+`TM_BROWSER_E2E=1` after installing Playwright and its browser engines to execute
+the real browser tests; those tests use mocked model responses.

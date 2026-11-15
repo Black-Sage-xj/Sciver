@@ -49,7 +49,8 @@ def configure_mode(research_root: Path, *, enabled: bool, desired_agents: int, s
         if path.is_symlink():
             raise ValueError("invalid symlink for Worker mode")
         previous = read_mode(research_root)
-        _save_json(path, {"schema": SCHEMA, "enabled": enabled,
+        raw = _read_json(path) if path.is_file() else {}
+        _save_json(path, {**raw, "schema": SCHEMA, "enabled": enabled,
                           "desired_agents": desired_agents,
                           "share_accounts": previous["share_accounts"] if share_accounts is None else share_accounts})
         return read_mode(research_root)
@@ -74,7 +75,7 @@ def request_one_worker(research_root: Path, *, registered_count: int) -> dict[st
         target = max(registered_count, requested) + 1
         if target > 1024:
             raise ValueError("Worker request limit reached (1024)")
-        _save_json(path, {"schema": SCHEMA, "enabled": True,
+        _save_json(path, {**raw, "schema": SCHEMA, "enabled": True,
                           "desired_agents": target, "requested_agents": target,
                           "share_accounts": current["share_accounts"]})
         return {**read_mode(research_root), "requested_agents": target,
@@ -82,7 +83,7 @@ def request_one_worker(research_root: Path, *, registered_count: int) -> dict[st
 
 
 def reduce_one_worker_request(research_root: Path, *, registered_count: int,
-                              require_pending: bool = True) -> dict[str, Any]:
+                              require_pending: bool = True, operation_id: str | None = None) -> dict[str, Any]:
     """Reduce the desired future concurrency without touching running Cycles.
 
     For explicit pending cancellation, reject a count already claimed by a
@@ -96,6 +97,12 @@ def reduce_one_worker_request(research_root: Path, *, registered_count: int,
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         current = read_mode(research_root)
         raw = _read_json(path) if path.is_file() else {}
+        reductions = raw.get("completed_reductions", [])
+        if not isinstance(reductions, list):
+            raise ValueError("invalid Worker capacity reduction receipts")
+        if operation_id is not None and operation_id in reductions:
+            return {"requested_agents": raw.get("requested_agents", current["desired_agents"]),
+                    "desired_agents": current["desired_agents"], "running_cycles_unaffected": True}
         requested = raw.get("requested_agents")
         if type(requested) is not int or not 1 <= requested <= 1024:
             if require_pending:
@@ -106,8 +113,9 @@ def reduce_one_worker_request(research_root: Path, *, registered_count: int,
         target = max(1, registered_count, requested - 1)
         if target == requested and require_pending:
             raise ValueError("no Agent capacity to reduce")
-        _save_json(path, {"schema": SCHEMA, "enabled": current["enabled"],
+        _save_json(path, {**raw, "schema": SCHEMA, "enabled": current["enabled"],
                           "desired_agents": target, "requested_agents": target,
-                          "share_accounts": current["share_accounts"]})
+                          "share_accounts": current["share_accounts"],
+                          "completed_reductions": reductions + ([operation_id] if operation_id else [])})
         return {"requested_agents": target, "desired_agents": target,
                 "running_cycles_unaffected": True}

@@ -1,9 +1,12 @@
 """Offline regression checks for the integrated Web Observatory checkout."""
 from pathlib import Path
+import shutil
+import tempfile
+from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
-from tm_observer.stage_flow import _core_source_dir
+from tm_observer.stage_flow import _core_source_dir, _source_catalog, _source_context_fields
 from tm_observer.archify_views import (
     CURRENT_AGENT_STAGES,
     HISTORICAL_COMPAT_STAGES,
@@ -15,6 +18,29 @@ from tm_observer import run_control, run_tui_bridge
 
 
 class IntegratedRepoLayoutTests(TestCase):
+    def test_workflow_reads_installed_package_outside_checkout(self):
+        source = _core_source_dir()
+        expected = _source_catalog()
+        expected_context = _source_context_fields()
+        with tempfile.TemporaryDirectory() as folder:
+            package = Path(folder) / 'site-packages' / 'theory_master'
+            package.mkdir(parents=True)
+            for name in ('stage_registry.py', 'contract_stages.py', 'hypothesis_display.py', 'prompt_stages.py'):
+                shutil.copyfile(source / name, package / name)
+            with patch('tm_observer.stage_flow.importlib.util.find_spec',
+                       return_value=SimpleNamespace(origin=str(package / '__init__.py'))), \
+                 patch('tm_observer.stage_flow.REPO_ROOT', Path(folder) / 'no-checkout'):
+                self.assertEqual(_core_source_dir(), package)
+                self.assertEqual(_source_catalog(), expected)
+                self.assertEqual(_source_context_fields(), expected_context)
+
+    def test_workflow_catalog_keeps_runtime_contract_schema(self):
+        from theory_master.contract_stages import PHASE_CONTRACTS
+        catalog, _cards, _labels = _source_catalog()
+        for pair, contract in PHASE_CONTRACTS.items():
+            with self.subTest(pair=pair):
+                self.assertEqual(catalog[pair]['prompt_schema'], contract.prompt_schema)
+
     def test_web_reads_core_from_standalone_repo_and_example_project_parent(self):
         core_root = Path(__file__).resolve().parents[2]
         self.assertEqual(_core_source_dir(core_root), core_root / "theory_master")

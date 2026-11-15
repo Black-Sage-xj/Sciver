@@ -131,6 +131,10 @@ class CanvasProjectionMixin:
                     if (selected.get("lineage_anchor_node_id") or branch.get("source_node_id")) else [])
             ) if str(x).strip()
         ))
+        from .hypothesis_lineage import explicit_lineage
+        explicit = explicit_lineage(selected)
+        if explicit is not None:
+            source_ids = [explicit[0], *explicit[1]]
         operator = str(selected.get("evolution_operator") or branch.get("evolution_operator") or "").strip()
         from .hypothesis_display import normalize_hypothesis_display
         display_title, display_summary = normalize_hypothesis_display(
@@ -161,6 +165,7 @@ class CanvasProjectionMixin:
                         store.add_evolution(
                             edge_id=f"v2-evolution-{source_id}-{h_id}-{ordinal}",
                             source=source_id, target=h_id, operator=operator,
+                            lineage_role=("main" if ordinal == 0 else "other") if explicit else None,
                         )
                 else:
                     # An existing H is valid only when this very Cycle already
@@ -171,6 +176,16 @@ class CanvasProjectionMixin:
                     ).fetchone()
                     if not owner or owner["cycle_id"] != cycle_id:
                         raise ValueError("V2 new Cycle cannot reuse an existing H")
+                    if explicit is not None:
+                        stored_sources = [(row["source_hypothesis"],
+                                           json.loads(row["provenance_json"]).get("lineage_role"))
+                                          for row in store.db.execute(
+                            "SELECT source_hypothesis,provenance_json FROM scientific_edges "
+                            "WHERE target_hypothesis=?", (h_id,))]
+                        expected_sources = [(explicit[0], "main"),
+                                            *((source, "other") for source in explicit[1])]
+                        if sorted(stored_sources) != sorted(expected_sources):
+                            raise ValueError("Locked Hypothesis lineage sources cannot change on replay")
                     outcome_row = store.db.execute(
                         "SELECT verdict,cycle_id,summary,decisive_test,judge_rationale "
                         "FROM outcomes WHERE hypothesis_id=?", (h_id,),
@@ -211,6 +226,8 @@ class CanvasProjectionMixin:
                     evolution_operator=operator,
                     lineage_anchor_node_id=source_ids[0] if source_ids else "",
                     lineage_anchor_node_ids=source_ids,
+                    lineage_main_node_id=explicit[0] if explicit else "",
+                    lineage_other_node_ids=explicit[1] if explicit else [],
                 )
                 store.db.execute("UPDATE hypotheses SET dossier_ref=? WHERE id=?",
                                  (dossier_ref, h_id))
@@ -315,6 +332,7 @@ class CanvasProjectionMixin:
                         boundary=list(outcome_record.get("boundary") or []),
                         evidence_refs=list(outcome_record.get("evidence_refs") or []),
                         report_ref=str(outcome_record.get("report_ref") or "") or None,
+                        graph_summary=outcome_record.get("graph_summary"),
                         record_only=bool(outcome_record.get("record_only", True)),
                     )
                     cycle_outcome = next(

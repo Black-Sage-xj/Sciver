@@ -4,7 +4,7 @@
 
 ## 科学身份与裁决
 
-- 每个**新**科学 Cycle 锁定一个新的、可独立裁决的冻结 H。新 H 可从一个或多个旧 H 产生，须说明相对来源的可证伪科学增量，并以有类型的 H→H 边记录来源。换字、换方法或重复检验本身不构成增量。
+- 每个**新**科学 Cycle 锁定一个新的、可独立裁决的冻结 H。新 H 可从一个或多个旧 H 产生，须说明相对来源的可证伪科学增量，来源分为唯一 `lineage_main_node_id` 和 0–2 个 `lineage_other_node_ids`；由 Lead 选择 main，只有 main 的有类型 H→H 边参与图谱连线和分支布局，其它来源保留在 SQLite 与详情中。换字、换方法或重复检验本身不构成增量。
 - 同一 Cycle 的 Investigator 轮次、Judge rework、恢复与重试复用其已锁定 H，不创建第二个 H。`hypothesis_cycle_owners` 记录新规则下的 Cycle↔H 一对一身份。
 - 每个有终局科学裁决的 Cycle 恰有一条 **Cycle Outcome**。它含原 Judge verdict、冻结检验、理由、发现、问题、边界、Evidence、报告链接和完整 Markdown 汇总。`supported/rejected/open` 只覆盖该轮冻结命题及 scope。一个 Cycle 的多次尝试和中间决定是过程历史，不产生多个终局 Outcome。
 - 运行中、失败、中断、取消或仅运维收尾而无科学裁决的 Cycle 保留运行记忆，但没有科学 Outcome；不得用 `open` 补齐。Goal Completion 是独立任务级裁决。
@@ -12,7 +12,7 @@
 
 图谱节点只有 H 与 External。Outcome 嵌入 H 的阅读卡片，不成为独立科学图节点；旧 Decision ID 保留为来源 ID。前沿 `active/parked/closed` 与科学裁决正交，H 有后代不自动失去研究来源资格。External 没有 Judge 权威。
 
-**兼容与文案界限：** Reporter `canvas_maintenance` 的输出合同仍命名为 `decision.title/summary`，但它只负责本轮 Outcome 的**图谱短标题/摘要**（120/900 字符上限），不代表在 V2 图中新增 Decision 节点，也不限制完整 Markdown 报告。External 时间到 Cycle 的 Web 估计不赋予它科学身份，不进入 SQLite 正式 Cycle 字段。
+**文案与权威界限：** 当前 Reporter 只有 `report` Stage，不再有 `canvas_maintenance` 或 Decision 节点交付。`title/summary` 保存完整人类可读报告，`graph_summary` 独立承担图谱导览；两者都不改变 Judge 裁决或前沿状态。External 时间到 Cycle 的 Web 估计不赋予它科学身份，不进入 SQLite 正式 Cycle 字段。
 
 ## 当前存储的兼容结构
 
@@ -42,3 +42,18 @@
 - SQLite 是科学图谱权威，`exploration.canvas` 仅是只读投影。旧档案中关于 Canvas 是裁决/活动状态权威的生成器声明须安全迁移；更新仅限可识别的 SDK 生成区块，人工注释不得覆盖。
 - H 卡片应优先展示短命题导览、当前整体科学状态、最新 Cycle Outcome、一个未解决问题和必要的 parked 原因。完整证据、所有历史结论与复现材料通过档案/Outcome 链接展开。
 - Outcome Markdown 负责阅读；独立 JSON 保存完整机器记录。生成器版本、完整输入摘要与渲染摘要必须能识别模板变更；只有可验证的 SDK 生成文档允许自动升级，任何人工编辑或未知格式都必须拒绝覆盖。
+
+
+## Main 与其它来源（2026-11-09）
+
+新候选的 main 与其它来源必须互异、存在于 SQLite，派生类型仍由 `evolution_operator` 指定。SDK 在资格检查、选择及修订中保留来源角色，锁定时将角色写入 `scientific_edges.provenance_json.lineage_role`（`main` / `other`）。两类来源都保留可查询的科学关系；Canvas 导出与网页 SQLite 投影仅绘制 main，详情及 H 档案分别列出两类来源。根 H 省略来源字段。
+
+历史 singular/plural 来源合同继续用于旧 checkpoint 恢复；没有角色的历史边保持原有连线，不根据顺序或布局推断 main，也不修改历史科研裁决。原有 1–3 个来源的总数上限不变。
+
+## 图谱导览与报告分离（2026-11-15）
+
+- Reporter `report` v4 的 `graph_summary` 包含四个正文字符串：`conclusion`（本轮科学增量）、`basis`（决定性比较、区间或证明依据）、`scope`（必要条件及资料来源身份）、`open_question`（本节点的具体未决缺口，已解决时为空）。不把继承知识冒充本轮新增发现，不把任务级长期目标重复当作每个 H 的未完成检验，不生成下一轮计划。
+- 四字段合计 900 字符仅为防止超大交付的安全上限，不是写作目标；保持原有导览所需的科学细节。`summary` 继续保存完整报告，正式 `findings/open_questions/boundary` 仍由授权科学记录产生；导览不覆盖这些字段，也不推断裁决。
+- 导览可选地保存在不可变 Cycle Outcome 的 `source_json` 中，不新增数据库权威或重写历史记录。新记录在 Canvas/Web 展开处完整展示导览，Agent 的焦点与活跃前沿上下文保留全部导览字段；图上短卡片以结论开头，完整依据经点击或悬停可读。旧记录继续兼容读取原报告预览，不自动调用模型补写。
+- active、parked、closed 均展示已记录的分支原因，缺失时明确提示原因未记录。有 Cycle 裁决但无整体 H 评估时，阅读文案明确标注整体 H 尚未登记裁决，不以本轮结论改写整个 H 的科学状态。
+- 猜想导览继续使用冻结科学定义，压缩时保留其中已声明的可判别区别及必要条件；完整动机和来源细节放在档案中。历史缺失摘要的整理属独立工作，本次不自动回填。

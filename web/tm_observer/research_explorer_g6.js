@@ -252,14 +252,11 @@ function graphLabelStyle(data,style,compact){
 
 const ID=s=>String(s??'');
 let index=null, selected=null, graph=null, graphReady=false, taskId=$('ex-task').value;
-let mode='all', collapsed=new Set(), searchTimer=null, renderSerial=0;
+let collapsed=new Set(), searchTimer=null, renderSerial=0;
+let hoveredEdge=null,edgeMenuTimer=null;
 let searchRequestSerial=0;
 const base=()=>'/api/canvas-md/tasks/'+encodeURIComponent(taskId);
-const syncLayoutDemoLink=()=>{
-  const link=$('ex-layout-demo-link');if(link)link.href='/research-explorer-tmp/?observer_id='+encodeURIComponent(taskId);
-  const c=$('ex-layout-c-link');if(c)c.href='/research-explorer-tmp-c/?observer_id='+encodeURIComponent(taskId);
-};
-syncLayoutDemoLink();
+workspace.dataset.graphLayout='tree';
 const uri=(kind,id)=>kind+':'+id;
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
 const api=async path=>{const r=await fetch(path,{cache:'no-store',credentials:'same-origin'}),v=await r.json();if(!r.ok)throw Error(v.error||'读取失败');return v};
@@ -274,8 +271,13 @@ function isScientificEdge(e){
 }
 function structure(nodes,edges){
   const lookup=new Map(nodes.map(n=>[n.id,n]));
-  const allEdges=edges.filter(e=>lookup.has(e.fromNode)&&lookup.has(e.toNode));
-  const lineage=allEdges.filter(isScientificEdge);
+  const realEdges=edges.filter(e=>lookup.has(e.fromNode)&&lookup.has(e.toNode));
+  // Choose from the complete index, before local scope or folding. A view
+  // change must not silently choose a different predecessor for the same node.
+  const allEdges=globalThis.SciverTreeLayout.projectForest(nodes,
+    realEdges.map(e=>({id:ID(e.id||e.fromNode+'->'+e.toNode),source:e.fromNode,
+      target:e.toNode,data:{sourceEdge:e}}))).edges.map(e=>e.data.sourceEdge);
+  const lineage=allEdges;
   const children=new Map(nodes.map(n=>[n.id,[]])),parents=new Map(nodes.map(n=>[n.id,[]]));
   for(const e of lineage){children.get(e.fromNode).push(e.toNode);parents.get(e.toNode).push(e.fromNode)}
   for(const v of children.values())v.sort(stable);
@@ -287,24 +289,8 @@ function traverse(start,adj){
   for(let i=0;i<todo.length;i++)for(const id of adj.get(todo[i])||[])if(!found.has(id)){found.add(id);todo.push(id)}
   return found;
 }
-function baseScope(s){
-  if(mode==='all')return new Set(s.lookup.keys());
-  if(mode==='local'&&selected?.kind==='node'){
-    const ids=new Set([selected.id]);let frontier=[selected.id];
-    for(let step=0;step<2;step++){
-      const next=[];
-      for(const id of frontier)for(const n of [...(s.parents.get(id)||[]),...(s.children.get(id)||[])])
-        if(!ids.has(n)){ids.add(n);next.push(n)}
-      frontier=next;
-    }
-    return ids;
-  }
-  const tips=[...s.lookup.values()].filter(n=>n.semantic?.frontier_status==='active').map(n=>n.id);
-  if(mode==='frontier'&&tips.length)return traverse(tips,s.parents);
-  return new Set(s.lookup.keys());
-}
 function visibility(s,ignoreCollapsed=false){
-  const scope=baseScope(s), indegree=new Map([...scope].map(id=>[id,0]));
+  const scope=new Set(s.lookup.keys()), indegree=new Map([...scope].map(id=>[id,0]));
   for(const e of s.lineage)if(scope.has(e.fromNode)&&scope.has(e.toNode))
     indegree.set(e.toNode,indegree.get(e.toNode)+1);
   let roots=[...scope].filter(id=>indegree.get(id)===0).sort(stable);
@@ -380,7 +366,8 @@ function overviewRender(){
   const summary=$('ex-tip-summary');
   summary.replaceChildren();
   const caption=document.createElement('span');caption.className='ex-overview-title';
-  caption.textContent=index.canvas==='science_graph.sqlite3'?'猜想前沿（按 H 去重）':'研究末端';summary.append(caption);
+  caption.textContent=index.canvas==='science_graph.sqlite3'?'前沿':'研究末端';
+  caption.title='按猜想去重；色块对应猜想上半部分，点击状态可查看节点';summary.append(caption);
   const statusTabs=[[null,'全部'],['active','活跃'],['parked','搁置'],['closed','已终止']];
   if(index.canvas==='science_graph.sqlite3')statusTabs.push(['unknown','未标记']);
   for(const [status,title] of statusTabs){
@@ -389,7 +376,7 @@ function overviewRender(){
     if(status)button.dataset.frontier=status;
     const count=status?counts[status]:records.length;
     button.textContent=title+' '+count;
-    button.title=status?'查看'+title+'的全部末端节点':'打开全部研究末端，含当前视图未显示的分支';
+    button.title=status?'查看'+title+'的全部末端节点；色块对应猜想上半部分':'打开全部研究末端，含当前视图未显示的分支';
     button.onclick=()=>openTipPanel(status);
     summary.append(button);
   }
@@ -403,36 +390,47 @@ function overviewRender(){
 }
 function renderColorLegend(){
   if(!index)return;
-  const legend=$('ex-type-legend');legend.replaceChildren();
+  const legend=$('ex-type-legend');
+  const expanded=!!legend.querySelector?.('details')?.open;
+  legend.replaceChildren();
   const hNodes=index.nodes.filter(n=>knownType(n)==='Hypothesis');
-  const compact=compactView();
-  const f=['active','parked','closed','unknown'];
-  const o=['supported','rejected','open','mixed','legacy','none'];
-  const dimensions=compact?
-    (overviewColorMode==='frontier'?[['前沿颜色',f,frontierFill,hypothesisFrontier]]:
-      [['结论颜色',o,outcomeFill,hypothesisVerdict]]):
-    [['H · 前沿',f,frontierFill,hypothesisFrontier],
-      ['Outcome · 结论',o,outcomeFill,hypothesisVerdict]];
-  const key=(label,color,count)=>{
+  const counts={supported:0,rejected:0,open:0,mixed:0,legacy:0,unadjudicated:0,none:0};
+  for(const node of hNodes)counts[hypothesisVerdict(node.semantic||{})]++;
+  const labels={supported:'支持',rejected:'否决',open:'Open',none:'待裁决',
+    mixed:'多轮结论不一',legacy:'历史归一',unadjudicated:'研究中止 · 未裁决'};
+  const key=(host,label,color,count,title=label)=>{
     const item=document.createElement('span');item.className='ex-type-key';
-    item.title=label+' · '+count+' 个节点';
+    item.title=title+' · '+count+' 个节点';
     const dot=document.createElement('span');dot.className='ex-type-dot';
     dot.style.background=color;dot.style.borderColor='#cbd5e1';
     const text=document.createElement('span');text.textContent=label+' '+count;
-    item.append(dot);item.append(text);legend.append(item);
+    item.append(dot);item.append(text);host.append(item);
   };
-  for(const [title,states,colors,project] of dimensions){
+  if(hNodes.length){
     const heading=document.createElement('span');heading.className='ex-overview-title';
-    heading.textContent=title;legend.append(heading);
-    for(const state of states){
-      const count=hNodes.filter(n=>project(n.semantic||{})===state).length;
-      if(count)key(statusLabels[state],colors[state],count);
+    heading.textContent='Outcome';heading.title='猜想下半部分的裁决状态；按猜想去重';legend.append(heading);
+    for(const state of ['supported','rejected','open','none'])if(counts[state])
+      key(legend,labels[state],outcomeFill[state],counts[state],statusLabels[state]);
+    const extra=['mixed','legacy','unadjudicated'].filter(state=>counts[state]);
+    if(extra.length){
+      const more=document.createElement('details');more.className='ex-legend-more';more.id='ex-outcome-more';
+      more.open=expanded;
+      const summary=document.createElement('summary');
+      const count=extra.reduce((sum,state)=>sum+counts[state],0);
+      summary.textContent='更多 '+count;
+      summary.title=extra.map(state=>labels[state]+' '+counts[state]).join('；');
+      summary.setAttribute('aria-label','其他 Outcome 状态，共 '+count+' 个猜想');
+      const panel=document.createElement('div');panel.className='ex-legend-more-panel';
+      for(const state of extra)key(panel,labels[state],outcomeFill[state],counts[state],statusLabels[state]);
+      more.append(summary);more.append(panel);legend.append(more);
     }
   }
+  const types=document.createElement('div');types.className='ex-overview-types';
   for(const type of ['Decision','Finding','StageSummary','External','Unknown']){
     const count=index.nodes.filter(n=>knownType(n)===type).length;
-    if(count)key(typeNames[type]||type,(palette[type]||palette.Unknown).fill,count);
+    if(count)key(types,typeNames[type]||type,(palette[type]||palette.Unknown).fill,count);
   }
+  if(types.children.length)legend.append(types);
 }
 let tipWorkerRequest=0;
 async function openTipPanel(filter=null){
@@ -584,9 +582,16 @@ function outcomeDetailsHtml(outcomes){
   if(!records.length)return '';
   const facts=(heading,items)=>Array.isArray(items)&&items.length?
     '<h4>'+esc(heading)+'</h4><ul>'+items.map(s=>'<li>'+esc(s)+'</li>').join('')+'</ul>':'';
+  const guideHtml=guide=>guide?'<section class="ex-outcome-guide">'+
+    mdHtml(guide.conclusion||'',null)+
+    [['basis','关键依据'],['scope','适用范围'],['open_question','本节点未决问题']]
+      .filter(([key])=>guide[key]).map(([key,label])=>'<p><strong>'+label+'：</strong></p>'+
+        mdHtml(guide[key],null)).join('')+'</section>':'';
   const detail=outcome=>'<details'+(outcome===records[records.length-1]?' open':'')+
     '><summary>Cycle '+esc(outcome.cycle_id)+' · '+esc(outcomeVerdictLabel(outcome))+'</summary>'+
     '<p class="muted">'+esc(outcomeTime(outcome))+'</p>'+
+    guideHtml(outcome.graph_summary)+
+    (outcome.graph_summary?'<details class="ex-outcome-record"><summary>裁决与完整科学记录</summary>':'')+
     (outcome.source_timestamps?.length?
       '<p class="muted">原始来源时间：'+outcome.source_timestamps.map(esc).join(' · ')+'</p>':'')+
     (outcome.summary?'<div class="ex-md">'+mdHtml(outcome.summary,null)+'</div>':'')+
@@ -602,6 +607,7 @@ function outcomeDetailsHtml(outcomes){
     (Array.isArray(outcome.evidence_refs)&&outcome.evidence_refs.length?
       '<p class="muted">Evidence ID（仅编号，具体证据请查阅科研证据登记记录）：'+
       outcome.evidence_refs.map(esc).join(' · ')+'</p>':'')+
+    (outcome.graph_summary?'</details>':'')+
     (outcome.document_ref?'<p><button class="ex-ref" data-ref="'+esc(uri('doc',outcome.document_ref))+
       '">阅读本 Cycle Outcome 文档 →</button></p>':
       outcome.unavailable_document_ref?'<p class="muted">Cycle Outcome 文档尚不可读取：'+
@@ -636,87 +642,6 @@ function downstreamHighlight(start,visibleEdges,maxHops=2){
   }
   return {ids,lineageIds};
 }
-// Horizontal = recorded Cycle or a display-only predecessor + 1 placement;
-// vertical = inherited branches. Remaining unknown H nodes use a separate area.
-// Coordinates are deterministically computed from the entire active view scope,
-// independent of selection and branch folding, and never read from Canvas x/y.
-const TIMELINE_STEP=492, TIMELINE_ROW=232;
-function timelineCoordinates(nodes,edges){
-  const lookup=new Map(nodes.map(n=>[n.id,n]));
-  const historical=nodes.filter(n=>knownType({semantic:n.data.semantic})!=='External');
-  const scientific=n=>n.data?.semantic?.type!=='External';
-  const freeze=n=>{
-    const c=n.data?.semantic?.cycle;
-    return scientific(n)&&Number.isSafeInteger(c)&&c>=0?c:null;
-  };
-  const placement=n=>freeze(n)??n.data?.placementCycle??null;
-  const dates=[...new Set(nodes.map(placement).filter(c=>c!==null))].sort((a,b)=>a-b);
-  const ranks=new Map(dates.map((c,i)=>[c,i]));
-  const inbound=new Map(nodes.map(n=>[n.id,[]]));
-  const outbound=new Map(nodes.map(n=>[n.id,[]]));
-  for(const e of edges){
-    if(!lookup.has(e.source)||!lookup.has(e.target))continue;
-    inbound.get(e.target).push(e.source);outbound.get(e.source).push(e.target);
-  }
-  for(const map of [inbound,outbound])for(const list of map.values())list.sort(stable);
-  const xById=new Map(),yById=new Map();
-  const undated=historical.filter(n=>placement(n)===null);
-  // Unknown origins get a separate area after a gap. They do not occupy or
-  // precede any numbered Cycle column, and their H IDs never become Cycles.
-  const undatedSet=new Set(undated.map(n=>n.id)),levels=new Map();
-  function legacyDepth(id,path=new Set()){
-    if(levels.has(id))return levels.get(id);
-    if(path.has(id))return 0;
-    path.add(id);
-    const parents=(inbound.get(id)||[]).filter(p=>undatedSet.has(p));
-    const d=parents.length?Math.min(8,1+Math.max(...parents.map(p=>legacyDepth(p,path)))):0;
-    path.delete(id);levels.set(id,d);return d;
-  }
-  for(const n of undated)legacyDepth(n.id);
-  for(const n of nodes){
-    const c=placement(n);
-    if(c!==null)xById.set(n.id,ranks.get(c)*TIMELINE_STEP);
-  }
-  for(const n of undated){
-    // A parent Cycle is not this Hypothesis's Cycle. Preserve only relative
-    // depth within the undated area, separated from the numbered chronology.
-    xById.set(n.id,(dates.length+2+legacyDepth(n.id))*TIMELINE_STEP);
-  }
-  // Only External nodes without an explicit or estimated Cycle use an
-  // adjacent scientific node as their placement fallback.
-  for(const n of nodes)if(!scientific(n)&&!xById.has(n.id)){
-    const neighbors=[...(inbound.get(n.id)||[]),...(outbound.get(n.id)||[])];
-    const anchors=neighbors.filter(id=>xById.has(id));
-    if(anchors.length)xById.set(n.id,Math.max(...anchors.map(id=>xById.get(id)))+TIMELINE_STEP*.22);
-    else xById.set(n.id,-TIMELINE_STEP*10);
-  }
-  const positioned=[...nodes].sort((a,b)=>xById.get(a.id)-xById.get(b.id)||stable(a.id,b.id));
-  let nextRoot=0;
-  const occupied=[];
-  function available(x,y){
-    return occupied.every(p=>Math.abs(x-p.x)>=CARD_W+24||
-      Math.abs(y-p.y)>=(p.height+CARD_H)/2+36);
-  }
-  for(const n of positioned){
-    const x=xById.get(n.id);
-    const parents=(inbound.get(n.id)||[]).filter(p=>yById.has(p));
-    const neighbours=parents.length?parents:(scientific(n)?[]:
-      [...(outbound.get(n.id)||[])].filter(p=>yById.has(p)));
-    const desired=neighbours.length?
-      neighbours.reduce((sum,id)=>sum+yById.get(id),0)/neighbours.length:
-      nextRoot++*TIMELINE_ROW;
-    let y=desired;
-    for(let offset=0;offset<occupied.length+2;offset++){
-      const probe=offset===0?desired:desired+(offset%2?1:-1)*Math.ceil(offset/2)*TIMELINE_ROW;
-      if(available(x,probe)){y=probe;break}
-    }
-    yById.set(n.id,y);
-    occupied.push({x,y,height:n.style?.size?.[1]||CARD_H});
-  }
-  for(const n of nodes){n.style.x=xById.get(n.id);n.style.y=yById.get(n.id)}
-  return {xById,yById};
-}
-
 function g6Data(layoutBase=false){
   const s=structure(index.nodes,index.edges),vis=visibility(s,layoutBase);
   // Retain the whole base-mode layout. Only element visibility changes on fold.
@@ -793,10 +718,11 @@ function g6Data(layoutBase=false){
     const key=edgeKey(e),isIncoming=!!target&&e.toNode===target;
     const isDownstream=!!target&&descendants.lineageIds.has(key);
     const active=activeEdgeId===key;
-    const highlighted=active||isIncoming||isDownstream;
+    const isHovered=hoveredEdge===key;
+    const highlighted=active||isIncoming||isDownstream||isHovered;
     const dim=!!(target||selectedEdge)&&!highlighted;
     const type=isScientificEdge(e);
-    const bright=active?'#fef08a':isIncoming?(traceColor.get(key)||'#67e8f9'):
+    const bright=isHovered?'#7dd3fc':active?'#fef08a':isIncoming?(traceColor.get(key)||'#67e8f9'):
       isDownstream?'#67e8f9':type?'#e2e8f0':'#cbd5e1';
     return {
       id:key,source:e.fromNode,target:e.toNode,
@@ -805,17 +731,17 @@ function g6Data(layoutBase=false){
         // All relations are solid. Directional selection brightens successors,
         // while an explicitly clicked edge gets a separate gold accent.
         stroke:bright,
-        lineWidth:active?5:isDownstream?4.4:isIncoming?4.1:dim?2.4:type?3.3:3,
+        lineWidth:isHovered?6:active?5:isDownstream?4.4:isIncoming?4.1:dim?2.4:type?3.3:3,
         lineDash:[],endArrow:true,
         opacity:highlighted?1:dim?.28:1,
-        zIndex:active?20:isDownstream?12:isIncoming?11:1,
+        zIndex:isHovered?24:active?20:isDownstream?12:isIncoming?11:1,
         router:{type:'orth',padding:18},
         shadowBlur:highlighted?active?16:10:0,
         shadowColor:highlighted?bright:'transparent',
         cursor:'pointer',increasedLineWidthForHitTesting:12}
     };
   });
-  timelineCoordinates(nodes,edges);
+  globalThis.SciverTreeLayout.treeCoordinates(nodes,edges);
   return {nodes,edges};
 }
 
@@ -832,21 +758,24 @@ function captureView(){
         camera={zoom,position:[...position]};
     }catch{/* A disposed/reinitializing viewport has no camera snapshot. */}
   }
-  return {taskId,selected:selected?{...selected}:null,mode,collapsed:[...collapsed].sort(stable),
+  return {taskId,selected:selected?{...selected}:null,collapsed:[...collapsed].sort(stable),
     camera,readerScroll:reader.scrollTop||0};
 }
 // Canonical reader location: browser Back/Forward and view history use one state.
 function syncBrowserLocation(push=false){
   const hash=selected?'#'+encodeURIComponent(uri(selected.kind,selected.id)+
     (selected.anchor?'#'+selected.anchor:'')):'';
-  const url=location.pathname+(location.search||'')+hash;
+  const params=new URLSearchParams(location.search);
+  params.delete('layout');params.delete('view');
+  const query=params.toString();
+  const url=location.pathname+(query?'?'+query:'')+hash;
   const state={tmExplorerView:captureView(),tmExplorerIndex:trailIndex};
   if(push&&typeof history.pushState==='function')history.pushState(state,'',url);
   else if(typeof history.replaceState==='function')history.replaceState(state,'',url);
 }
 
 function samePlace(a,b){
-  return a.taskId===b.taskId&&a.mode===b.mode&&
+  return a.taskId===b.taskId&&
     (a.selected?.kind||'')===(b.selected?.kind||'')&&
     (a.selected?.id||'')===(b.selected?.id||'')&&
     (a.selected?.anchor||'')===(b.selected?.anchor||'')&&
@@ -893,20 +822,12 @@ function historyButtons(){
   $('ex-back').disabled=trailIndex<=0;
   $('ex-forward').disabled=trailIndex<0||trailIndex>=historySerial;
 }
-function syncModeButtons(){
-  for(const [name,button] of [['all','ex-all'],['local','ex-local']])
-    $(button).setAttribute('aria-pressed',String(name===mode));
-  $('ex-collapse').textContent=selected?.kind==='node'&&collapsed.has(selected.id)?
-    '展开分支':'折叠分支';
-}
 async function restoreSnapshot(snapshot,indexNext=null){
   if(!snapshot||snapshot.taskId!==taskId||restoring)return;
   restoring=true;navSerial++;
   try{
-    mode=['frontier','all','local'].includes(snapshot.mode)?snapshot.mode:'frontier';
     collapsed=new Set(Array.isArray(snapshot.collapsed)?snapshot.collapsed:[]);
     selected=snapshot.selected?{...snapshot.selected}:null;
-    syncModeButtons();
     if(selected?.kind){
       await navigate(selected.kind,selected.id,selected.anchor||'',{record:false,focus:false,reveal:false});
     }else{
@@ -966,7 +887,7 @@ function updateOutcomeCards(){
   const statusSignature=node=>{const sem=node?.semantic||{};
     return JSON.stringify([hypothesisFrontier(sem),frontierSummary(sem),
       hypothesisVerdict(sem),(sem.cycle_outcomes||[]).length,
-      sem.title,sem.outcome?.summary]);};
+      sem.title,sem.outcome?.summary,sem.outcome?.graph_summary]);};
   if(outcomeCardsIndex===index&&existing.length===visible.length&&
       visible.every((data,i)=>existing[i].dataset.nodeId===data.id&&
         existing[i].dataset.statusSignature===statusSignature(lookup.get(data.id)))){
@@ -1009,7 +930,7 @@ function updateOutcomeCards(){
       verdict==='none'?'本猜想尚无可信 Judge 科学裁决':
       verdict==='unadjudicated'?'阶段性成果；预算拒绝续批，尚未完成 Judge 裁决。'+
         (outcome?.summary||''):
-      (outcome?.summary||outcome?.judge_rationale||'查看科学裁决详情');
+      (outcome?.graph_summary?.conclusion||outcome?.summary||outcome?.judge_rationale||'查看科学裁决详情');
     const sections=[
       ['hypothesis',cycle+' · H · '+statusLabels[status],
         shortCardTitle(cardScientificTitle(node)),''],
@@ -1027,6 +948,8 @@ function updateOutcomeCards(){
       button.title=(part==='hypothesis'?'前沿 '+frontierSummary(sem)+'；查看猜想：':
         (verdict==='unadjudicated'?'科研保全状态 ':'科学裁决状态 ')+
         statusLabels[verdict]+'；查看 Outcome：')+description;
+      if(part==='outcome'&&outcome?.graph_summary)
+        button.title=Object.values(outcome.graph_summary).filter(Boolean).join('\n');
       button.setAttribute('aria-label',button.title);
       const heading=document.createElement('span');heading.className='ex-outcome-kicker';
       heading.textContent=title;
@@ -1068,10 +991,74 @@ function positionOutcomeCards(){
     }catch{card.style.visibility='hidden'}
   }
 }
+const edgeMenu=$('ex-edge-menu'),edgeMenuAction=$('ex-edge-menu-action');
+function repaintHoveredEdges(previous){
+  if(!graphReady||!graph)return;
+  const ids=new Set([previous,hoveredEdge]);
+  const edges=g6Data(true).edges.filter(e=>ids.has(e.id));
+  if(edges.length){graph.updateEdgeData(edges.map(({id,style})=>({id,style})));
+    Promise.resolve(graph.draw()).catch(e=>showError(e.message));}
+}
+function closeEdgeMenu(){
+  clearTimeout(edgeMenuTimer);
+  const previous=hoveredEdge;hoveredEdge=null;edgeMenu.hidden=true;
+  if(previous)repaintHoveredEdges(previous);
+}
+function deferEdgeMenuClose(){
+  clearTimeout(edgeMenuTimer);edgeMenuTimer=setTimeout(closeEdgeMenu,200);
+}
+function refreshEdgeMenu(){
+  if(!hoveredEdge||!graphReady||!graph)return;
+  const edge=graph.getEdgeData().find(e=>e.id===hoveredEdge);
+  if(!edge||edge.style.visibility==='hidden'){closeEdgeMenu();return;}
+  const s=structure(index.nodes,index.edges),target=edge.target;
+  const count=traverse([target],s.children).size-1,folded=collapsed.has(target);
+  edgeMenu.dataset.edgeId=edge.id;edgeMenu.dataset.targetId=target;
+  edgeMenuAction.textContent=folded?'+':'−';
+  edgeMenuAction.setAttribute('aria-label',(folded?'展开':'折叠')+'子分支（'+count+' 个后代节点）');
+  edgeMenuAction.disabled=!count;
+  edgeMenuAction.setAttribute('aria-expanded',String(!folded));
+  edgeMenu.hidden=!count;
+  positionEdgeMenu();
+}
+function positionEdgeMenu(){
+  if(!hoveredEdge||edgeMenu.hidden||!graphReady||!graph)return;
+  const edge=graph.getEdgeData().find(e=>e.id===hoveredEdge),node=edge&&graph.getNodeData(edge.target);
+  if(!node)return;
+  const [width,height]=node.style.size,center=graph.getElementPosition(node.id);
+  const port=node.style.ports?.find(p=>p.key===edge.style.targetPort);
+  const y=center[1]+height*((port?.placement?.[1]??.5)-.5);
+  const point=graph.getViewportByCanvas([center[0]-width/2,y]);
+  const box=$('ex-graph').getBoundingClientRect();
+  // One fixed anchor on this child's incoming line; mouse motion never moves it.
+  edgeMenu.style.left=Math.max(4,Math.min(box.width-28,point[0]-30))+'px';
+  edgeMenu.style.top=Math.max(54,Math.min(box.height-28,point[1]-12))+'px';
+}
+function openEdgeMenu(event){
+  const id=ID(event.target?.id),edge=graph?.getEdgeData().find(e=>e.id===id);
+  if(!edge||edge.style.visibility==='hidden')return;
+  clearTimeout(edgeMenuTimer);tooltip.hidden=true;
+  const previous=hoveredEdge;hoveredEdge=id;
+  refreshEdgeMenu();
+  repaintHoveredEdges(previous);
+}
+edgeMenu.addEventListener('pointerenter',()=>clearTimeout(edgeMenuTimer));
+edgeMenu.addEventListener('pointerleave',deferEdgeMenuClose);
+edgeMenuAction.onclick=async event=>{
+  event?.preventDefault?.();event?.stopPropagation?.();
+  clearTimeout(edgeMenuTimer);
+  if(edgeMenuAction.disabled||!hoveredEdge)return;
+  await toggleNodeCollapse(edgeMenu.dataset.targetId);refreshEdgeMenu();
+};
+$('ex-graph').addEventListener('pointerdown',event=>{
+  if(!event.target?.closest?.('#ex-edge-menu'))closeEdgeMenu();
+});
+window.addEventListener('keydown',event=>{if(event.key==='Escape')closeEdgeMenu()});
 // Each predecessor index is EMBEDDED in its node's left 42px. The rows
 // share the exact ordering and normalized Y position used by target G6 ports.
 // No source Canvas geometry, floating source rail, or inferred relationship.
 function updateSourceRail(){
+  refreshEdgeMenu();
   const host=$('ex-source-rail');
   host.replaceChildren();
   host.hidden=compactView();
@@ -1297,7 +1284,7 @@ async function ensureG6(){
 // G6 listens for wheel events on its own canvas, not on HTML node controls.
 // Bridge only overlay-origin gestures; native canvas gestures stay with G6.
 $('ex-graph').addEventListener('wheel',event=>{
-  if(!graphReady||!graph||!event.target?.closest?.('.ex-outcome-card, .ex-node-source-strip'))return;
+  if(!graphReady||!graph||!event.target?.closest?.('.ex-outcome-card, .ex-node-source-strip, .ex-edge-menu'))return;
   event.preventDefault();
   event.stopPropagation();
   if(event.ctrlKey){
@@ -1317,8 +1304,8 @@ function graphInit(){
   graph=new window.G6.Graph({
     container:'ex-g6',autoResize:true,autoFit:false,animation:false,
     data:{nodes:[],edges:[]},
-    // Positions come from authoritative Cycle columns; no automatic graph
-    // layout may override the fixed X axis or move branches on selection.
+    // The selected viewer layout supplies coordinates; G6 must not override
+    // them or move branches on selection.
     node:{type:'rect'},
     edge:{type:'polyline',style:{router:{type:'orth'}}},
     // On trackpads, swipe emits wheel without ctrlKey; pinch emits wheel with ctrlKey.
@@ -1348,7 +1335,7 @@ function graphInit(){
     const timeNote=isExternal?' · '+(externalCycleEstimate(n)?.note||'未估算时间'):'';
     tooltip.innerHTML='<strong>'+esc(sem.title||n.label)+'</strong>'+
       esc(isExternal?'外部资料':knownType(n))+' · '+esc(status+source+timeNote)+
-      '<small>单击查看详情 · 双击放大并居中 · 顶部按钮折叠分支</small>';
+      '<small>单击查看详情 · 双击放大并居中 · 悬停连线可操作子分支</small>';
     tooltip.hidden=false;
   });
   graph.on('node:pointermove',e=>{
@@ -1359,14 +1346,20 @@ function graphInit(){
     tooltip.style.left=x+'px';tooltip.style.top=y+'px';
   });
   graph.on('node:pointerleave',()=>tooltip.hidden=true);
-  graph.on('aftertransform',()=>{updateZoomLabels();positionSourceRail()});
+  graph.on('aftertransform',()=>{updateZoomLabels();positionSourceRail();positionEdgeMenu()});
+  graph.on('edge:pointerover',openEdgeMenu);
+  graph.on('edge:pointermove',event=>{
+    if(hoveredEdge!==ID(event.target?.id))openEdgeMenu(event);
+    else{clearTimeout(edgeMenuTimer);positionEdgeMenu()}
+  });
+  graph.on('edge:pointerleave',deferEdgeMenuClose);
   graph.on('edge:click',e=>{
     const id=ID(e.target?.id),relation=index?.edges.find(x=>ID(x.id||x.fromNode+'->'+x.toNode)===id);
     if(!relation)return;
     const selectedNode=selected?.kind==='node'?selected.id:null;
     if(selectedNode){
       const visibleIds=visibleNodes();
-      const visibleEdges=index.edges.filter(x=>visibleIds.has(x.fromNode)&&visibleIds.has(x.toNode)&&
+      const visibleEdges=structure(index.nodes,index.edges).allEdges.filter(x=>visibleIds.has(x.fromNode)&&visibleIds.has(x.toNode)&&
         !(collapsed.has(x.fromNode)&&isScientificEdge(x)));
       const downstream=downstreamHighlight(selectedNode,visibleEdges);
       const next=downstream.lineageIds.has(id)?relation.toNode:
@@ -1381,6 +1374,7 @@ function graphInit(){
 }
 async function renderGraph(opts={}){
   if(!index)return;
+  closeEdgeMenu();
   const ticket=++renderSerial;
   try{
     await ensureG6();
@@ -1404,26 +1398,22 @@ async function renderGraph(opts={}){
 }
 function fit(){if(graph)graph.fitView()}
 function zoom(factor){if(graph)graph.zoomBy(factor)}
-async function setMode(next){
-  if(next===mode)return;
-  rememberBefore();mode=next;syncModeButtons();
-  await renderGraph({fit:true});rememberAfter();
+async function showCompleteGraph(){
+  rememberBefore();collapsed.clear();closeEdgeMenu();
+  await updateSelectionWithoutLayout({focus:false});
+  if(graph)await graph.fitView({when:'always',direction:'both'});rememberAfter(true);
 }
-async function toggleCollapse(){
-  if(selected?.kind!=='node')return;
+async function toggleNodeCollapse(id){
+  if(!index||!graphReady||!index.nodes.some(node=>node.id===id))return;
   rememberBefore();
-  const id=selected.id;
   if(collapsed.has(id))collapsed.delete(id);else collapsed.add(id);
-  syncModeButtons();
   await updateSelectionWithoutLayout({focus:false});rememberAfter();
 }
 function revealNode(id){
   const s=structure(index.nodes,index.edges);
-  if(!baseScope(s).has(id))mode='all';
   // Search/navigation never remains trapped behind a collapsed ancestor.
   const related=traverse([id],s.parents);
   for(const x of related)collapsed.delete(x);
-  syncModeButtons();
 }
 function resolve(target,source){
   let key;try{key=decodeURIComponent(target.split('|')[0].split('#')[0]).trim()}catch{return null}
@@ -1447,6 +1437,12 @@ function mdHtml(text,source){
     const block=raw.startsWith('$$');math.push({value:raw.slice(block?2:1,block?-2:-1),block});
     return 'TMKATEXPLACEHOLDER'+(math.length-1)+'END';
   });
+  protectedText=protectedText.replace(/(```[\s\S]*?```|~~~[\s\S]*?~~~|`+[^`\n]*`+)|!\[\[([^\]\n]+)\]\]/g,(full,code,link)=>{
+    if(code)return code;
+    const [target,label]=link.split('|'),width=/^\d{1,4}$/.test(label||'')?Number(label):null;
+    return '<img src="'+esc(target)+'" alt="'+esc(width?target:(label||target))+
+      '" data-vault-image="1"'+(width?' width="'+width+'"':'')+'>';
+  });
   protectedText=protectedText.replace(/(?<!!)\[\[([^\]\n]+)\]\]/g,(full,link)=>{
     const label=link.split('|')[1]||link.split('|')[0],ref=resolve(link,source);
     return ref?'['+label.replace(/[\[\]]/g,'')+'](#tmref='+encodeURIComponent(ref.kind+':'+ref.id)+
@@ -1455,6 +1451,17 @@ function mdHtml(text,source){
   const result=window.DOMPurify.sanitize(window.marked.parse(protectedText));
   const doc=new DOMParser().parseFromString('<div id="parsed">'+result+'</div>','text/html');
   const wrap=doc.getElementById('parsed');
+  wrap.querySelectorAll('img').forEach(img=>{
+    const raw=img.getAttribute('src')||'';
+    if(!/^https?:\/\//i.test(raw)){
+      if(!raw||/^[a-z][a-z\d+.-]*:/i.test(raw)||raw.startsWith('//')){img.remove();return}
+      let target;try{target=decodeURIComponent(raw.split('#')[0])}catch{img.remove();return}
+      img.setAttribute('src',base()+'/image?path='+encodeURIComponent(target)+
+        '&source='+encodeURIComponent(source||'')+(img.dataset.vaultImage?'&vault=1':''));
+    }
+    img.removeAttribute('srcset');img.removeAttribute('sizes');
+    img.setAttribute('loading','lazy');img.setAttribute('referrerpolicy','no-referrer');
+  });
   wrap.querySelectorAll('a').forEach(a=>{
     const href=a.getAttribute('href')||'';
     if(href.startsWith('#tmref=')){a.dataset.ref=decodeURIComponent(href.slice(7));a.removeAttribute('href')}
@@ -1527,9 +1534,6 @@ async function navigate(kind,id,anchor='',options={}){
   if(kind==='edge'&&!index.edges.some(e=>ID(e.id||e.fromNode+'->'+e.toNode)===id))return;
   const request=++navSerial;
   if(options.record!==false)rememberBefore();
-  // Apply an explicitly requested view mode *after* saving the old location,
-  // so browser Back returns to the correct previous mode, camera and node.
-  if(options.mode==='frontier'||options.mode==='all')mode=options.mode;
   selected={kind,id,anchor};
   const key=uri(kind,id);
   if(kind==='node'){
@@ -1559,7 +1563,6 @@ async function navigate(kind,id,anchor='',options={}){
       '<div class="ex-md">'+mdHtml(header.body,null)+'</div>'+
       outcomeDetailsHtml(m.cycle_outcomes?.length?m.cycle_outcomes:(m.outcome?[m.outcome]:[]))+outbound(key)+refsBlock(key);
     if(options.reveal!==false)revealNode(id);
-    syncModeButtons();
     await updateSelectionWithoutLayout({focus:options.zoomNode?false:options.focus!==false,
       animateFocus:options.animateFocus===true});
     if(request!==navSerial)return;
@@ -1588,7 +1591,6 @@ async function navigate(kind,id,anchor='',options={}){
       (edge.originating_outcome?'<p><strong>来源 Outcome：</strong>'+esc(edge.originating_outcome)+'</p>':'')+
       (edge.provenance_json&&edge.provenance_json!=='{}'?
         '<details><summary>科研连线来源记录</summary><pre>'+esc(edge.provenance_json)+'</pre></details>':'');
-    syncModeButtons();
     await updateSelectionWithoutLayout();
   }else if(kind==='doc'){
     try{
@@ -1647,35 +1649,15 @@ function decodeHash(){
   const h=hash.indexOf('#');return {kind:hash.slice(0,i),id:hash.slice(i+1,h<0?undefined:h),
     anchor:h<0?'':hash.slice(h+1)};
 }
-// An ordinary entry always begins with the complete chronology, anchored to
-// the newest frozen H. External time estimates must not supersede scientific
-// Cycle ownership; older archived Decisions are only a fallback for V1 data.
-function latestScientificNodeId(){
-  if(!index?.nodes?.length)return null;
-  const scientific=index.nodes.filter(n=>knownType(n)==='Hypothesis'||
-    knownType(n)==='Decision');
-  const real=scientific.filter(n=>Number.isSafeInteger(n.semantic?.cycle)&&n.semantic.cycle>0);
-  const hypotheses=real.filter(n=>knownType(n)==='Hypothesis');
-  const fallback=scientific.filter(n=>knownType(n)==='Hypothesis')
-    .map(n=>({node:n,cycle:displayCycle(n)}))
-    .filter(entry=>Number.isSafeInteger(entry.cycle)&&entry.cycle>0);
-  const candidates=(hypotheses.length?hypotheses:real)
-    .map(n=>({node:n,cycle:n.semantic.cycle}));
-  // Prefer authoritative Cycle IDs; inferred H coordinates are not a substitute
-  // for an existing frozen Cycle identifier.
-  const scored=candidates.length?candidates:fallback;
-  scored.sort((a,b)=>b.cycle-a.cycle||stable(b.node.id,a.node.id));
-  return scored[0]?.node.id||null;
-}
 async function load({fresh=false}={}){
   try{
     const newIndex=await api(base()+'/index'),previous=index;
     index=newIndex;
     overviewRender();
     ++tipWorkerRequest;$('ex-tip-panel').hidden=true;
-    const indexWarning=index.stats.partial?' · 文档索引达到总读取预算，部分链接可能未索引':'';
     $('ex-stats').textContent=index.stats.node_count+' 节点 · '+
-      index.stats.edge_count+' 科研连线 · '+index.stats.doc_count+' 文档'+indexWarning;
+      index.stats.edge_count+' 科研连线 · '+index.stats.doc_count+' 文档';
+    $('ex-index-warning').hidden=!index.stats.partial;
     const hash=decodeHash();
     const hashValid=hash&&((hash.kind==='node'&&index.nodes.some(n=>n.id===hash.id))||
       (hash.kind==='edge'&&index.edges.some(e=>ID(e.id||e.fromNode+'->'+e.toNode)===hash.id))||
@@ -1684,12 +1666,11 @@ async function load({fresh=false}={}){
     if(fresh&&!hashValid){
       // A new direct visit or a task switch has no explicit document target.
       // Old hashless camera snapshots must not override the default landing.
-      mode='all';selected=null;collapsed.clear();syncModeButtons();
-      const newest=latestScientificNodeId();
-      await renderGraph(newest?{focus:newest}:{fit:true});
+      selected=null;collapsed.clear();
+      await renderGraph({fit:true});
       if(trailIndex<0)rememberAfter();
     }else if(fresh&&hashValid){
-      mode='all';selected=null;collapsed.clear();syncModeButtons();
+      selected=null;collapsed.clear();
       await navigate(hash.kind,hash.id,hash.anchor,{record:false,focus:true});
     }else if(saved?.taskId===taskId&&(!saved.selected||
       (saved.selected.kind==='node'&&index.nodes.some(n=>n.id===saved.selected.id))||
@@ -1833,7 +1814,7 @@ function syncFullscreen(){
 document.addEventListener?.('fullscreenchange',syncFullscreen);
 window.addEventListener('resize',()=>{syncPane();refreshRailAfterResize()});
 $('ex-task').addEventListener('change',()=>{
-  taskId=$('ex-task').value;syncLayoutDemoLink();selected=null;mode='all';collapsed.clear();
+  taskId=$('ex-task').value;selected=null;collapsed.clear();
   searchRequestSerial++;clearTimeout(searchTimer);$('ex-results').replaceChildren();$('ex-results').hidden=true;
   $('ex-tip-panel').hidden=true;
   trail.length=0;trailIndex=-1;historySerial=-1;navSerial++;historyButtons();
@@ -1852,18 +1833,17 @@ window.addEventListener('keydown',e=>{
     else if(e.key==='ArrowRight'){e.preventDefault();restoreView(1)}
   }
 });
-$('ex-all').onclick=()=>setMode('all');
-$('ex-local').onclick=()=>setMode('local');
+$('ex-all').onclick=showCompleteGraph;
 $('ex-fit').onclick=fit;
 $('ex-plus').onclick=()=>zoom(1.25);
 $('ex-minus').onclick=()=>zoom(.8);
-$('ex-collapse').onclick=toggleCollapse;
-$('ex-expand-all').onclick=async()=>{if(!collapsed.size)return;rememberBefore();collapsed.clear();syncModeButtons();await updateSelectionWithoutLayout({focus:false});rememberAfter()};
+$('ex-expand-all').onclick=async()=>{if(!collapsed.size)return;rememberBefore();collapsed.clear();await updateSelectionWithoutLayout({focus:false});rememberAfter()};
 $('ex-refresh').onclick=()=>{searchRequestSerial++;clearTimeout(searchTimer);$('ex-results').hidden=true;rememberBefore();load()};
 window.addEventListener('popstate',event=>{
   const fromUrl=new URLSearchParams(location.search).get('observer_id');
   if(fromUrl&&fromUrl!==taskId&&Array.from($('ex-task').options||[]).some(o=>o.value===fromUrl)){
-    taskId=fromUrl;$('ex-task').value=taskId;syncLayoutDemoLink();selected=null;collapsed.clear();
+    taskId=fromUrl;$('ex-task').value=taskId;
+    selected=null;collapsed.clear();
     trail.length=0;trailIndex=-1;historySerial=-1;navSerial++;historyButtons();
     if(graph){graph.destroy();graph=null}
     load();return;
@@ -1889,21 +1869,38 @@ $('ex-query').addEventListener('input',()=>{
       const payload=await api(base()+'/search?q='+encodeURIComponent(q));
       if(requestSerial!==searchRequestSerial||q!==$('ex-query').value.trim())return;
       box.replaceChildren();
+      const number=/^\d+$/.test(q)?q.replace(/^0+/,'')||'0':null;
+      const direct=number===null?[]:(index?.nodes||[]).filter(n=>{
+        const match=String(n.id).match(/(?:^|[-_])0*(\d+)$/);
+        return match&&(match[1].replace(/^0+/,'')||'0')===number;
+      }).sort((a,b)=>stable(a.id,b.id));
+      const directIds=new Set(direct.map(n=>n.id));
+      function section(title,rows,emptyMessage){
+        const group=document.createElement('div');group.className='ex-search-section';
+        const heading=document.createElement('div');heading.className='ex-search-section-title';
+        heading.textContent=title;group.append(heading);
+        if(!rows.length){
+          const empty=document.createElement('p');empty.className='ex-search-empty';
+          empty.textContent=emptyMessage;group.append(empty);
+        }
+        for(const h of rows){
+          const b=document.createElement('button');b.textContent=h.label+' ('+h.kind+')';
+        const small=document.createElement('small');small.textContent=h.excerpt;
+          b.append(small);b.onclick=()=>{navigate(h.kind,h.id,'',{focus:true});box.hidden=true};group.append(b);
+        }
+        box.append(group);
+      }
+      if(number!==null)section('节点编号',direct.map(n=>({kind:'node',id:n.id,
+        label:n.id+' · '+(n.label||n.id),excerpt:''})),
+        '当前图谱没有该编号的节点。');
+      const rows=(payload.results||[]).filter(h=>h.kind!=='node'||!directIds.has(h.id));
+      section('内容匹配',rows,payload.partial?
+        '已扫描内容中没有其他匹配项；搜索索引尚未覆盖全部文档。':
+        '没有找到其他匹配的科研节点或 Markdown 文档。');
       if(payload.partial){
         const notice=document.createElement('p');notice.className='ex-search-warning';
         notice.textContent='搜索索引受总读取预算限制，结果可能不完整；可缩小文档范围或刷新文件后重试。';
         box.append(notice);
-      }
-      const rows=payload.results||[];
-      if(!rows.length){
-        const empty=document.createElement('p');empty.className='ex-search-empty';
-        empty.textContent=payload.partial?'已扫描内容中没有匹配项，但索引不完整，不能据此判断整个任务均无匹配。':'没有找到匹配的科研节点或 Markdown 文档。';
-        box.append(empty);
-      }
-      for(const h of rows){
-        const b=document.createElement('button');b.textContent=h.label+' ('+h.kind+')';
-        const small=document.createElement('small');small.textContent=h.excerpt;
-        b.append(small);b.onclick=()=>{navigate(h.kind,h.id,'',{focus:true});box.hidden=true};box.append(b);
       }
       box.hidden=false;
     }catch(e){

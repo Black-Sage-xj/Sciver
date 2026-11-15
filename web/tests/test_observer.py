@@ -9,6 +9,7 @@ import stat
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
@@ -20,6 +21,7 @@ from tm_observer.archify_views import StaticBuildResult, StaticViewManager, arch
 from tm_observer.al_public import caddy_site, render_tunnel_service
 from tm_observer.auth import BasicAuthCredentials, ObservatoryAuth, ensure_auth_file, load_auth_file
 from tm_observer.collector import collect_state
+from tm_observer.change_requests import ChangeRequestLoad
 from tm_observer.sequence_views import _sequence_source, run_sequence_ir
 from tm_observer.service import render_user_service
 from tm_observer.stage_flow import SDK_OWNERSHIP_FIELDS, STAGE_CONTEXT_FIELDS, field_note_catalog, stage_contract_inventory, stage_detail_catalog, stage_workflow_mermaid, stage_workflow_overview_mermaid
@@ -894,7 +896,8 @@ class WebTests(unittest.TestCase):
             (static_dir / "control-flow.html").write_text("<html>legacy control flow</html>", encoding="utf-8")
             body = workflow_html(manager)
             self.assertIn("Scientific Workflow", body)
-            self.assertEqual(body.count("<iframe"), 1)
+            self.assertEqual(body.count("<iframe class='diagram' src='/artifacts/workflow.html'"), 1)
+            self.assertEqual(body.count('id="sc-chat-frame"'), 1)
             self.assertIn("/artifacts/workflow.html", body)
             self.assertNotIn("/artifacts/control-flow.html", body)
             self.assertNotIn("/artifacts/lifecycle.html", body)
@@ -1181,8 +1184,8 @@ class WebTests(unittest.TestCase):
         self.assertIn("hypotheses[]", notes_by_key["research_lead::frontier_proposal::input::agent_graph"]["structure"])
         details = {item["node"]: item for item in stage_detail_catalog()}
         self.assertTrue(details["judge__terminal_assessment"]["contract_rules"])
-        self.assertIn("Native Goal", details["investigator__investigate"]["objective"])
-        self.assertTrue(details["investigator__investigate"]["may_do"])
+        self.assertEqual(details["investigator__investigate"]["role_guidance"], [])
+        self.assertTrue(details["investigator__investigate"]["objective"])
         self.assertIn('id="stage-detail-popover"', body)
         self.assertIn("Contract 条件规则", body)
         self.assertIn("实际结构", body)
@@ -1356,6 +1359,12 @@ class WebTests(unittest.TestCase):
                 server2.server_close()
                 thread2.join(timeout=3)
 
+    def test_workflow_without_historical_warnings_keeps_diagram_without_diagnostics(self):
+        with patch("tm_observer.web.load_change_requests", return_value=ChangeRequestLoad((), ())):
+            page = stage_workflow_html()
+        self.assertIn('class="stage-canvas"', page)
+        self.assertNotIn('class="tm-workflow-diagnostics"', page)
+
     def test_get_pages_and_json_are_read_only_and_post_is_disabled(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -1412,7 +1421,7 @@ class WebTests(unittest.TestCase):
                 self.assertIn('Task monitoring', run_detail)
                 self.assertIn('class="tm-tui-screen"', run_detail)
                 self.assertIn('Task ID 9', run_detail)
-                self.assertIn('Explore map', run_detail)
+                self.assertIn('图谱', run_detail)
                 self.assertIn('当前任务暂未提供可阅读的科研画布', run_detail)
                 self.assertNotIn('/api/canvas-md/', run_detail)
                 with self.assertRaises(HTTPError) as ctx:

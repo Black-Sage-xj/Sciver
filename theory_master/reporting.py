@@ -10,6 +10,8 @@ from typing import Any
 
 from .display import direction_text
 from .evidence import adjudicable_manifest_records
+from .report_materials import material_index, normalize_report_images, report_materials
+from .outcome_guide import validate_graph_summary
 from .runtime import atomic, canvas_ts, write_json
 
 
@@ -65,6 +67,8 @@ class ReportingMixin:
             if model_out_path.is_file() else (model_update.get("model") or {})
         )
         evidence_context = self._evidence_context()
+        material_context = {**self._path_anchors(), "cycle_dir": str(self.cycle_dir), **evidence_context}
+        materials = report_materials(material_context)
         evidence_refs = [
             str(item["evidence_id"])
             for item in adjudicable_manifest_records(evidence_context.get("evidence_manifest"))
@@ -84,6 +88,10 @@ class ReportingMixin:
             "authorized_next_frontier_candidate_id": None,
             **evidence_context,
         })
+        # Cached historical reports remain readable without a new model call.
+        guide = report.get("graph_summary")
+        if guide is not None:
+            validate_graph_summary(guide)
         notes_dir = self.spec.notes_mirror_dir or self.notes_dir or (self.cycle_dir / "notes")
         notes_dir.mkdir(parents=True, exist_ok=True)
         # A vault directory is shared by a long-lived branch.  Prefix the
@@ -98,14 +106,22 @@ class ReportingMixin:
             except ValueError as exc:
                 raise ValueError("authoritative Cycle note must land in notes_mirror_dir") from exc
         repo_root = Path(self._path_anchors().get("repo_root") or Path.cwd()).resolve()
+        summary, image_warnings = normalize_report_images(
+            str(report.get("summary") or "").strip(), materials, material_context,
+        )
+        report = {**report, "summary": summary}
+        note_body, _ = normalize_report_images(summary, materials, material_context, note_dir=note.parent)
         try:
             cycle_rel = self.cycle_dir.resolve().relative_to(repo_root).as_posix()
         except ValueError:
             cycle_rel = self.cycle_dir.resolve().as_posix()
         machine_index = [
-            "## 机器审计与复现索引",
+            "## 复现索引",
             "",
-            "> 本节只提供机器权威记录的索引，不展开结构化对象。正文中的科学解释优先于这里的机器字段。",
+            *material_index(materials, image_warnings),
+            "",
+            "<details>",
+            "<summary>机器审计记录与计算目录</summary>",
             "",
             f"- Cycle：`{cycle_ref}`",
             f"- Branch verdict：`{judge.get('verdict') or ''}`",
@@ -133,11 +149,11 @@ class ReportingMixin:
             f"- Workspace：`{cycle_rel}/workspace/`",
             f"- Evidence：`{cycle_rel}/evidence/`",
             "",
-            "本笔记是该 Cycle 的人类可读科研叙事；机器权威状态保存在上述结构化文件中。",
+            "</details>",
         ])
         atomic(
             note,
-            f"# {report.get('title', branch['title'])}\n\n{report.get('summary', '').strip()}\n\n"
+            f"# {report.get('title', branch['title'])}\n\n{note_body}\n\n"
             + "\n".join(machine_index)
             + "\n",
         )
@@ -152,8 +168,8 @@ class ReportingMixin:
         branch["summary"] = str(report.get("summary") or "")
         branch["timestamp"] = canvas_ts()
 
-        # The human report is the sole narrative source. Persist its Cycle-local
-        # summary directly as a SQLite Outcome; no Canvas-writing Agent stage exists.
+        # Report and guide are reading projections; formal scientific fields
+        # still come from Judge, Lead synthesis and registered Evidence.
         source_id = str(branch.get("hypothesis_ref") or "").strip()
         graph_db = self._graph_database_path()
         from .science_graph_store import ScienceGraphStore
@@ -209,6 +225,8 @@ class ReportingMixin:
             "report_ref": report_ref,
             "record_only": True,
         }
+        if guide is not None:
+            state["cycle_outcome_record"]["graph_summary"] = dict(guide)
         branch["summary"] = str(report.get("summary") or "")
         branch["timestamp"] = canvas_ts()
         state["next_start_node_id"] = None

@@ -71,10 +71,11 @@ class ResourceFeasibilityPromptTests(unittest.TestCase):
     def test_lead_design_can_trade_unneeded_global_precision_for_local_value(self):
         for prompt in self.prompts("research_lead", "frontier_proposal",
                                    {"goal": "Discover shell response", "final_gate": "Predict shells"}):
-            for phrase in ("high-risk claim can advance the Goal without completing it",
+            for phrase in ("claim can advance the Goal without completing it",
+                           "bounded mechanism, negative result or high-risk",
                            "Indispensable premises need a credible in-scope route"):
                 self.assertIn(phrase, prompt)
-            self.assertIn("Explain the substantive change from prior claims", prompt)
+            self.assertIn("scientifically distinct", prompt)
             self.assertIn("Match uncertainty and proof precision to the scientific distinction claimed", prompt)
             self.assertNotIn("381", prompt)
 
@@ -83,27 +84,28 @@ class ResourceFeasibilityPromptTests(unittest.TestCase):
                                    {"candidate": [{"hypothesis": "H", "scope": "S",
                                                    "decisive_test": "a bounded local test"}]}):
             for phrase in ("essential route is demonstrably unavailable",
-                           "claimed decision", "credible in-scope route", "Do not demand the research answer",
+                           "statistically unreachable outcomes", "credible in-scope route", "unfinished proof, new derivation",
                            "Do not demand optional stronger claims"):
                 self.assertIn(phrase, prompt)
-            self.assertIn("Return the per-candidate decision", prompt)
-            self.assertIn("selection follows separately", prompt)
-            self.assertIn("Reject the current design", prompt)
+            self.assertIn("Use qualified only when", prompt)
+            self.assertIn("Use revise only when", prompt)
+            self.assertIn("Use reject when", prompt)
             self.assertIn("eventual negative/open result is not itself a blocker", prompt)
 
     def test_investigator_stage_preserves_no_premature_findings_and_native_blocked(self):
         card = stage_card_text("investigator", "investigate")
-        for phrase in ("estimate feasibility and scientific value", "abandon disproportionate methods",
-                       "valid bounded alternatives", "frozen test",
+        for phrase in ("Before costly work, estimate feasibility and scientific value", "abandon disproportionate methods",
+                       "valid bounded alternatives", "frozen decisive_test",
                        "Do not request native blocked for scientific difficulty",
                        "unfinished science remains unfinished"):
             self.assertIn(phrase, card)
-        self.assertIn("whole frozen test", card)
+        self.assertIn("combined findings must address the whole frozen test", card)
+        self.assertIn("frozen decisive_test", card)
         self.assertIn("Do not submit a partial theorem", card)
         self.assertIn("worst-case bounds do not justify unbounded compute", card)
         self.assertIn("requested_resolution", stage_card_text("investigator", "judge_rework"))
         self.assertIn("abandon disproportionate methods", stage_card_text("investigator", "judge_rework"))
-        self.assertIn("Do not request native blocked", stage_card_text("investigator", "judge_rework"))
+        self.assertIn("Do not request native blocked for scientific difficulty", stage_card_text("investigator", "judge_rework"))
         self.assertNotIn("native Goal blocked status", stage_card_text("judge", "terminal_assessment"))
 
     def test_skills_extend_existing_cost_gate_without_setting_global_limits(self):
@@ -148,9 +150,8 @@ class ResourceFeasibilityPromptTests(unittest.TestCase):
                 "agent_graph": {"schema": "theorymaster/agent-science-graph/v1", "hypotheses": [],
                                 "current_frontiers": [], "lineage": [], "focus_details": [],
                                 "external_sources": [], "external_references": [], "source_relations": []},
-            })["candidate"][0],
-            {"frozen_objective": {"hypothesis": "H", "scope": "S", "decisive_test": "Test"},
-             "proposal_context": {"why_now": "Goal", "goal_advance": "Progress"}},
+            })["candidate"][0]["frozen_objective"],
+            {key: candidate[key] for key in ("hypothesis", "scope", "decisive_test")},
         )
 
 

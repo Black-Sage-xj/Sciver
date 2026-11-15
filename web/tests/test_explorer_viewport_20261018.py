@@ -24,7 +24,7 @@ class ExplorerViewportTest(unittest.TestCase):
         self.assertNotIn("ex-hint", body)
         self.assertNotIn("只读科研图谱 ·", body)
         self.assertNotIn("Canvas 科研图谱、Markdown 与双向引用（只读）", page)
-        self.assertIn("<h1>Explore map</h1>", page)
+        self.assertIn("<h1>图谱</h1>", page)
         # The shared shell retains subtitles for other pages.
         self.assertIn("Workspace 设置与任务级自动审计选项",
                       dashboard_shell("Settings", "<p>Body</p>", active="settings"))

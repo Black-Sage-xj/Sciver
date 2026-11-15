@@ -253,7 +253,7 @@ def write_binding(root: Path, config_path: Path) -> None:
     path.write_text(json.dumps({"schema": TASK_SCHEMA, "config_path": str(config_path.resolve())},
                                ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-def bootstrap(plan: Path) -> TaskBinding:
+def bootstrap(plan: Path, *, allocation_root: Path | None = None) -> TaskBinding:
     """One-input startup for the current Research Plan format."""
     plan = plan.expanduser().resolve()
     if plan.name != "research_plan.md" or not plan.is_file():
@@ -276,7 +276,8 @@ def bootstrap(plan: Path) -> TaskBinding:
                 "run the explicit Canvas→SQLite migration before bootstrapping this workspace"
             )
     if is_new_task:
-        search_root = task_id_scope_root(plan)
+        search_root = (allocation_root.expanduser().resolve() if allocation_root is not None
+                       else task_id_scope_root(plan))
         with task_id_allocation_lock(search_root):
             # Another bootstrap may have created this same task while waiting.
             if config_path.exists():

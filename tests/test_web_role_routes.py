@@ -108,6 +108,14 @@ class OperatorRoleRouteTests(unittest.TestCase):
 
 
 class NextCycleRouteReloadTests(unittest.TestCase):
+    def setUp(self):
+        # These cases test route reload, not the host's selected account/quota.
+        from unittest.mock import patch
+        from theory_master.codex_backend import CodexBackend
+        account = patch.object(CodexBackend, "prepare_cycle_account", side_effect=lambda routes: routes)
+        account.start()
+        self.addCleanup(account.stop)
+
     def test_current_cycle_frozen_then_next_boundary_reloads_entire_sdk_route(self):
         from unittest.mock import Mock
         from theory_master.abc_pipeline import AgentSemanticBackend, FallbackSemanticBackend

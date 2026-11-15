@@ -30,7 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--error-repair", dest="error_repair", action="store_true"); parser.add_argument("--no-error-repair", dest="error_repair", action="store_false")
     parser.add_argument("--attention-takeover", dest="attention_takeover", action="store_true"); parser.add_argument("--no-attention-takeover", dest="attention_takeover", action="store_false")
     parser.add_argument("--check-literature", action="store_true"); parser.set_defaults(cycle_audit=None, error_repair=None, attention_takeover=None)
-    parser.add_argument("--stop-before", choices=["hypothesis_lock", "judge"])
+    parser.add_argument("--stop-before", choices=["hypothesis_lock", "investigator", "judge"])
     parser.add_argument("--managed-child", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     binding = TaskBinding.load(args.task_root)

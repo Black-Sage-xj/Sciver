@@ -84,15 +84,18 @@ Canvas 不是 Workflow 状态板、Evidence Registry、原始数据仓库或完�
 - Frontier **属于分支，不等于图形叶子节点**。已有后代的 H 仍可 active；不能把旧 H frontier_status 机械迁移给后继 Decision/子 H，也不能只因出现 outgoing edge 就删除它。
 - Research Lead 负责研究方向和 frontier maintenance；Judge 负责 Cycle 科学裁决；SDK 负责数据验证/落盘；Reporter 只撰写经裁决的简短文案。active 不是下一 Cycle 的强制起点；历史 parked/closed H 仍可成为有明确 why_now 和新科学增量的派生 H 来源，但不能作为同一 H 复用重跑。
 
-## 5. Reporter canvas_maintenance 的明确限制
+## 5. Reporter 图谱导览与完整报告
 
-Reporter 只接收 SDK 提供的 canvas_focus、terminal Decision、Evidence scope 摘要和本轮报告上下文，返回 decision.title、decision.summary；可选 rationale 只用于提示上下文不足，正常情况省略。frontier 是旧 schema 兼容空槽位（必须为空），不授予下一步授权。
+Reporter 的当前 `report` 合同为 v4：返回 `title`、完整报告 `summary` 与独立 `graph_summary`，没有 Canvas-writing Stage。导览的四个正文字符串分别为本轮结论 `conclusion`、关键依据 `basis`、必要范围及资料来源身份 `scope`、本节点未决问题 `open_question`（无剩余问题时为空）。合计 900 字符是安全上限而非写作目标，保留判断结论所需的科学细节。
 
-- decision.title 上限 **120 字符**，decision.summary 上限 **900 字符**。限制仅针对**图谱内短摘要**，不限制原报告或 notes/outcomes/<Cycle ID>.md 详情篇幅。
-- Reporter 不返回 node ID、parent、Evidence refs、Judge verdict、scientific_status、frontier_status、颜色、坐标、文件写入、下一 Cycle 推荐；SDK 根据已授权结果构造持久化记录。
-- 完整科学结论来自 Judge 原始判决及 SDK 确定性整理，Reporter 不得扩大支持范围，或将局部反证升格为全 H rejected。
+- 导览以本轮新增、排除或仍未判明的认识开头；继承知识保留背景身份。关键依据保留决定性数值、区间相对冻结门槛的位置或证明原因；不以核验完成替代科学结论。
+- 完整实验步骤、证据清单、全局研究背景与复现材料通过档案和报告读取。未决问题优先表达本节点缺口，不机械重复整个任务的完整曲线、盲测等目标。
+- SDK 将导览保存到 Cycle Outcome 的 `source_json`，不再从完整报告开头截取新节点导览。Web 的图上短卡片优先呈现结论，点击后显示完整导览，原报告及正式科学记录折叠读取；Canvas 与 Agent 上下文保留导览全部语义字段。图上的短预览本身不是完整科学结论。
+- 导览不返回或覆盖 ID、Judge verdict、scientific_status、frontier_status、Evidence 引用、谱系、坐标或下一 Cycle 计划。正式科学字段仍来自 Judge、Lead synthesis 和 Evidence。文字润色不扩大局部结论范围。
+- active、parked、closed 均展示已记录的分支原因，未记录时明确标注；整体 H 未评估而本轮已裁决时，展示文案明确区分两者。
+- 历史 Outcome 缺少导览时兼容读取原报告；缓存旧 Reporter 交付可恢复，不自动调用模型生成新解释，也不改写冻结命题、历史报告或裁决。
 
-当前真实合同见 theory_master/contract_stages.py、theory_master/stage_registry.py 和 [canvas-maintenance Skill](../skills/canvas-maintenance/SKILL.md)。
+实际合同见 `theory_master/contract_stages.py`，规则及运行时 Skill 见 `theory_master/resources/skills/report-writing/SKILL.md`。
 
 ## 6. External 的时间与 Cycle 推定
 

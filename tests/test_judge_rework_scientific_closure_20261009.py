@@ -21,7 +21,7 @@ class JudgeReworkScientificClosureTest(unittest.TestCase):
         self.assertIn("terminal open", judge)
         self.assertIn("has actually been executed", judge)
         self.assertIn("whole frozen test", investigator)
-        self.assertIn("support, falsification or a genuinely established non-identifiability or inconclusive result", investigator)
+        self.assertIn("support, falsification or a genuinely established non-identifiability", investigator)
         self.assertIn("actual requested_resolution", rework)
         self.assertIn("exact Judge request", rework)
         self.assertNotIn("findings[].limitations", rework)

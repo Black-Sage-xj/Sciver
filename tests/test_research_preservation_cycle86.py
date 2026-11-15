@@ -1,11 +1,5 @@
-"""Offline replay of the real, incomplete Cycle 86 research checkpoint.
-
-No Codex request and no writes to the original Cycle/Canvas.
-"""
-import copy
+"""Synthetic preservation checkpoints, with no private research trajectories."""
 import json
-import shutil
-from pathlib import Path
 
 import pytest
 
@@ -18,69 +12,55 @@ from theory_master.research_preservation import (
 )
 from theory_master.science_graph_store import ScienceGraphStore
 
-ROOT = Path(__file__).resolve().parents[3]
-CYCLE_86 = (
-    ROOT / "gs_study" / ".theory-master-tasks"
-    / "1-matrix-cavity-green-g-closure-h8-dd60a2f2780a" / "research" / "86"
-)
-CANVAS_86 = ROOT / "笔记区" / "探索台账" / "矩阵腔体Green闭合-H8" / "exploration.canvas"
-
-
 def _stage_output():
     return {
         "observations": [{
-            "statement": "在所测拓扑中全局割改变没有造成相当大小的 root 电阻变化",
-            "conditions": "20K 有界换边、特定 root、无真实 cut response",
+            "statement": "The handwritten normalization fixture accepts two ASCII examples.",
+            "conditions": "Only the two strings listed in the fixture README were inspected.",
             "evidence_paths": ["workspace/README.md"],
-            "limitations": "不能推及所有结构干预或物理释放量",
+            "limitations": "The examples do not establish behavior for every Unicode string.",
         }],
         "methods_exhausted": [{
-            "method": "20K 图上的短路径保护换边",
-            "limitation": "测得电阻差未达到预定可辨门槛；不是一般无解证明",
+            "method": "Inspect a finite list of normalization examples",
+            "limitation": "Finite examples cannot discharge the universal invariant.",
         }],
-        "remaining_gap": "没有可冻结的 root 相关低信息幅值公式及合格独立网络",
-        "unexecuted_test": "未冻结预测与误差预算，也未开展隔离物理评分",
-        "canvas_title": "C86 中尺度混合研究阶段保全",
-        "canvas_summary": "历史探索说明全局混合不足以确定 root 响应；仅为未裁决局部发现。",
+        "remaining_gap": "A proof for the declared Unicode input class is still missing.",
+        "unexecuted_test": "No exhaustive check or proof of idempotence was completed.",
+        "canvas_title": "Synthetic normalization work preserved",
+        "canvas_summary": "Two ASCII examples were inspected; the Unicode claim remains unadjudicated.",
     }
 
 
 @pytest.fixture
-def c86_clone(tmp_path):
-    if not (CYCLE_86 / "run_state.json").is_file() or not CANVAS_86.is_file():
-        pytest.skip("original Cycle86 benchmark is not available in this checkout")
-    cycle = tmp_path / "research" / "86"
-    cycle.mkdir(parents=True)
-    shutil.copy2(CYCLE_86 / "workspace" / "README.md", tmp_path / "source_readme.md")
-    (cycle / "workspace").mkdir()
-    shutil.copy2(tmp_path / "source_readme.md", cycle / "workspace" / "README.md")
+def synthetic_checkpoint(tmp_path):
+    """Construct all inputs by hand; no private task, archive or model is used."""
+    cycle = tmp_path / "research" / "1"
+    (cycle / "workspace").mkdir(parents=True)
+    (cycle / "workspace" / "README.md").write_text(
+        "# Synthetic observations\nASCII examples: ' a ' -> 'a'; 'b' -> 'b'.\n"
+        "No observations about other strings.\n", encoding="utf-8")
     canvas = tmp_path / "notes" / "exploration.canvas"
     canvas.parent.mkdir()
-    model = json.loads(CANVAS_86.read_text(encoding="utf-8"))
-    old = "external-c86-preservation-20261013"
-    model["nodes"] = [n for n in model["nodes"] if n.get("id") != old]
-    model["edges"] = [e for e in model["edges"] if e.get("toNode") != old and e.get("fromNode") != old]
-    h = next(n for n in model["nodes"] if n.get("id") == "H-0056")
-    h["text"] = h["text"].replace("frontier_status: parked", "frontier_status: active")
-    canvas.write_text(json.dumps(model, ensure_ascii=False, indent=2), encoding="utf-8")
-    # SQLite is authoritative in V2; build a minimal canonical graph fixture rather
-    # than relying on the Canvas copy as an implicit data source.
+    lock = {"id": "H-0001", "status": "locked",
+            "hypothesis": "The declared normalization operation is idempotent.",
+            "scope": "Finite Unicode strings under the specified normalization rules.",
+            "decisive_test": "Prove idempotence or provide a verified counterexample."}
     with ScienceGraphStore(canvas.parent / "science_graph.sqlite3") as store:
-        h_node = next(n for n in model["nodes"] if n.get("id") == "H-0056")
-        title = next((line.lstrip("# ").strip() for line in str(h_node.get("text") or "").splitlines()
-                      if line.startswith("# ")), "Cycle 86 preserved hypothesis")
-        store.add_hypothesis("H-0056", title=title, summary="Cycle 86 frozen hypothesis")
-        store.register_cycle_hypothesis(cycle_id="86", hypothesis_id="H-0056")
-        store.set_frontier(branch_id="frontier:H-0056", hypothesis_id="H-0056",
-                           status="active", reason="Cycle 86 preservation fixture")
-    original_run = (CYCLE_86 / "preservation" / "preclose_run_state.json")
-    original_science = (CYCLE_86 / "preservation" / "preclose_research_state.json")
-    state = json.loads((original_run if original_run.is_file() else CYCLE_86 / "run_state.json").read_text(encoding="utf-8"))
-    state["branch_canvas"] = str(canvas)
-    (cycle / "run_state.json").write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-    scientific = json.loads((original_science if original_science.is_file() else CYCLE_86 / "research_state.json").read_text(encoding="utf-8"))
-    scientific["cycle_dir"] = str(cycle)
-    (cycle / "research_state.json").write_text(json.dumps(scientific, ensure_ascii=False), encoding="utf-8")
+        store.add_hypothesis("H-0001", title="Synthetic normalization claim", summary=lock["hypothesis"])
+        store.register_cycle_hypothesis(cycle_id="1", hypothesis_id="H-0001")
+        store.set_frontier(branch_id="frontier:H-0001", hypothesis_id="H-0001",
+                           status="active", reason="Synthetic fixture awaiting proof")
+        from theory_master.science_canvas_export import canvas_projection
+        canvas.write_text(json.dumps(canvas_projection(store)), encoding="utf-8")
+    state = {"cycle_id": "1", "status": "needs_attention",
+             "phase": "investigator:goal_suspended", "execution_active": False,
+             "resumable": True, "scientific_verdict": None,
+             "attention": {"code": "investigator_native_goal_blocked", "goal_status": "blocked",
+                           "reason": "Synthetic proof attempt has no applicable Unicode lemma."},
+             "hypothesis_lock": lock, "branch_canvas": str(canvas),
+             "cycle_dir": str(cycle), "research_root": str(cycle.parent), "role_outputs": {}}
+    for name in ("run_state.json", "research_state.json"):
+        (cycle / name).write_text(json.dumps(state), encoding="utf-8")
     return cycle, canvas
 
 
@@ -91,16 +71,16 @@ def test_stage_contract_and_boundary():
     contract.structural_validator(_stage_output(), {})
     ctx = stage_context("investigator", "preserve_research", {
         "hypothesis_lock": {"hypothesis": "H", "scope": "S", "decisive_test": "T"},
-        "blocked_reason": "N", "source_cycle": "86", "cycle_workspace": "/tmp/workspace",
+        "blocked_reason": "N", "source_cycle": "1", "cycle_workspace": "/tmp/workspace",
     })
-    assert ctx["source_cycle"] == "86"
+    assert ctx["source_cycle"] == "1"
     assert "qualification_handoff" not in ctx
 
 
-def test_replay_real_cycle86_checkpoint_is_unadjudicated_and_idempotent(c86_clone):
-    cycle, canvas = c86_clone
+def test_synthetic_checkpoint_is_unadjudicated_and_idempotent(synthetic_checkpoint):
+    cycle, canvas = synthetic_checkpoint
     state_before = (cycle / "run_state.json").read_bytes()
-    original_before = CANVAS_86.read_bytes()
+    source_before = (cycle / "workspace" / "README.md").read_bytes()
     with pytest.raises(PreservationGuard, match="authorization"):
         preserve_blocked_cycle(cycle_dir=cycle, canvas_path=canvas,
                                stage_output=_stage_output(), authorization="investigator_blocked")
@@ -115,21 +95,21 @@ def test_replay_real_cycle86_checkpoint_is_unadjudicated_and_idempotent(c86_clon
                                    stage_output=_stage_output(), authorization="operator_approved")
     assert created["created"] and not again["created"]
     model = json.loads(canvas.read_text(encoding="utf-8"))
-    assert sum(n["id"] == "external-c86-preservation-20261013" for n in model["nodes"]) == 0
-    assert created["node_id"] == "H-0056"
-    assert sum(n["id"] == "H-0056" for n in model["nodes"]) == 1
-    h = next(n for n in model["nodes"] if n["id"] == "H-0056")
+    assert not any(n["id"].startswith("external-") for n in model["nodes"])
+    assert created["node_id"] == "H-0001"
+    assert sum(n["id"] == "H-0001" for n in model["nodes"]) == 1
+    h = next(n for n in model["nodes"] if n["id"] == "H-0001")
     assert "frontier_status: parked" in h["text"]
     # An empty compatibility Outcome is not a scientific open verdict.
     assert "scientific_status: none" in h["text"]
     assert "Judge" not in json.dumps(created, ensure_ascii=False)
     assert (cycle / "preservation" / "status.json").is_file()
     assert (cycle / "run_state.json").read_bytes() == state_before
-    assert CANVAS_86.read_bytes() == original_before
+    assert (cycle / "workspace" / "README.md").read_bytes() == source_before
 
 
-def test_refuse_mismatched_checkpoint_unverified_source_and_fabricated_verdict(c86_clone):
-    cycle, canvas = c86_clone
+def test_refuse_mismatched_checkpoint_unverified_source_and_fabricated_verdict(synthetic_checkpoint):
+    cycle, canvas = synthetic_checkpoint
     state = json.loads((cycle / "run_state.json").read_text(encoding="utf-8"))
     state["attention"]["code"] = "provider_model_capacity_timeout"
     (cycle / "run_state.json").write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
@@ -150,8 +130,8 @@ def test_refuse_mismatched_checkpoint_unverified_source_and_fabricated_verdict(c
 
 
 
-def test_formal_closure_replays_preserved_cycle86_without_judge_or_model(c86_clone):
-    cycle, canvas = c86_clone
+def test_formal_closure_preserves_checkpoint_without_judge_or_model(synthetic_checkpoint):
+    cycle, canvas = synthetic_checkpoint
     preserve_blocked_cycle(cycle_dir=cycle, canvas_path=canvas,
                            stage_output=_stage_output(), authorization="operator_approved")
     old_state = (cycle / "research_state.json").read_bytes()
@@ -179,13 +159,13 @@ def test_formal_closure_replays_preserved_cycle86_without_judge_or_model(c86_clo
     assert "reporter" not in research["role_outputs"]
     assert finalize_preserved_cycle(cycle_dir=cycle, authorization="operator_approved")[
         "already_closed"] is True
-    assert CANVAS_86.is_file()
+    assert canvas.is_file()
     with pytest.raises(PreservationGuard, match="blocked checkpoint"):
         blocked_checkpoint(cycle)
 
 
-def test_formal_closure_rejects_changed_source_before_touching_state(c86_clone):
-    cycle, canvas = c86_clone
+def test_formal_closure_rejects_changed_source_before_touching_state(synthetic_checkpoint):
+    cycle, canvas = synthetic_checkpoint
     preserve_blocked_cycle(cycle_dir=cycle, canvas_path=canvas,
                            stage_output=_stage_output(), authorization="operator_approved")
     preclose = (cycle / "research_state.json").read_bytes()
@@ -209,8 +189,8 @@ def test_preservation_B_presentation_must_stay_compact_and_only_summarize_A():
         contract.structural_validator(invalid, {})
 
 
-def test_one_Investigator_A_B_response_then_sdk_C_reuses_archive_without_more_models(c86_clone):
-    cycle, canvas = c86_clone
+def test_one_Investigator_A_B_response_then_sdk_C_reuses_archive_without_more_models(synthetic_checkpoint):
+    cycle, canvas = synthetic_checkpoint
 
     class CountedBackend:
         def __init__(self):
@@ -234,14 +214,14 @@ def test_one_Investigator_A_B_response_then_sdk_C_reuses_archive_without_more_mo
     )
     assert first["scientific_verdict"] is None
     assert backend.calls == [("start", "investigator"), ("invoke", "investigator")]
-    note = canvas.parent / "notes" / "scientific_reports" / "Cycle86-preserve_research.md"
+    note = canvas.parent / "notes" / "scientific_reports" / "Cycle1-preserve_research.md"
     text = note.read_text(encoding="utf-8")
     assert _stage_output()["observations"][0]["statement"] in text
     assert _stage_output()["unexecuted_test"] in text
     node = next(n for n in json.loads(canvas.read_text())["nodes"]
                 if n["id"] == first["node_id"])
     assert _stage_output()["canvas_summary"] in node["text"]
-    assert "[[notes/scientific_reports/Cycle86-preserve_research.md]]" in node["text"]
+    assert "[[notes/scientific_reports/Cycle1-preserve_research.md]]" in node["text"]
     again = run_preservation_stage(
         cycle_dir=cycle, canvas_path=canvas, backend=backend,
         model="fake", provider="fake", authorization="operator_approved",
@@ -256,8 +236,8 @@ def test_one_Investigator_A_B_response_then_sdk_C_reuses_archive_without_more_mo
     assert backend.calls == [("start", "investigator"), ("invoke", "investigator")]
 
 
-def test_preservation_replay_rejects_changed_source_without_extra_turn(c86_clone):
-    cycle, canvas = c86_clone
+def test_preservation_replay_rejects_changed_source_without_extra_turn(synthetic_checkpoint):
+    cycle, canvas = synthetic_checkpoint
     preserve_blocked_cycle(cycle_dir=cycle, canvas_path=canvas,
                            stage_output=_stage_output(), authorization="operator_approved")
     (cycle / "workspace" / "README.md").write_text("tampered!", encoding="utf-8")
@@ -272,8 +252,8 @@ def test_preservation_replay_rejects_changed_source_without_extra_turn(c86_clone
         )
 
 
-def test_approved_stage_uses_separate_fake_thread_and_real_checkpoint(c86_clone):
-    cycle, canvas = c86_clone
+def test_approved_stage_uses_separate_fake_thread_and_frozen_checkpoint(synthetic_checkpoint):
+    cycle, canvas = synthetic_checkpoint
     class FakeBackend:
         def __init__(self):
             self.calls = []

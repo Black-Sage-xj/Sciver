@@ -2,6 +2,7 @@
 from unittest.mock import patch
 import pytest
 from theory_master import service_provider_switch as switching
+from theory_master import backend_config
 
 @pytest.fixture
 def selection(tmp_path, monkeypatch):

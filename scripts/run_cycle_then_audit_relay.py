@@ -21,13 +21,11 @@ from pathlib import Path
 from typing import Any
 
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-PACKAGE_ROOT = REPO_ROOT / "tool/theory_master"
-RELAY_STARTER = REPO_ROOT / "tool/python_script/start_origin_tmux_relay.py"
-AUDIT_SKILL = REPO_ROOT / "tool/.codex/skills/tm-audit-review/SKILL.md"
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
+from theory_master.audit_adapter import AuditAdapter, resolve_audit_adapter  # noqa: E402
 from theory_master.backends import CodexBackend, resolve_routes  # noqa: E402
 from theory_master.core import latest_cycle_dir  # noqa: E402
 from theory_master.observability.collector import Collector  # noqa: E402
@@ -42,19 +40,21 @@ def _write_json(path: Path, value: dict[str, Any]) -> None:
 
 def build_relay_command(
     *, cycle_dir: Path, report_file: Path, tmux_session: str, window_name: str, model: str | None,
+    adapter: AuditAdapter | None = None,
 ) -> list[str]:
+    adapter = adapter or resolve_audit_adapter()
     prompt = (
-        f"读取 {AUDIT_SKILL}，按该 Skill 审计 TheoryMaster Cycle 的具体对话："
+        f"读取 {adapter.skill}，按该 Skill 审计 TheoryMaster Cycle 的具体对话："
         f"{cycle_dir.resolve()}。将审计结果写入 {report_file.resolve()}。"
     )
     command = [
         sys.executable,
-        str(RELAY_STARTER),
+        str(adapter.relay),
         "--prompt", prompt,
         "--origin", "codex",
         "--tmux-session", tmux_session,
         "--window-name", window_name,
-        "--workdir", str(REPO_ROOT),
+        "--workdir", str(adapter.workdir),
         "--verify-start",
         "--no-focus",
     ]
@@ -63,12 +63,9 @@ def build_relay_command(
     return command
 
 
-def validate_inputs(task_root: Path, tmux_session: str) -> TaskSpec:
+def validate_inputs(task_root: Path, tmux_session: str, *, adapter: AuditAdapter | None = None) -> TaskSpec:
     task_root = task_root.resolve()
-    if not AUDIT_SKILL.is_file():
-        raise FileNotFoundError(f"trajectory-audit skill not found: {AUDIT_SKILL}")
-    if not RELAY_STARTER.is_file():
-        raise FileNotFoundError(f"tmux relay starter not found: {RELAY_STARTER}")
+    adapter = adapter or resolve_audit_adapter()
     probe = subprocess.run(
         ["tmux", "has-session", "-t", tmux_session], text=True,
         capture_output=True, check=False,
@@ -97,11 +94,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check-only", action="store_true")
     args = parser.parse_args(argv)
 
-    spec = validate_inputs(args.task_root, args.tmux_session)
+    adapter = resolve_audit_adapter()
+    spec = validate_inputs(args.task_root, args.tmux_session, adapter=adapter)
     if args.check_only:
         print(json.dumps({
             "task_root": str(spec.research_root),
-            "audit_skill": str(AUDIT_SKILL),
+            "audit_skill": str(adapter.skill),
         }, ensure_ascii=False, indent=2))
         return 0
 
@@ -112,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
         "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "cycle_before": before.name if before else None,
         "task_root": str(spec.research_root),
-        "audit_skill": str(AUDIT_SKILL),
+        "audit_skill": str(adapter.skill),
         "tmux_session": args.tmux_session,
         "window_name": args.window_name,
         "cycle_status": "running",
@@ -147,9 +145,10 @@ def main(argv: list[str] | None = None) -> int:
             tmux_session=args.tmux_session,
             window_name=args.window_name,
             model=args.audit_model,
+            adapter=adapter,
         )
         relay = subprocess.run(
-            relay_command, cwd=REPO_ROOT, text=True,
+            relay_command, cwd=adapter.workdir, text=True,
             capture_output=True, check=False,
         )
         record["relay_returncode"] = relay.returncode

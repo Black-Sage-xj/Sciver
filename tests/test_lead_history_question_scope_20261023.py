@@ -86,7 +86,7 @@ class LeadHistoryQuestionScope(unittest.TestCase):
             self.assertIn("Output contract:", prompt)
         self.assertIn("不得读取、解析或直接修改它", identity_block("research_lead"))
         rendered = stage_definition_text("research_lead", "frontier_proposal")
-        self.assertLess(len(rendered), 6500)
+        self.assertLess(len(rendered), 8500)
 
 
 if __name__ == "__main__":

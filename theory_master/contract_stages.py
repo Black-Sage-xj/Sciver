@@ -12,6 +12,13 @@ from .hypothesis_display import TITLE_LIMIT, CLAIM_LIMIT, CONDITIONS_LIMIT
 
 from .cycle_criteria import criterion_rows
 
+GRAPH_SUMMARY_SCHEMA = {
+    "conclusion": "This Cycle's scientific result or delta, faithful to the Judge verdict",
+    "basis": "The decisive established comparison, uncertainty or proof reason",
+    "scope": "Indispensable applicability conditions and material origin",
+    "open_question": "The concrete unresolved gap of this H; empty string if none",
+}
+
 from .contract_roles import (
     TERMINAL_BRANCH_VERDICTS, RoleContract,
     _noop, _reporter_structure, _text,
@@ -71,7 +78,8 @@ MINIMAL_FRONTIER_PROPOSAL_SCHEMA = {
         "why_now": "...",
         "goal_advance": "...",
         "decisive_test": "test definition for this hypothesis within its stated scope",
-        "lineage_anchor_node_ids": "1–3 distinct existing SQLite H IDs for a derived H",
+        "lineage_main_node_id": "one existing SQLite H ID; determines the branch connection",
+        "lineage_other_node_ids": "0–2 other existing SQLite H IDs; details only, no branch connections",
         "evolution_operator": "required typed lineage operator for a derived H; omit for root H",
         "reconsideration_trigger": "new Evidence/dependency/scope change/removed blocker when revisiting a parked source",
     }],
@@ -84,10 +92,11 @@ MINIMAL_FRONTIER_PROPOSAL_VALIDATION_SCHEMA = {
     "candidates": [{
         **MINIMAL_FRONTIER_PROPOSAL_SCHEMA["candidates"][0],
         "lineage_anchor_node_id": "legacy single-source anchor accepted for historical candidates/checkpoints only",
+        "lineage_anchor_node_ids": "legacy unranked sources accepted for historical candidates/checkpoints only",
     }],
 }
 
-FRONTIER_PROPOSAL_PROMPT_NOTE = """Use evolution_operator only from: refine | specialize | generalize | alternative | combine | derive | counter_hypothesis. For a root H, omit all lineage fields. If revisiting a parked source, include that H in lineage_anchor_node_ids. Anchors are directly relevant lineage references, not evidence. The SDK owns H identity and creates lineage edges; do not infer identity from history. Closed/rejected H may source a distinct new H but is not reopened. Do not return canvas_title, canvas_summary, canvas_claim, or canvas_conditions; post-lock hypothesis_display owns display output."""
+FRONTIER_PROPOSAL_PROMPT_NOTE = """Use evolution_operator only from: refine | specialize | generalize | alternative | combine | derive | counter_hypothesis. For a root H, omit all lineage fields. For a derived H, choose one main and up to two distinct other sources. If revisiting a parked source, include that H in main or other sources. Anchors are directly relevant lineage references, not evidence. The SDK owns H identity and lineage edges. Closed/rejected H may source a distinct new H but is not reopened. Do not return canvas_title, canvas_summary, canvas_claim, or canvas_conditions; post-lock hypothesis_display owns display output."""
 
 MINIMAL_HYPOTHESIS_DISPLAY_SCHEMA = {
     "canvas_title": f"faithful scientific title, maximum {TITLE_LIMIT} characters",
@@ -95,7 +104,7 @@ MINIMAL_HYPOTHESIS_DISPLAY_SCHEMA = {
     "canvas_conditions": f"the indispensable scope/conditions, maximum {CONDITIONS_LIMIT} characters",
 }
 
-HYPOTHESIS_DISPLAY_PROMPT_NOTE = """Keep each field below its schema character limit; return substantive claim and conditions, not placeholders. The SDK composes the summary and appends the epistemic label."""
+HYPOTHESIS_DISPLAY_PROMPT_NOTE = """Keep each field below its schema character limit; return substantive claim and conditions, not placeholders. In canvas_claim preserve the discriminating scientific difference from the declared sources when stated in the frozen text; do not repeat the full motivation or invent novelty. The SDK composes the summary and appends the epistemic label."""
 
 
 def _hypothesis_display_structure(output: dict[str, Any], _context: Mapping[str, Any]) -> None:
@@ -385,13 +394,21 @@ def _minimal_frontier_structure(output: dict[str, Any], context: Mapping[str, An
             _text(candidate.get(field), f"candidates[{index}].{field}")
         allowed_candidate_fields = {
             "hypothesis", "scope", "why_now", "goal_advance", "decisive_test",
-            "lineage_anchor_node_id", "lineage_anchor_node_ids", "evolution_operator", "reconsideration_trigger",
+            "lineage_anchor_node_id", "lineage_anchor_node_ids", "lineage_main_node_id",
+            "lineage_other_node_ids", "evolution_operator", "reconsideration_trigger",
         }
         unsupported = set(candidate) - allowed_candidate_fields - forbidden
         if unsupported:
             raise ValueError(
                 f"candidates[{index}] contains unsupported fields: " + ", ".join(sorted(unsupported))
             )
+        from .hypothesis_lineage import explicit_lineage
+        explicit = explicit_lineage(candidate)
+        if explicit is not None and {"lineage_anchor_node_id", "lineage_anchor_node_ids"} & candidate.keys():
+            raise ValueError("must not mix main/other and legacy lineage anchors")
+        if (context.get("_require_explicit_lineage") and explicit is None
+                and (candidate.get("evolution_operator") or _known_hypothesis_ids(context))):
+            raise ValueError("new frontier proposal requires lineage_main_node_id and optional lineage_other_node_ids")
         lineage_anchor = candidate.get("lineage_anchor_node_id")
         if "lineage_anchor_node_id" in candidate and (
             not isinstance(lineage_anchor, str) or not lineage_anchor.strip()
@@ -407,6 +424,8 @@ def _minimal_frontier_structure(output: dict[str, Any], context: Mapping[str, An
                 raise ValueError(f"candidates[{index}].lineage_anchor_node_ids requires 1..3 unique canonical H IDs")
             if lineage_anchor:
                 raise ValueError(f"candidates[{index}] must not mix singular and plural lineage anchors")
+        if explicit is not None:
+            lineage_anchors = [explicit[0], *explicit[1]]
         evolution_operator = candidate.get("evolution_operator")
         known_h = _known_hypothesis_ids(context)
         if known_h and evolution_operator in (None, ""):
@@ -1020,8 +1039,14 @@ PHASE_CONTRACTS: dict[tuple[str, str], RoleContract] = {
         MINIMAL_GOAL_COMPLETION_SCHEMA, _goal_completion_structure, _noop,
     ),
     ("reporter", "report"): RoleContract(
-        "theory-master/role/reporter", 3,
-        {"title": "...", "summary": "..."}, _reporter_structure, _noop,
+        "theory-master/role/reporter", 4,
+        {"title": "...", "summary": "...", "graph_summary": GRAPH_SUMMARY_SCHEMA}, _reporter_structure, _noop,
+        "summary is the complete Markdown report. graph_summary is a separate scientific reading guide, "
+        "not a report prefix: result first, decisive basis, necessary scope/origin, then the local unresolved gap. "
+        "Keep the guide comparable in length to an existing node overview; the 900-character total is a safety ceiling, "
+        "not a target. open_question may be empty when this frozen H is resolved. "
+        "Describe the supplied Judge conclusion in prose; do not return verdict/state fields, "
+        "make a new adjudication, propose next steps or add scientific claims.",
     ),
 }
 

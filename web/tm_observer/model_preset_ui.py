@@ -1,7 +1,7 @@
 """One clickable six-stage preset editor in Task Console's MODEL heading.
 
 UI rows and model catalog are projected from the authoritative profile TOMLs.
-The SDK action writes Worker-local choices for the next safe role invocation.
+The SDK action writes task or Worker choices for the next safe role invocation.
 """
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ def dialog_html() -> str:
         <strong>六阶段模型档位</strong>
         <p>每档包含六个 Agent 的模型和推理强度。保存后立即更新未在执行的 Agent 的模型配置；
            正在执行的 Agent 保持本次调用使用的模型，结束后再切换。不必等待下一个 Cycle。
-           保存整档会替换该 Worker 原有的逐阶段自定义覆盖。点击“⚙ 设置”可永久修改 Codex 三档的默认模型，不写回开源配置。</p>
+           保存整档会替换当前任务或所选 Agent 原有的逐阶段自定义覆盖。点击“⚙ 设置”可永久修改 Codex 三档的默认模型，不写回开源配置。</p>
         <div class="tm-preset-select-row"><select data-model-preset-select aria-label="选择六阶段模型档位">''' + options + '''</select>
         <button type="button" data-model-preset-settings title="永久修改当前 Codex 档位">⚙ 设置</button></div>
         ''' + "".join(panels) + '''
@@ -130,8 +130,9 @@ def script(ident: str, selected_worker: str | None) -> str:
       const catalogLabel=dialog.querySelector('[data-model-catalog-result]');
       let catalog=null;
       function postControl(action,value){
-        const state=live.querySelector('.tm-worker-controls[data-worker-id="'+selectedWorker+'"]')
-          || live.querySelector('[data-tui-screen]');
+        const state=selectedWorker
+          ? live.querySelector('.tm-worker-controls[data-worker-id="'+selectedWorker+'"]')
+          : live.querySelector('[data-worker-request-context]');
         if(!state)return Promise.reject(new Error('运行状态缺失，请刷新页面'));
         return fetch('/api/run/__IDENT__/action',{
           method:'POST', headers:{'Content-Type':'application/json','X-TM-Operator-Intent':'1'},
@@ -140,7 +141,7 @@ def script(ident: str, selected_worker: str | None) -> str:
             request_id:crypto.randomUUID().replace(/-/g,''),
             expected_cycle:state.dataset.cycle||state.dataset.tuiCycle||'',
             expected_status:state.dataset.status||state.dataset.tuiStatus||'',
-            expected_launch_id:''
+            expected_launch_id:selectedWorker?'':state.dataset.launch||''
           })
         }).then(async response=>{
           const data=await response.json();
@@ -227,11 +228,11 @@ def script(ident: str, selected_worker: str | None) -> str:
         choice.value=trigger.dataset.modelPresetProfile||'test';
         preview();
         const button=dialog.querySelector('[data-model-preset-save]');
-        button.disabled=!selectedWorker;
+        button.disabled=false;
         const label=dialog.querySelector('[data-model-preset-hint]');
         label.textContent=selectedWorker
           ?'当前：'+trigger.textContent.trim()+'。仅修改 Agent '+selectedWorker.replace('worker-','')+'。未运行的角色立即采用新配置，运行中的角色结束本次调用后切换。'
-          :'请先在上方选择 Agent 1 或 Agent 2，然后再修改整套档位。';
+          :'修改当前任务的六阶段档位。未运行的角色立即采用新配置，运行中的角色结束本次调用后切换。';
         dialog.querySelector('[data-model-preset-result]').textContent='';
         dialog.showModal();
         if(!catalog)checkCodexModels();
@@ -242,23 +243,23 @@ def script(ident: str, selected_worker: str | None) -> str:
         openedBy=null;
       });
       dialog.querySelector('[data-model-preset-save]')?.addEventListener('click',async event=>{
-        if(!selectedWorker)return;
         const submit=event.currentTarget;
         const message=dialog.querySelector('[data-model-preset-result]');
-        const state=live.querySelector('.tm-worker-controls[data-worker-id="'+selectedWorker+'"]')
-          || live.querySelector('[data-tui-screen]');
+        const state=selectedWorker
+          ? live.querySelector('.tm-worker-controls[data-worker-id="'+selectedWorker+'"]')
+          : live.querySelector('[data-worker-request-context]');
         if(!state){message.textContent='无法读取当前 Agent 运行状态，请刷新页面';return;}
         const old=submit.textContent;
         submit.disabled=true;
         submit.textContent='正在保存…';
         try{
           const request={
-            action:'set_worker_profile',
-            value:{worker_id:selectedWorker, profile:choice.value},
+            action:selectedWorker?'set_worker_profile':'set_task_profile',
+            value:selectedWorker?{worker_id:selectedWorker, profile:choice.value}:{profile:choice.value},
             request_id:crypto.randomUUID().replace(/-/g,''),
             expected_cycle:state.dataset.cycle||state.dataset.tuiCycle||'',
             expected_status:state.dataset.status||state.dataset.tuiStatus||'',
-            expected_launch_id:''
+            expected_launch_id:selectedWorker?'':state.dataset.launch||''
           };
           const response=await fetch('/api/run/__IDENT__/action',{
             method:'POST',

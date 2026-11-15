@@ -38,16 +38,22 @@ def _file(search_root: Path, run: dict[str, Any]) -> Path:
     root_value, research_value = run.get("task_root"), run.get("research_root")
     if not isinstance(root_value, str) or not isinstance(research_value, str):
         raise ResearchPlanError("任务根目录无效", 404)
-    root, research = Path(root_value).resolve(), Path(research_value).resolve()
-    if (root == repo or not root.is_relative_to(repo)
-            or not research.is_relative_to(repo)
+    root_path = Path(root_value).expanduser()
+    root, research = root_path.resolve(), Path(research_value).expanduser().resolve()
+    if (not root.is_relative_to(repo) or root_path != root
             or hashlib.sha256(str(research).encode("utf-8")).hexdigest()[:16] != observer):
         raise ResearchPlanError("任务来源校验失败", 403)
+    # The human plan stays inside the selected search scope. A separately
+    # stored runtime is an identity only, authorized by the SDK's exact local
+    # binding/config pair; no runtime path is followed for Plan file access.
+    requires_canonical_binding = root == repo or not research.is_relative_to(repo)
     binding = root / ".theory-master" / "task.json"
-    if not binding.is_file() or binding.is_symlink() or not binding.resolve().is_relative_to(root):
+    if (not binding.is_file() or binding.is_symlink() or binding.parent.is_symlink()
+            or binding.stat().st_size > 512 * 1024 or not binding.resolve().is_relative_to(root)):
         raise ResearchPlanError("任务绑定文件无效", 404)
     config = root / "theory-master.config.json"
-    if config.exists():
+    path = root / "research_plan.md"
+    if config.exists() or config.is_symlink():
         if config.is_symlink() or not config.is_file() or config.stat().st_size > 512 * 1024:
             raise ResearchPlanError("任务配置文件不安全", 403)
         try:
@@ -55,11 +61,22 @@ def _file(search_root: Path, run: dict[str, Any]) -> Path:
             configured = doc.get("research_root") if isinstance(doc, dict) else None
             if configured and (root / str(configured)).resolve() != research:
                 raise ResearchPlanError("Research Plan 的任务绑定已发生变化", 409)
+            if requires_canonical_binding:
+                marker = json.loads(binding.read_text(encoding="utf-8"))
+                if (not isinstance(marker, dict) or marker.get("schema") != "theory-master/task/v2"
+                        or marker.get("config_path") != str(config)
+                        or not isinstance(doc, dict) or doc.get("schema") != "theory-master/system/v1"
+                        or doc.get("path_model") != "theory-master/task-path/v2"):
+                    raise ResearchPlanError("任务来源校验失败：需要当前任务的规范绑定", 403)
+                if (doc.get("task_home") != str(root) or doc.get("plan_path") != str(path)
+                        or doc.get("research_root") != str(research)):
+                    raise ResearchPlanError("Research Plan 的任务绑定已发生变化", 409)
         except (UnicodeError, OSError, ValueError, TypeError) as exc:
             if isinstance(exc, ResearchPlanError):
                 raise
             raise ResearchPlanError("任务配置文件无效", 409) from exc
-    path = root / "research_plan.md"
+    elif requires_canonical_binding:
+        raise ResearchPlanError("任务来源校验失败：缺少当前任务配置", 403)
     if path.is_symlink() or not path.is_file() or path.resolve().parent != root:
         raise ResearchPlanError("未找到安全的 research_plan.md", 404)
     return path
