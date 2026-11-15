@@ -50,7 +50,9 @@ class JudgeReviewUITests(unittest.TestCase):
             trigger=soup.select_one('[data-judge-review-open]')
             self.assertIsNotNone(trigger)
             self.assertIn('2 次裁决',trigger.text)
-            self.assertEqual(len(soup.select('[data-judge-review-panel]')),2)
+            template=soup.select_one('template[data-judge-review-template]')
+            self.assertIsNotNone(template)
+            self.assertEqual(len(template.select('[data-judge-review-panel]')),2)
             self.assertEqual(soup.select_one('.tm-judge-item p').text,'done')
             self.assertNotIn('done</strong>',html)
 

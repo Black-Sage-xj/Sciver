@@ -74,10 +74,12 @@ class BudgetReviewModalTests(unittest.TestCase):
             self.assertEqual(len(rows), 2)
             dom = BeautifulSoup(render_budget_review_template(rows, "70"),
                                 "html.parser")
-            self.assertEqual(len(dom.select("[data-budget-review-select]")), 2)
-            self.assertEqual([b["aria-pressed"] for b in dom.select(
+            template = dom.select_one("template[data-budget-review-template]")
+            self.assertIsNotNone(template)
+            self.assertEqual(len(template.select("[data-budget-review-select]")), 2)
+            self.assertEqual([b["aria-pressed"] for b in template.select(
                 "[data-budget-review-select]")], ["false", "true"])
-            panels = dom.select("[data-budget-review-panel]")
+            panels = template.select("[data-budget-review-panel]")
             self.assertEqual(len(panels), 2)
             self.assertTrue(panels[0].has_attr("hidden"))
             self.assertFalse(panels[1].has_attr("hidden"))

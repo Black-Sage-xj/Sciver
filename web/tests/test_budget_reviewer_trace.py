@@ -118,7 +118,10 @@ class BudgetReviewerTraceTests(unittest.TestCase):
         row["reason"]="<img src=x onerror=alert(1)>"
         html=render_budget_review_template([row],"70")
         dom=BeautifulSoup(html,"html.parser")
-        trace=dom.select_one('[data-budget-trace-load]')
+        template=dom.select_one('template[data-budget-review-template]')
+        self.assertIsNotNone(template)
+        trace=template.select_one('[data-budget-trace-load]')
+        self.assertIsNotNone(trace)
         self.assertEqual(trace["data-budget-trace-review"],"2")
         self.assertEqual(trace["data-budget-trace-cycle"],"70")
         self.assertNotIn("<img",html)
