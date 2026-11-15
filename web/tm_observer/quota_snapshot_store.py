@@ -107,7 +107,8 @@ class QuotaHistory:
         self._accounts: dict[str, dict[str, Any]] = {}
         # Rich, sanitized card fields are process-memory only; disk stays quota-only.
         self._display_details: dict[str, dict[str, Any]] = {}
-        self._attempt_at = 0.0
+        # None distinguishes no attempt from a real attempt at boot-time zero.
+        self._attempt_at: float | None = None
         self._refreshing = False
         self._last_attempt_at = 0
         self._last_refresh_error: str | None = None
@@ -206,7 +207,8 @@ class QuotaHistory:
         active = self.active()
         with self._lock:
             if (request_update and not self._refreshing
-                    and time.monotonic() - self._attempt_at >= self.period_s):
+                    and (self._attempt_at is None
+                         or time.monotonic() - self._attempt_at >= self.period_s)):
                 self._refreshing = True
                 self._attempt_at = time.monotonic()
                 threading.Thread(target=self._refresh, daemon=True,

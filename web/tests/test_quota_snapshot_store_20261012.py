@@ -46,7 +46,8 @@ class QuotaHistoryTests(unittest.TestCase):
             self.assertNotIn('5 小时剩余', card)
             self.assertIn('data-quota-week hidden', card)
 
-    def test_first_read_nonblocking_one_refresh_across_many_pages_and_tabs(self):
+    @mock.patch("tm_observer.quota_snapshot_store.time.monotonic", return_value=100.0)
+    def test_first_read_nonblocking_one_refresh_across_many_pages_and_tabs(self, _clock):
         with tempfile.TemporaryDirectory() as temp:
             started=threading.Event()
             release=threading.Event()
@@ -83,7 +84,8 @@ class QuotaHistoryTests(unittest.TestCase):
             self.assertNotIn('credits',raw)
             self.assertLess(len(raw),700)
 
-    def test_warm_restart_restores_saved_history_with_no_immediate_rpc(self):
+    @mock.patch("tm_observer.quota_snapshot_store.time.monotonic", return_value=100.0)
+    def test_warm_restart_restores_saved_history_with_no_immediate_rpc(self, _clock):
         with tempfile.TemporaryDirectory() as temp:
             path=Path(temp)/'history.json'
             previous=QuotaHistory(path,provider=lambda:None,active=lambda:'account-2')
@@ -109,7 +111,8 @@ class QuotaHistoryTests(unittest.TestCase):
             self.assertIn('setInterval(loadCodexQuota,300000)',page)
             self.assertIn('/codex-usage-cached.json',page)
 
-    def test_stale_history_remains_visible_before_update_and_after_failure(self):
+    @mock.patch("tm_observer.quota_snapshot_store.time.monotonic", return_value=100.0)
+    def test_stale_history_remains_visible_before_update_and_after_failure(self, _clock):
         with tempfile.TemporaryDirectory() as temp:
             path=Path(temp)/'history.json'
             stale=provider_result(five=23,week=76,timestamp=int(time.time())-3600)
@@ -142,7 +145,8 @@ class QuotaHistoryTests(unittest.TestCase):
             self.assertGreater(after['last_attempt_at'], 0)
             self.assertEqual(json.loads(path.read_text())['accounts'][0]['primary']['remaining_percent'],23)
 
-    def test_provider_error_payload_is_reported_without_discarding_history(self):
+    @mock.patch("tm_observer.quota_snapshot_store.time.monotonic", return_value=100.0)
+    def test_provider_error_payload_is_reported_without_discarding_history(self, _clock):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / 'history.json'
             stale = provider_result(five=31, week=68, timestamp=int(time.time()) - 3600)
@@ -163,6 +167,42 @@ class QuotaHistoryTests(unittest.TestCase):
             self.assertEqual(after['last_refresh_error'], 'provider_query_failed')
             self.assertEqual(after['accounts'][0]['primary']['remaining_percent'], 31)
             self.assertGreater(after['last_attempt_at'], 0)
+
+    def test_boot_time_zero_attempt_is_throttled_and_retry_becomes_due(self):
+        with tempfile.TemporaryDirectory() as temp:
+            clock = [0.0]
+            calls = []
+            def provider():
+                calls.append('rpc')
+                raise FileNotFoundError('no local Codex CLI')
+            with mock.patch('tm_observer.quota_snapshot_store.time.monotonic',
+                            side_effect=lambda: clock[0]):
+                source = QuotaHistory(Path(temp) / 'history.json', provider=provider,
+                                      active=lambda: None)
+                self.assertTrue(source.snapshot(request_update=True)['refreshing'])
+                for _ in range(100):
+                    failed = source.snapshot()
+                    if not failed['refreshing']:
+                        break
+                    time.sleep(.01)
+                self.assertFalse(failed['refreshing'])
+                self.assertEqual(failed['last_refresh_error'], 'provider_refresh_exception')
+                self.assertEqual(calls, ['rpc'])
+                self.assertEqual(failed['accounts'], [])
+                for stamp in (0.0, 100.0, 299.99):
+                    clock[0] = stamp
+                    self.assertFalse(source.snapshot(request_update=True)['refreshing'])
+                    self.assertEqual(calls, ['rpc'])
+                clock[0] = 300.0
+                self.assertTrue(source.snapshot(request_update=True)['refreshing'])
+                for _ in range(100):
+                    if not source.snapshot()['refreshing']:
+                        break
+                    time.sleep(.01)
+                self.assertFalse(source.snapshot()['refreshing'])
+                self.assertEqual(calls, ['rpc', 'rpc'])
+                self.assertEqual(source.snapshot()['last_refresh_error'],
+                                 'provider_refresh_exception')
 
     def test_account_switch_never_reuses_previous_accounts_percent(self):
         with tempfile.TemporaryDirectory() as temp:
