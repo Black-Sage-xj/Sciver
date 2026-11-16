@@ -38,35 +38,39 @@ Sciver 面向复杂、开放、需要长期探索的科学问题，帮助研究�
   <img src="docs/assets/screenshots/sciver-product-zh-CN.png" alt="Sciver 中文网页观测台的桌面与移动端界面" width="100%">
 </p>
 
-## 快速开始：交给你的 Agent
+## 快速开始：推荐安装发布版
 
-复制下面这段给编程 Agent, 可以跑一个小的 扩散问题 ,以及看到 web ui：
+普通用户推荐安装 [Release v0.1.0](https://github.com/Black-Sage-xj/Sciver/releases/tag/v0.1.0) 中的两个 `.whl` 包，包含引擎和已构建的网页界面，无需 Git 或 Node.js。需要 **Python 3.12+**，支持 Linux、macOS 和 Windows 的 WSL2；以下命令中的 `python3.12` 可替换为已安装的更新版本 Python。源码开发与可编辑安装见 [参与开发](CONTRIBUTING.md#development-installation)。
+
+### 交给你的 Agent 安装
+
+复制下面这段给编程 Agent，完成安装、离线 Test0 自检并打开网页：
 
 ```text
-请帮我实际安装并启动 Sciver。先检查 Git 和 Python 3.12+ 是否可用；Windows 请在 WSL2 中操作。若已有 Sciver 仓库，保留其中的改动，进入仓库并从建虚拟环境那一步继续；否则依次运行：
+请帮我实际安装并启动 Sciver 发布版。先检查 Python 3.12+ 是否可用；Windows 请在 WSL2 中操作。打开 https://github.com/Black-Sage-xj/Sciver/releases/tag/v0.1.0，将 sciver-0.1.0-py3-none-any.whl、tm_observer-0.1.0-py3-none-any.whl、INSTALL.md 和 SHA256SUMS 下载到 ~/sciver-install/v0.1.0，并核对两个 wheel 的 SHA256。无需克隆源码，也不要安装自动生成的 Source code 压缩包。依次运行：
 
-git clone https://github.com/Black-Sage-xj/Sciver.git
-cd Sciver
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e '.[sdk]' -e ./web
+python3.12 -m venv "$HOME/sciver-venv"
+source "$HOME/sciver-venv/bin/activate"
+python -m pip install --no-index --find-links "$HOME/sciver-install/v0.1.0" 'sciver==0.1.0' 'tm-observer==0.1.0'
+sciver smoke
 sciver quickstart
 
-sciver quickstart 会完成离线 Test0 自检并打开网页；遇到依赖或启动错误请排查后重试。确认网页能访问，让服务保持运行，最后给我一个可点击的 Web UI 链接；若在远程环境，请配置安全端口转发并给出转发后的链接。不要启动真实研究。
+若已有安装、虚拟环境或源码仓库，先检查并保留其中的改动、任务和账号配置；需要新环境时使用未占用的目录并同步调整命令。sciver quickstart 会完成离线 Test0 自检并打开网页；遇到依赖或启动错误请排查后重试。确认网页能访问，让服务保持运行，最后给我一个可点击的 Web UI 链接；若在远程环境，请配置安全端口转发并给出转发后的链接。不要启动真实研究。
 ```
 
-自己动手时，在 Linux、macOS 或 Windows 的 WSL2 中使用 **Python 3.12+**：
+### 自己安装
+
+从上面的 Release 页面下载 `sciver-0.1.0-py3-none-any.whl`、`tm_observer-0.1.0-py3-none-any.whl`、`INSTALL.md` 和 `SHA256SUMS`，放到新建的 `~/sciver-install/v0.1.0` 目录，按校验清单核对两个 wheel。选择 `.whl` 安装包；自动生成的 **Source code (zip/tar.gz)** 是源码，不是安装包。然后运行：
 
 ```bash
-git clone https://github.com/Black-Sage-xj/Sciver.git
-cd Sciver
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e '.[sdk]' -e ./web
+python3.12 -m venv "$HOME/sciver-venv"
+source "$HOME/sciver-venv/bin/activate"
+python -m pip install --no-index --find-links "$HOME/sciver-install/v0.1.0" 'sciver==0.1.0' 'tm-observer==0.1.0'
+sciver smoke
 sciver quickstart
 ```
+
+`smoke` 使用模拟后端检查安装；两个 wheel 足够完成离线自检和浏览网页，开始真实研究前还需安装下文的 SDK 依赖并配置模型账号。
 
 `quickstart` 会校验 Test0 的原创布朗运动数据、初始化任务和 SQLite 图谱，然后启动本地服务，自动打开 [http://127.0.0.1:8787/](http://127.0.0.1:8787/)。默认工作区是 `~/Sciver-workspace`，每次创建的 Test0 任务在独立命名的 `test-instances/test0-*` 子目录；计算产物放在工作区内独立的 `.theory-master-tasks/`，不会写回源码。这一步是离线安装自检：不会调用模型、启动研究或生成科研结论。Test0 的运行上限设为 **1 个 Cycle**，只有之后由你显式启动时才会开始研究；每次执行 `quickstart` 都会创建全新任务、空白科研状态和新的 Agent 会话，从 Cycle 1 开始；历史任务与工作区设置保留。
 
@@ -93,7 +97,7 @@ sciver web --workspace ~/my-sciver         # 再次打开同一工作区
 sciver web --workspace ~/new-sciver        # 新建空工作区并打开项目引导
 ```
 
-终端保持运行；按 `Ctrl+C` 停止网页服务，任务文件保留。以后打开新终端，先 `cd Sciver` 并执行 `source .venv/bin/activate`，再运行 `sciver web`。SSH 用户可用 `ssh -L 8787:127.0.0.1:8787 user@host` 转发端口，在本机打开打印的网址。
+终端保持运行；按 `Ctrl+C` 停止网页服务，任务文件保留。以后打开新终端，执行 `source "$HOME/sciver-venv/bin/activate"`，再运行 `sciver web`。源码安装或使用其他环境目录时，激活对应的虚拟环境即可。SSH 用户可用 `ssh -L 8787:127.0.0.1:8787 user@host` 转发端口，在本机打开打印的网址。
 
 本机网页默认**不需要密码**。需要登录时，可在 **Settings → 网页登录** 中设置用户名和密码，设置仅对应当前工作区。忘记密码时，先停止服务，运行 `sciver web --reset-login`；如果使用了自定义工作区，带上相同的 `--workspace`。网页会以关闭登录的状态重新打开，之后可设置新密码。
 
@@ -107,6 +111,7 @@ sciver test Test0 ~/Sciver-workspace/another-test0 --prepare-only --open
 
 ### 开始真实研究前
 
+- Release 安装用户先在已激活的环境中执行 `python -m pip install --find-links "$HOME/sciver-install/v0.1.0" 'sciver[sdk]==0.1.0'`，安装模型客户端依赖；这一步需要联网下载额外依赖，完全离线部署见 [wheel 安装](docs/distribution.md)。源码开发安装已包含 SDK 依赖。
 - 安装受支持的 Codex CLI，并完成模型提供方登录；CLI 不随 Python 包捆绑。安装 CLI 后，用 `sciver codex-account login-1` 登录第一个账号，再用 `sciver codex-account status` 检查状态。
 - 在网页中选择可用模型与账号。名为 `test` 的模型档位仍会调用真实模型、消耗额度，与上述离线自检不同。
 - `sciver web` 默认把当前 Python 作为计算环境；需要数值计算库时，执行 `python -m pip install numpy scipy`。也可先执行 `export THEORYMASTER_COMPUTE_PYTHON=/absolute/path/to/python` 指定已有科学 Python，显式设置会保留。

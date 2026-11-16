@@ -38,35 +38,39 @@ Inspect task status, research stages, and agent activity from desktop and mobile
   <img src="docs/assets/screenshots/sciver-product-en.png" alt="Sciver Web Observatory on desktop and mobile" width="100%">
 </p>
 
-## Quick start: give this to your Agent
+## Quick start: install the release (recommended)
 
-Copy this prompt into your coding Agent:
+For regular use, install the two `.whl` packages from [Release v0.1.0](https://github.com/Black-Sage-xj/Sciver/releases/tag/v0.1.0). They include the engine and prebuilt Web UI; Git and Node.js are not required. Use **Python 3.12+** on Linux, macOS, or Windows with WSL2. Replace `python3.12` below with your installed newer Python version if needed. For source development and editable installation, see [Contributing](CONTRIBUTING.md#development-installation).
+
+### Give this to your Agent
+
+Copy this prompt into your coding Agent to install Sciver, run the offline Test0 check, and open the Web UI:
 
 ```text
-Please install and start Sciver for me. First check that Git and Python 3.12+ are available; on Windows, work inside WSL2. If a Sciver checkout already exists, preserve its changes, enter the checkout, and continue at the virtual-environment step. Otherwise run these commands in order:
+Please install and start the Sciver release for me. First check that Python 3.12+ is available; on Windows, work inside WSL2. Open https://github.com/Black-Sage-xj/Sciver/releases/tag/v0.1.0 and download sciver-0.1.0-py3-none-any.whl, tm_observer-0.1.0-py3-none-any.whl, INSTALL.md, and SHA256SUMS into ~/sciver-install/v0.1.0. Verify both wheel SHA256 checksums. No source checkout is needed; do not install the automatically generated Source code archives. Run these commands in order:
 
-git clone https://github.com/Black-Sage-xj/Sciver.git
-cd Sciver
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e '.[sdk]' -e ./web
+python3.12 -m venv "$HOME/sciver-venv"
+source "$HOME/sciver-venv/bin/activate"
+python -m pip install --no-index --find-links "$HOME/sciver-install/v0.1.0" 'sciver==0.1.0' 'tm-observer==0.1.0'
+sciver smoke
 sciver quickstart
 
-sciver quickstart performs the offline Test0 check and opens the Web UI; diagnose and retry any dependency or startup errors. Confirm the page is reachable, keep the server running, and give me a clickable Web UI link. If running remotely, set up secure port forwarding and give me the forwarded link. Do not start real research.
+If an installation, virtual environment, or source checkout already exists, inspect it first and preserve its changes, tasks, and account settings. If a new environment is needed, use an unused directory and adjust the commands accordingly. sciver quickstart performs the offline Test0 check and opens the Web UI; diagnose and retry any dependency or startup errors. Confirm the page is reachable, keep the server running, and give me a clickable Web UI link. If running remotely, set up secure port forwarding and give me the forwarded link. Do not start real research.
 ```
 
-To do it yourself, use **Python 3.12+** on Linux, macOS, or Windows with WSL2:
+### Install it yourself
+
+Download `sciver-0.1.0-py3-none-any.whl`, `tm_observer-0.1.0-py3-none-any.whl`, `INSTALL.md`, and `SHA256SUMS` from the Release page above into a new `~/sciver-install/v0.1.0` directory. Verify both wheels against the checksum list. Choose the `.whl` packages; the automatically generated **Source code (zip/tar.gz)** files contain source, not installable wheels. Then run:
 
 ```bash
-git clone https://github.com/Black-Sage-xj/Sciver.git
-cd Sciver
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e '.[sdk]' -e ./web
+python3.12 -m venv "$HOME/sciver-venv"
+source "$HOME/sciver-venv/bin/activate"
+python -m pip install --no-index --find-links "$HOME/sciver-install/v0.1.0" 'sciver==0.1.0' 'tm-observer==0.1.0'
+sciver smoke
 sciver quickstart
 ```
+
+`smoke` checks installation with a fake backend. The two wheels support offline checks and Web viewing; before real research, install the SDK dependencies below and configure a model account.
 
 `quickstart` checks the original Test0 Brownian-motion data, initializes a task and SQLite graph, starts the local server, and opens [http://127.0.0.1:8787/](http://127.0.0.1:8787/). The default workspace is `~/Sciver-workspace`, with fresh tasks in uniquely named `test-instances/test0-*` directories and separate computation artifacts under `.theory-master-tasks/`. Generated files stay outside the source checkout. This is an offline installation check: it sends no model requests, starts no research, and produces no scientific verdict. Test0 has a **one-Cycle limit**; research begins only when you explicitly start it later. Every `quickstart` creates a new task with empty scientific state and new Agent sessions from Cycle 1; historical tasks and workspace settings are preserved.
 
@@ -93,7 +97,7 @@ sciver web --workspace ~/my-sciver  # reopen the same workspace
 sciver web --workspace ~/new-sciver # create an empty workspace and open the project guide
 ```
 
-Keep the terminal running. Press `Ctrl+C` to stop the Web server; task files are preserved. In a new terminal, `cd Sciver`, run `source .venv/bin/activate`, then `sciver web`. For SSH, forward the port with `ssh -L 8787:127.0.0.1:8787 user@host` and open the printed URL on your own computer.
+Keep the terminal running. Press `Ctrl+C` to stop the Web server; task files are preserved. In a new terminal, run `source "$HOME/sciver-venv/bin/activate"`, then `sciver web`. For a source installation or a different environment directory, activate that environment instead. For SSH, forward the port with `ssh -L 8787:127.0.0.1:8787 user@host` and open the printed URL on your own computer.
 
 Local Web login is **off by default**. In **Settings → Web login**, you can enable a username and password for the current workspace. To recover a forgotten password, stop the server and run `sciver web --reset-login` (add the same `--workspace` if you used a custom one). This opens the Web UI with local login disabled so you can set new credentials.
 
@@ -107,6 +111,7 @@ Without `--prepare-only`, `test` starts real model-based research and uses accou
 
 ### Before starting real research
 
+- Release users should first run `python -m pip install --find-links "$HOME/sciver-install/v0.1.0" 'sciver[sdk]==0.1.0'` in the activated environment to install model-client dependencies. This step downloads extra dependencies; see [Wheel installation](docs/distribution.md) for fully offline deployment. The source development installation already includes the SDK dependencies.
 - Install a supported Codex CLI and log in to your model provider; the CLI is not bundled with the Python package. After installing the CLI, log in with `sciver codex-account login-1`, then check `sciver codex-account status`.
 - Select available models and accounts in the Web UI. The model tier named `test` still makes real model requests and consumes quota; it is separate from the offline setup check.
 - `sciver web` defaults to the active Python for computation. Run `python -m pip install numpy scipy` for numerical work, or run `export THEORYMASTER_COMPUTE_PYTHON=/absolute/path/to/python` to select your scientific environment. Explicit settings are preserved.
