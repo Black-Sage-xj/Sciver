@@ -255,7 +255,11 @@ class InvestigationMixin:
 
     def _authorize_judge_rework(self, state: dict[str, Any], record: dict[str, Any],
                                 judge: dict[str, Any], target: Any) -> tuple[bool, str]:
-        """Authorize only one small scientific objection; execution details are SDK-owned."""
+        """Check routing/contract integrity; scientific necessity remains Judge-owned.
+
+        C-1 is assigned by closure, so its presence cannot certify that a
+        model-authored request is semantically within the frozen test.
+        """
         if target not in CAPABILITIES:
             return False, "target_executor_not_executable"
         objections = judge.get("objections")

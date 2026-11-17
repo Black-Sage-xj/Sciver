@@ -25,7 +25,7 @@ class IdentityContractConsistencyTest(unittest.TestCase):
 
     def test_reporter_current_contract_is_narrative_only(self):
         current = role_contract("reporter", phase="report")
-        self.assertEqual(current.version, 4)
+        self.assertEqual(current.version, 5)
         self.assertEqual(set(current.prompt_schema), {"title", "summary", "graph_summary"})
         current.validate({"title": "T", "summary": "S", "graph_summary": {
             "conclusion": "Bounded result", "basis": "Frozen comparison",

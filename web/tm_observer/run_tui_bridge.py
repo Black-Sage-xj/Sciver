@@ -57,6 +57,14 @@ def read_tui(run: dict[str, Any], *, secondary: str = "") -> dict[str, Any]:
             projected["attention"] = {
                 key: redact(str(value)) for key, value in projected["attention"].items()
             }
+        if isinstance(projected.get("recovery_info"), dict):
+            recovery = projected["recovery_info"]
+            projected["recovery_info"] = {
+                "resumable": recovery.get("resumable") is True,
+                "execution_active": recovery.get("execution_active") is True,
+                "phase": redact(str(recovery.get("phase") or "")[:500]),
+                "checkpoint": redact(str(recovery.get("checkpoint") or "")[:12000]),
+            }
         return projected
     except (OSError, subprocess.TimeoutExpired, ValueError, TypeError, UnicodeError, json.JSONDecodeError):
         return {"parts": {}, "unavailable": "TUI 状态同步暂时不可用；请稍后刷新"}

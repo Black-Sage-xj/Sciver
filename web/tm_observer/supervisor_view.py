@@ -355,14 +355,18 @@ def _engineering_recovery_banner(run: dict[str, Any]) -> str:
     if not isinstance(scientific, dict):
         return ""
     wid = str(scientific.get("worker_id") or "")
-    if not re.fullmatch(r"worker-[1-9][0-9]*", wid):
-        return ""
+    worker_bound = bool(re.fullmatch(r"worker-[1-9][0-9]*", wid))
     workers = folder.parent / ".theory-master" / "workers" / wid
-    current_worker = _read_small_json(workers / "runtime.json", 64_000)
+    current_worker = _read_small_json(workers / "runtime.json", 64_000) if worker_bound else None
     if (isinstance(current_worker, dict)
             and str(current_worker.get("current_cycle") or "") == folder.name
             and str(current_worker.get("status") or "").upper() in LIVE_STATUSES):
         return ""  # a recovering Worker takes precedence over old frozen fault projections
+    durable = _durable_recovery_banner(run, folder, scientific)
+    if durable:
+        return durable
+    if not worker_bound:
+        return ""
     phase = str(scientific.get("phase") or "")
     status = str(scientific.get("status") or "").lower()
     label, detail = "", ""
@@ -406,6 +410,51 @@ def _engineering_recovery_banner(run: dict[str, Any]) -> str:
             '<div class="tm-quota-wait-banner" role="status" data-recovery-gate="true">'
             f'<strong>{_e(label)}</strong><span>{_e(detail)}</span>'
             f'<small><a href="{_e(link)}">查看对应 Cycle 的 Supervisor 记录 →</a></small>'
+            '</div></section>')
+
+
+def _durable_recovery_banner(run: dict[str, Any], folder: Path, scientific: dict[str, Any]) -> str:
+    """Show the current failure's recovery owner in both single-task and Worker runs."""
+    job = _read_small_json(folder / 'supervisor/recovery.json', 128_000)
+    failure = scientific.get('recovery') or {}
+    recorded = job.get('failure') if job else None
+    if (not job or job.get('schema') != 'theory-master/supervisor-recovery/v1'
+            or str(job.get('cycle') or '') != folder.name
+            or str(scientific.get('status') or '').lower() not in {'failed', 'needs_attention'}
+            or not isinstance(recorded, dict) or not isinstance(failure, dict)
+            or not failure.get('message')
+            or any(recorded.get(key) != failure.get(key) for key in ('kind', 'message', 'at', 'category'))):
+        return ''
+    status = job.get('status')
+    labels = {'pending': 'Supervisor 等待诊断', 'working': 'Supervisor 等待调度核查',
+              'waiting': 'Supervisor 等待下一次检查', 'resume_authorized': 'Supervisor 等待受控恢复',
+              'activity_verified': 'Supervisor 已验证恢复活动', 'stopped': 'Supervisor 已停止'}
+    if status not in labels:
+        return ''
+    label = labels[status]
+    if not supervisor_enabled_for(run, scientific):
+        label = 'Supervisor 调度已关闭'
+    elif status == 'working':
+        from .collector import _pid_alive
+        if job.get('owner_start_ticks') is not None and _pid_alive(job.get('owner_pid'), job['owner_start_ticks']):
+            label = 'Supervisor 诊断与修复中'
+    elif status == 'waiting' and job.get('dependency_wait'):
+        label = 'Supervisor 等待依赖变化'
+    detail = _clean(job.get('blocking_dependency') or '等待 SDK 核查；科研恢复尚未验证。', 2200)[0]
+    due = job.get('next_wakeup_epoch')
+    if job.get('dependency_wait') and type(due) in (int, float) and due <= time.time():
+        detail += ' · 已进入定期条件检查。'
+    elif type(due) in (int, float) and 0 < due < 253402214400:
+        check = datetime.fromtimestamp(due, timezone(timedelta(hours=8))).strftime('%m-%d %H:%M:%S')
+        detail += ' · 下次检查：' + check + '（UTC+8）'
+    if job.get('dependency_wait'):
+        detail += ' · 定期检查依赖；条件未变时不重复模型修复。'
+    progress = _clean(job.get('last_verified_progress') or '尚无已验证恢复活动', 500)[0]
+    href = _banner_target(run, '')
+    return ('<section class="tm-supervisor-pane" data-tui-pane="supervisor">'
+            '<div class="tm-quota-wait-banner" role="status" data-recovery-owner="true">'
+            f'<strong>{_e(label)}</strong><span>{_e(detail)}</span>'
+            f'<small>最后验证进展：{_e(progress)} · <a href="{_e(href)}">查看恢复记录 →</a></small>'
             '</div></section>')
 
 

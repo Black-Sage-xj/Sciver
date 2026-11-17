@@ -221,7 +221,7 @@ def test_one_Investigator_A_B_response_then_sdk_C_reuses_archive_without_more_mo
     node = next(n for n in json.loads(canvas.read_text())["nodes"]
                 if n["id"] == first["node_id"])
     assert _stage_output()["canvas_summary"] in node["text"]
-    assert "[[notes/scientific_reports/Cycle1-preserve_research.md]]" in node["text"]
+    assert "[[notes/scientific_reports/Cycle1-preserve_research.md|阅读研究报告]]" in node["text"]
     again = run_preservation_stage(
         cycle_dir=cycle, canvas_path=canvas, backend=backend,
         model="fake", provider="fake", authorization="operator_approved",

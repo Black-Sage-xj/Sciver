@@ -468,6 +468,35 @@ class ObservabilityTest(unittest.TestCase):
             self.assertIn("Requested action", attention)
             self.assertIn("Resume restarts qualification from Research Lead", attention)
 
+    def test_no_qualified_candidate_is_persisted_and_rebuilt_as_stopped(self):
+        with tempfile.TemporaryDirectory() as temp:
+            spec, _ = self.make(Path(temp), reworks=0)
+            collector = Collector(spec)
+            run_dir = spec.research_root / "1"
+            collector.start_run("1", spec, run_dir=run_dir)
+            sci = {
+                "status": "no_qualified_candidate", "phase": "qualification",
+                "qualification_status": "no_qualified_candidate",
+                "resumable": False, "execution_active": False,
+                "attention": {"code": "no_qualified_candidate", "reason": "No candidate passed qualification."},
+                "threads": {}, "branches": [],
+            }
+            collector.on_persist(sci)
+            persisted = json.loads((run_dir / "run_state.json").read_text())
+            self.assertEqual(persisted["status"], "NEEDS_ATTENTION")
+            self.assertFalse(persisted["execution_active"])
+            # Existing artifacts must reconcile without rewriting scientific state.
+            (run_dir / ".theory-master-cycle").write_text("v2")
+            (run_dir / "research_state.json").write_text(json.dumps(sci))
+            persisted["status"] = "RUNNING"
+            (run_dir / "run_state.json").write_text(json.dumps(persisted))
+            snap = FileSource(spec.research_root).snapshot()
+            self.assertEqual(snap["status"], "NEEDS_ATTENTION")
+            self.assertFalse(snap["execution_active"])
+            self.assertFalse(snap["resumable"])
+            self.assertEqual(snap["attention"]["code"], "no_qualified_candidate")
+            self.assertEqual(json.loads((run_dir / "research_state.json").read_text()), sci)
+
     def test_file_source_reconciles_stale_running_projection(self):
         with tempfile.TemporaryDirectory() as temp:
             spec, _ = self.make(Path(temp), reworks=0)

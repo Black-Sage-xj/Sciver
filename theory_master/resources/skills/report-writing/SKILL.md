@@ -10,7 +10,9 @@ returned is defined by the Stage Card and contract.
 
 ## Graph reading guide
 
-Return `graph_summary` separately from the complete report in `summary`.
+Return one `graph_summary` and the scientific body in `summary`. The SDK reuses
+this exact guide at the top of the single Cycle report and in graph overviews.
+Write the conclusion summary once, in this guide; begin the body with the question.
 The guide gives the next exploration a clear account of this Cycle:
 
 - `conclusion`: lead with the specific scientific result or change in knowledge.
@@ -34,27 +36,37 @@ owns IDs, links, state labels and persistence. It is not a prefix of the report.
 
 ## Ordered report structure
 
-Write a complete report for a researcher. Return its first four sections, in
-this order, in `summary`; the SDK appends the fifth. Use the report's language
+Write a self-contained scientific body for a researcher. Return these three
+sections, in this order, in `summary`. Use the report's language
 for headings (the Chinese headings below are the default for Chinese reports).
 
-1. **结论摘要 / Conclusion summary**: 3–6 sentences giving the specific finding,
-   its status, decisive quantitative comparison when supplied, applicable domain
-   and the uncertainty essential to interpreting that finding.
-2. **问题与必要条件 / Question and necessary conditions**: explain the question,
+1. **问题与必要条件 / Question and necessary conditions**: explain the question,
    what this Cycle tested or changed, comparison objects, indispensable sample
    conditions, parameters, definitions and formulas. Include enough explanation
    to understand the results without opening another report.
-3. **主要结果 / Main results**: organize subsections by scientific question.
+2. **主要结果 / Main results**: organize subsections by scientific question.
    State a finding, show its relevant existing figure, give its caption and
    explain how it supports the argument. Bring established values together in
    small comparison tables when this helps the reader compare conditions or
    outcomes. Keep important adverse or contrary results visible.
-4. **解释与限制 / Interpretation and limitations**: explain what the results mean,
+3. **解释与限制 / Interpretation and limitations**: explain what the results mean,
    the strongest relevant counter-explanation and what the Evidence resolves.
    State remaining questions and limitations that affect interpretation or use.
-5. **复现索引 / Reproduction index**: SDK-owned. Do not write this heading,
-   duplicate an index or append a path inventory; end your body after section 4.
+
+The SDK adds the shared overview, formal Judge record and reproduction index.
+Do not duplicate these blocks or append a path inventory; end after section 3.
+
+## Supplementary documents
+
+For an existing relevant supplied Markdown document, use
+`![[path.md#Section|Readable label]]` at the point where it helps the reader.
+The section and label are optional. Explain the supplement's purpose in nearby
+prose. SDK freezes the document hash and selected text, and renders it in a
+folded source-labelled block. Put the argument needed to understand the main
+result directly in the body; use supplements for long derivations, methods or
+secondary detail. Use ordinary links for large documents and raw data. Reference
+only existing supplied task notes or registered document assets, never invent
+an attachment or write another document as part of the Reporter turn.
 
 Adapt result subsection titles to the science. Distinguish observation,
 interpretation and implication; preserve the formally decided strength and

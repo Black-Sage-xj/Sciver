@@ -494,6 +494,12 @@ def project(research_root: Path, *, secondary: str = "", cycle_dir: Path | None 
                 "parts": parts, "cycle_id": state.get("cycle_id"), "status": state.get("status"),
                 "max_cycles": state.get("max_cycles"), "role_settings": role_settings,
                 "model_catalog": catalog, "attention": attention,
+                "recovery_info": {
+                    "resumable": bool(state.get("resumable")),
+                    "execution_active": bool(state.get("execution_active")),
+                    "phase": str(state.get("recovery_phase") or state.get("phase") or "")[:500],
+                    "checkpoint": str(state.get("last_safe_checkpoint") or "")[:12000],
+                },
                 "role_usage": role_usage, "usage_totals": totals,
                 "activity_detail": {
                     "current_activity": str(state.get("current_activity") or "")[:12000],

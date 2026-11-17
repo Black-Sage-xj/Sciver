@@ -1,4 +1,4 @@
-"""Black and navy Sciver workspace appearance remains a browser-only preference."""
+"""White, black and navy Sciver workspace appearance remains a browser-only preference."""
 from __future__ import annotations
 
 import json
@@ -13,8 +13,8 @@ from tm_observer import task_settings_ui
 
 
 class WorkspaceThemeTests(unittest.TestCase):
-    def test_both_themes_cover_shared_workspace_surface(self):
-        for palette, expected in (("black", "#09090b"), ("blue", "#07162f")):
+    def test_all_themes_cover_shared_workspace_surface(self):
+        for palette, expected in (("black", "#09090b"), ("blue", "#07162f"), ("white", "#ffffff")):
             with self.subTest(palette=palette):
                 self.assertIn('html[data-sciver-theme="' + palette + '"]', STYLE)
                 self.assertIn("--tm-bg:" + expected, STYLE)
@@ -27,6 +27,7 @@ class WorkspaceThemeTests(unittest.TestCase):
         self.assertIn('data-sciver-theme-picker', plain)
         self.assertIn('<option value="black">', plain)
         self.assertIn('<option value="blue">', plain)
+        self.assertIn('<option value="white">', plain)
         self.assertIn('仅保存在当前浏览器', plain)
         run = {"observer_id": "a" * 16, "task_name": "My Task"}
         with (
@@ -60,6 +61,17 @@ class WorkspaceThemeTests(unittest.TestCase):
         script = lambda page: BeautifulSoup(page, "html.parser").select_one("script[data-sciver-theme-bootstrap]").text
         self.assertEqual(script(login), script(normal))
 
+    def test_embedded_chat_inherits_and_tracks_saved_theme(self):
+        from tm_observer.appearance_ui import LIGHT_STYLE, THEME_BOOTSTRAP_SCRIPT
+        from tm_observer.research_chat_ui import embedded_page
+        with patch("tm_observer.research_chat_ui.page_body", return_value="<section>chat</section>"):
+            page = embedded_page({})
+        self.assertIn(THEME_BOOTSTRAP_SCRIPT, page)
+        self.assertIn(LIGHT_STYLE, page)
+        self.assertLess(page.index("data-sciver-theme-bootstrap"), page.index("<body"))
+        # The iframe has no picker/controller: its bootstrap must handle live storage events.
+        self.assertIn('window.addEventListener("storage"', THEME_BOOTSTRAP_SCRIPT)
+
     @unittest.skipUnless(shutil.which("node"), "Node.js is required for client-side preference test")
     def test_persisted_theme_switch_storage_sync_and_private_mode(self):
         dom = BeautifulSoup(dashboard_shell("Test", "<p>works</p>", active="settings"), "html.parser")
@@ -81,6 +93,15 @@ function setup(saved,blocked=false) {
   vm.runInNewContext(controller,{document,window});
   return {attrs,picker,storage,handlers};
 }
+const white=setup('white');
+assert.equal(white.attrs['data-sciver-theme'],'white');
+assert.equal(white.picker.value,'white');
+white.picker.value='blue';white.handlers['picker:change']();
+assert.equal(white.storage.get('sciver-theme-v1'),'blue');
+white.handlers['window:storage']({key:'sciver-theme-v1',newValue:'white'});
+assert.equal(white.picker.value,'white');
+white.handlers['window:storage']({key:null,newValue:null});
+assert.equal(white.picker.value,'black');
 const blue=setup('blue');
 assert.equal(blue.attrs['data-sciver-theme'],'blue');
 assert.equal(blue.picker.value,'blue');
@@ -95,8 +116,8 @@ assert.equal(blue.attrs['data-sciver-theme'],'black');
 for(const saved of [null,'invalid'])assert.equal(setup(saved).attrs['data-sciver-theme'],'black');
 const privateMode=setup('blue',true);
 assert.equal(privateMode.attrs['data-sciver-theme'],'black');
-privateMode.picker.value='blue';privateMode.handlers['picker:change']();
-assert.equal(privateMode.attrs['data-sciver-theme'],'blue');
+privateMode.picker.value='white';privateMode.handlers['picker:change']();
+assert.equal(privateMode.attrs['data-sciver-theme'],'white');
 """
         result = subprocess.run(
             ["node", "-e", js, bootstrap, controller],

@@ -1,6 +1,6 @@
 [project]
 name = "sciver"
-version = "0.1.0"
+version = "0.1.1"
 description = "Persistent Codex SDK scientific workflow engine"
 license = "MIT"
 readme = "README.md"

@@ -54,7 +54,8 @@ description: >-
 
 ## 测试集身份与 provenance
 
-- holdout、gate、benchmark-provided / benchmark test 属于需要独立认证的**受保护证据身份**。自然语言或 finding.provenance 的 source/split/declaration_ref 均只属于 Agent 声明；路径位于 workspace 外或登记时文件哈希匹配不证明当前数值结果产生前已冻结。没有 SDK 独立可信的事前冻结记录时，必须保持 `unverified`，不得据此宣称已认证的 protected identity。
+- 普通 train/validation 一致性检查依照任务与冻结 decisive_test 的实际要求执行：核对独立统计单位与分组不重叠，用 train 选方法、估计并固定比较规则，之后单独检查 validation，记录执行顺序与真实限制。结构/有限性检查不等于用 validation 结果选择方法；数据来自 benchmark 或被称为 holdout，也不自动增加 SDK 盲测认证要求。
+- 只有任务或冻结检验要求受保护盲测、事前预测隔离或 Final Gate 身份时，才按相应身份核验其冻结、暴露与访问边界。自然语言或 finding.provenance 的 source/split/declaration_ref 均只属于 Agent 声明；路径位于 workspace 外或登记时文件哈希匹配不证明当前数值结果产生前已冻结。没有独立可信记录时，认证状态保持 `unverified`，不得宣称已认证的 protected identity；这只限制该强身份主张，不自动否定普通验证或已完成的数值比较。具体科学独立性由真实方法和证据判断。
 - agent_generated 数据不能事后升级成 holdout 或 gate；rework 中临时生成的参数扫描应如实表述为 agent-generated/post-hoc validation。
 
 ## 边界

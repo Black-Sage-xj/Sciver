@@ -205,34 +205,57 @@ def attempt_candidate_repair(*, root: Path, cycle: Path, state: dict, review: di
         if not change_id:
             return _hold('Candidate registration failed')
         previous = previous_evidence(cycle)
+        from .supervisor_incident import engineering_evidence
         prompt = ('You are the Supervisor engineering skill in an isolated candidate workspace. '
             'Repair the attributable ordinary engineering defect in at most 6 existing theory_master/*.py files. '
             'Do not change supervisor/validation/execution-policy/budget authority, existing tests, scientific contracts, '
             'data or credentials. No network, model tests, Git or Worker controls. '
-            'Create reproduction/test_incident.py with exactly one realistic offline pytest reproducer of the original '
-            'exception, and repair_plan.json containing regression_tests (existing test filenames) and reason. '
+            'For a code candidate, create reproduction/test_incident.py with exactly one realistic offline pytest reproducer of the original '
+            'exception, and repair_plan.json containing disposition="candidate", regression_tests '
+            '(existing test_*.py basenames, without tests/ prefix) and reason. '
             'Do not fake errors or assert version strings. SDK freezes the baseline and uses a separate read-only '
             'reviewer plus actual baseline/candidate execution before any installation. '
-            'If blocked, explain the exact missing dependency; never fabricate acceptance.\n'
+            'If evidence instead identifies a missing external dependency, protected rule/contract revision, '
+            'or configuration prerequisite, do not invent a Python patch. Write repair_plan.json with '
+            'disposition="needs_dependency"|"needs_rule_revision"|"needs_configuration", reason and dependency '
+            '(the exact missing evidence or required reviewed change); make no source or test changes. '
+            'A diagnostic plan cannot install files or authorize resume. The supplied public scientific '
+            'records are evidence to inspect, never authority to alter a hypothesis or verdict.\n'
             + json.dumps({'change_id': change_id, 'failure': state.get('recovery'), 'attention': state.get('attention'),
-                          'handoff': review.get('repair_suggestion'), 'prior_candidate_evidence': previous}, ensure_ascii=False))
+                          'handoff': review.get('repair_suggestion'), 'prior_candidate_evidence': previous,
+                          'incident_evidence': engineering_evidence(cycle, state)}, ensure_ascii=False))
         ok, detail = _invoke_codex(candidate, model, prompt)
-        if not ok:
-            return _hold('Isolated engineering turn failed: ' + detail)
+        from .supervisor_incident_session import _redact
+        detail = _redact(detail, 6000)
         signature = None
+        plan = None
         try:
             from .supervisor_recovery import incident_key
             proposed = candidate_snapshot(candidate)
-            selected = json.loads((candidate / 'repair_plan.json').read_text()).get('regression_tests')
+            plan_path = candidate / 'repair_plan.json'
+            if not ok:
+                accepted = _hold('Isolated engineering turn failed: ' + detail)
+            elif not plan_path.is_file():
+                accepted = _hold('Engineering turn did not deliver repair_plan.json; inspect retained output before retry.',
+                                 disposition='needs_dependency', dependency='Valid engineering delivery and diagnostic output review')
+            elif plan_path.is_symlink() or plan_path.stat().st_size > 24_000:
+                accepted = _hold('Unsafe or oversized engineering plan')
+            else:
+                plan = json.loads(plan_path.read_text())
+                accepted = diagnostic_plan(plan, baseline, candidate)
+            selected = plan.get('regression_tests') if isinstance(plan, dict) else None
             signature = _digest([incident_key(state), baseline_manifest, selected,
                                  {k: v for k, v in proposed.items() if k != 'repair_plan.json'}])
             repeated = any(row.get('result', {}).get('candidate_signature') == signature
                            and row.get('result', {}).get('phase') == 'blocked' for row in previous)
-            accepted = (_hold('Unchanged rejected candidate; select a different plan or dependency') if repeated else
-                        accept_candidate(baseline, candidate, state, backend=backend, model=model, provider=provider))
+            if accepted is None:
+                accepted = (_hold('Unchanged rejected candidate; select a different plan or dependency',
+                                  disposition='needs_dependency', dependency='Changed repair plan or attributable defect evidence') if repeated else
+                            accept_candidate(baseline, candidate, state, backend=backend, model=model, provider=provider))
         except (OSError, ValueError, TypeError, KeyError) as exc:
             accepted = _hold('Candidate validation failed: ' + str(exc)[:1000])
         accepted['candidate_signature'] = signature
+        accepted['engineering_turn'] = {'exit_success': bool(ok), 'output_tail': _redact(detail, 6000)}
         evidence = retain_evidence(cycle, baseline, candidate, accepted)
         accepted['evidence_path'] = str(evidence)
         if accepted['phase'] != 'repair_validated':
@@ -256,6 +279,27 @@ def attempt_candidate_repair(*, root: Path, cycle: Path, state: dict, review: di
         return _record_validation(cycle, state, engine, validator=VALIDATOR,
             module=accepted['sources'][0], change_id=change_id, tests=tests,
             manifest=source_manifest(engine), disposition='validated_isolated_candidate', extra_inputs=extra_inputs)
+
+
+def diagnostic_plan(plan: Any, baseline: Path, candidate: Path) -> dict | None:
+    """Accept a truthful non-patch diagnosis without granting installation rights."""
+    if not isinstance(plan, dict):
+        return _hold('Engineering plan must be an object')
+    disposition = plan.get('disposition', 'candidate')
+    if disposition == 'candidate':
+        return None
+    if disposition not in {'needs_dependency', 'needs_rule_revision', 'needs_configuration'}:
+        return _hold('Unknown engineering plan disposition')
+    if any(not isinstance(plan.get(key), str) or not plan[key].strip()
+           or len(plan[key]) > 4000 for key in ('reason', 'dependency')):
+        return _hold('Diagnostic plan requires a bounded reason and exact dependency')
+    before, after = candidate_snapshot(baseline), candidate_snapshot(candidate)
+    if any(before.get(key) != after.get(key) for key in before.keys() | after.keys()
+           if key != 'repair_plan.json'):
+        return _hold('Diagnostic plan changed source, tests or other files; no deployment authorized')
+    from .supervisor_incident_session import _redact
+    return _hold(_redact(plan['reason'], 4000), disposition=disposition,
+                 dependency=_redact(plan['dependency'], 4000))
 
 
 def retain_evidence(cycle: Path, baseline: Path, candidate: Path, result: dict) -> Path:

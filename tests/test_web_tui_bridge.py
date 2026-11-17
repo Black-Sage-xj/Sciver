@@ -13,6 +13,21 @@ from theory_master.tui.web_bridge import project, PRIMARY
 
 
 class CanonicalTuiRendererTests(unittest.TestCase):
+    def test_recovery_projection_retains_full_checkpoint_and_typed_flags(self):
+        with tempfile.TemporaryDirectory() as directory:
+            checkpoint = directory + '/long-task-name-' * 15 + '/research_state.json'
+            state = {'status': 'PAUSED', 'phase': 'paused', 'resumable': True,
+                     'execution_active': False, 'last_safe_checkpoint': checkpoint}
+            with patch('theory_master.tui.web_bridge.FileSource') as source:
+                source.return_value.snapshot.return_value = state
+                source.return_value.run_dir = None
+                result = project(Path(directory))
+            self.assertEqual(result['recovery_info'], {
+                'resumable': True, 'execution_active': False,
+                'phase': 'paused', 'checkpoint': checkpoint})
+            self.assertIn('Recovery paused', result['parts']['header'])
+            self.assertNotIn(checkpoint, result['parts']['header'])
+
     def test_primary_views_match_cli_textual_renderers(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

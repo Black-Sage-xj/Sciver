@@ -16,6 +16,7 @@ from .science_graph_store import ScienceGraphStore
 
 
 LEAD_MAINTENANCE_OPERATIONS = {
+    "report_read": "report-read <Cycle-ID> [--section TITLE_OR_ID] [--offset N]",
     "hypothesis_detail": "hypothesis-detail <H-ID>",
     "external_detail": "external-detail <E-ID>",
     "cycle_detail": "cycle-detail <Cycle-ID>",
@@ -26,6 +27,7 @@ LEAD_PROPOSAL_OPERATIONS = {
     **LEAD_MAINTENANCE_OPERATIONS,
 }
 CHALLENGER_REVIEW_OPERATIONS = {
+    "report_read": LEAD_MAINTENANCE_OPERATIONS["report_read"],
     "search": "search <query> [--offset N]",
     "hypothesis_detail": "hypothesis-detail <H-ID>",
     "external_detail": "external-detail <E-ID>",
@@ -47,7 +49,7 @@ def tool_context(database: str | Path, operations: dict[str, str]) -> dict[str, 
         ),
         "operations": dict(operations),
         "access": "read_only",
-        "history_navigation": "search locates H and matched Cycles; hypothesis-detail gives scientific records; cycle-detail gives original report/Workspace locators, including unadjudicated work. Read relevant originals when summaries/truncation cannot establish the old/new comparison. H IDs are not Cycle IDs; search is not Workspace full-text search.",
+        "history_navigation": "search locates H and matched Cycles; hypothesis-detail gives the overview; report-read reads the unified Cycle report, with section IDs and pagination for targeted reading. cycle-detail gives original report/Workspace locators, including unadjudicated work. H IDs are not Cycle IDs; search is not Workspace full-text search.",
         "hypothesis_text_limit_chars": 2000,
         "external_content_limit_chars": 12000,
         "search_result_limit": 8,
@@ -92,7 +94,7 @@ def _bounded_value(value: Any, max_chars: int) -> tuple[Any, bool]:
 
 def execute(database: str | Path, operation: str, identifier: str | None = None,
             *, recent_outcomes: int = 3, max_content_chars: int = 12_000,
-            offset: int = 0) -> dict[str, Any]:
+            offset: int = 0, section: str = "") -> dict[str, Any]:
     """Run one bounded read against a canonical SQLite database."""
     path = Path(database).expanduser().resolve()
     if not path.is_file():
@@ -113,6 +115,10 @@ def execute(database: str | Path, operation: str, identifier: str | None = None,
                 if not identifier:
                     return {"schema": "theorymaster/science-graph-tool-result/v1", "status": "invalid_arguments", "error": "cycle-detail requires a Cycle ID"}
                 result = store.agent_cycle_detail(identifier)
+            elif operation == "report-read":
+                from .research_report import read_report
+                result = read_report(path, identifier or "", section=section, offset=offset,
+                                     max_chars=max(1, min(24_000, max_content_chars)))
             elif operation == "search":
                 result = store.agent_search(identifier or "", offset=offset)
             else:
@@ -130,12 +136,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--recent-outcomes", type=int, default=3, help="Recent Cycle Outcomes for hypothesis-detail (0..10)")
     parser.add_argument("--max-content-chars", type=int, default=12_000, help="External source text cap (0..24000)")
     parser.add_argument("--offset", type=int, default=0, help="Search result pagination offset")
-    parser.add_argument("operation", choices=("view", "hypothesis-detail", "external-detail", "cycle-detail", "search"))
+    parser.add_argument("--section", default="", help="Report section title or stable section ID")
+    parser.add_argument("operation", choices=("view", "hypothesis-detail", "external-detail", "cycle-detail", "report-read", "search"))
     parser.add_argument("id", nargs="?", help="H ID, External ID, or search query; optional for view")
     args = parser.parse_args(argv)
     result = execute(args.database, args.operation, args.id,
                      recent_outcomes=args.recent_outcomes,
-                     max_content_chars=args.max_content_chars, offset=args.offset)
+                     max_content_chars=args.max_content_chars, offset=args.offset, section=args.section)
     print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
     return 0 if result.get("status") not in {"not_found", "database_unavailable", "database_error", "invalid_arguments"} else 2
 

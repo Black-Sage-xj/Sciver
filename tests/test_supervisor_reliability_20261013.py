@@ -82,26 +82,26 @@ class SupervisorReliabilityTests(unittest.TestCase):
             sleeper.assert_not_called()
             self.assertEqual(cleared, [])
 
-    def test_premature_native_block_recovers_same_scientific_thread(self):
+    def test_native_block_preserves_thread_and_existing_handoff_for_sdk_diagnosis(self):
         with tempfile.TemporaryDirectory() as td:
             backend, thread, cleared = backend_fixture()
             handoff = Path(td) / "handoff.json"
-            objectives = []
-            def goal(_thread, objective, *, on_event):
-                objectives.append(objective)
-                if len(objectives) == 1:
-                    return NativeGoalResult("blocked", thread.id, 1, 0)
-                handoff.write_text(json.dumps({"findings": [{"claim": "Checked evidence."}]}))
-                return NativeGoalResult("complete", thread.id, 1, 0)
-            with patch("theory_master.native_goal.run_native_goal", side_effect=goal):
-                identifier, raw = backend.invoke_goal(
-                    "investigator", goal_objective="frozen goal", context_prompt="",
-                    handoff_path=str(handoff), thread_id=thread.id,
-                    model="gpt-6-sol", provider="CodexHTTPS")
-            self.assertEqual(identifier, thread.id)
-            self.assertEqual(objectives, ["frozen goal", "frozen goal"])
-            self.assertEqual(cleared, [thread.id, thread.id])
-            self.assertEqual(json.loads(raw)["findings"][0]["statement"], "Checked evidence.")
+            stale = '{"findings": [{"statement": "Earlier result"}]}'
+            handoff.write_text(stale)
+            blocked = NativeGoalResult("blocked", thread.id, 1, 0, "Need a frozen input")
+            with patch("theory_master.native_goal.run_native_goal", return_value=blocked) as goal, \
+                 patch("theory_master.native_goal.read_goal_findings") as delivery:
+                with self.assertRaises(NativeGoalRuntimeFailure):
+                    backend.invoke_goal(
+                        "investigator", goal_objective="frozen goal", context_prompt="",
+                        handoff_path=str(handoff), thread_id=thread.id,
+                        model="gpt-6-sol", provider="CodexHTTPS")
+            goal.assert_called_once()
+            delivery.assert_not_called()
+            self.assertEqual(cleared, [])
+            self.assertEqual(handoff.read_text(), stale)
+            self.assertIs(backend.threads[thread.id], thread)
+            self.assertEqual(backend.last_native_goal["reported_block_reason"], "Need a frozen input")
 
     def test_repeated_self_block_is_runtime_fault_not_scientific_exit(self):
         with tempfile.TemporaryDirectory() as td:
@@ -124,13 +124,13 @@ class SupervisorReliabilityTests(unittest.TestCase):
                     backend.invoke_goal("investigator", goal_objective="frozen goal",
                         context_prompt="", handoff_path=str(Path(td)/"handoff.json"),
                         thread_id=thread.id, model="gpt-6-sol", provider="CodexHTTPS")
-            self.assertIn("unauthorized blocked", str(exc.exception))
+            self.assertIn("dependency or contract diagnosis", str(exc.exception))
             self.assertNotIn("provider event LLM_FAILED", str(exc.exception))
             self.assertEqual(exc.exception.provider_event, "")
-            self.assertEqual(calls, ["frozen goal"] * 3)
-            self.assertEqual(cleared, [thread.id] * 2)
-            self.assertEqual(backend.last_native_goal["unexpected_block_retries"], 2)
-            self.assertEqual(backend.last_native_goal["runtime_failure_kind"], "repeated_unexpected_block")
+            self.assertEqual(calls, ["frozen goal"])
+            self.assertEqual(cleared, [])
+            self.assertEqual(backend.last_native_goal["automatic_reentries"], 0)
+            self.assertEqual(backend.last_native_goal["runtime_failure_kind"], "native_goal_dependency_blocked")
 
     def test_runtime_verification_needs_new_model_activity(self):
         with tempfile.TemporaryDirectory() as td:

@@ -301,7 +301,43 @@ def _codex_quota_metric_card(snapshot: dict[str, Any] | None = None, *, worker_a
     </div>'''
 
 
+def _recovery_notice(info: dict[str, Any] | None, status: str, *, resume_available: bool) -> str:
+    """Separate lifecycle context from errors; diagnostics remain opt-in."""
+    if not isinstance(info, dict) or info.get("execution_active"):
+        return ""
+    status = status.upper().replace(" ", "_")
+    labels = {
+        "PAUSED": ("info", "已暂停", "当前 Cycle 处于暂停状态。"),
+        "CHECKPOINT_REACHED": ("info", "已到达检查点", "当前 Cycle 已在检查点停止。"),
+        "INTERRUPTED": ("warning", "运行中断", "当前 Cycle 的运行已中断，请检查运行记录。"),
+        "RECOVERABLE": ("warning", "等待恢复", "当前 Cycle 已停止，等待恢复处理。"),
+        "UNRESPONSIVE": ("warning", "运行无响应", "当前运行未正常响应，请检查进程和运行记录。"),
+        "ORPHANED": ("warning", "运行进程失联", "当前 Cycle 与运行进程的关联已丢失，请检查运行记录。"),
+        "FAILED": ("error", "运行失败", "当前 Cycle 运行失败，请先检查错误原因。"),
+        "FAILED_RECOVERY": ("error", "恢复失败", "上次恢复未成功，请先检查错误原因。"),
+    }
+    if status not in labels or info.get("phase") in {"abandon_requested", "control_requested"}:
+        return ""
+    tone, title, description = labels[status]
+    if resume_available and info.get("resumable"):
+        description += " 可在上方状态菜单选择 Resume，继续当前 Cycle。"
+    fields = ""
+    phase = str(info.get("phase") or "")
+    checkpoint = str(info.get("checkpoint") or "")
+    if phase:
+        fields += '<dt>恢复阶段</dt><dd><code>' + _e(phase) + '</code></dd>'
+    if checkpoint:
+        fields += '<dt>最近安全检查点</dt><dd><code>' + _e(checkpoint) + '</code></dd>'
+    details = ('<details data-recovery-details><summary>恢复详情</summary><dl>' + fields +
+               '</dl></details>') if fields else ""
+    records = ('<button type="button" class="tm-runtime-records" data-tui-view="events">查看运行记录</button>'
+               if tone in {"warning", "error"} else "")
+    return (f'<aside class="tm-runtime-notice" data-tone="{tone}" role="status">'
+            f'<strong>{_e(title)}</strong><p>{_e(description)}</p>{records}{details}</aside>')
+
+
 def _tui_summary(raw: str, *, attention: dict[str, Any] | None = None,
+                 recovery_info: dict[str, Any] | None = None,
                  show_codex_quota: bool = False,
                  quota_snapshot: dict[str, Any] | None = None,
                  worker_account: str | None = None,
@@ -422,7 +458,7 @@ def _tui_summary(raw: str, *, attention: dict[str, Any] | None = None,
         action = str(attention.get("requested_action") or "—")
         resume = str(attention.get("resume_behavior") or "—")
         takeover = str(attention.get("takeover") or "—")
-        warning = f'''<details class="tm-tui-attention" open>
+        warning = f'''<details class="tm-tui-attention" role="status" open>
             <summary>需要处理 · NEEDS ATTENTION <span>查看完整原因与恢复说明</span></summary>
             <dl><dt>Reason</dt><dd>{_e(reason)}</dd>
               <dt>Action</dt><dd>{_e(action)}</dd>
@@ -430,8 +466,16 @@ def _tui_summary(raw: str, *, attention: dict[str, Any] | None = None,
               <dt>Takeover</dt><dd>{_e(takeover)}</dd></dl>
         </details>'''
     else:
-        rest = '\n'.join(lines[3:]).strip()
-        warning = f'<pre class="tm-tui-summary-extra">{_e(rest)}</pre>' if rest else ''
+        rest = '\n'.join(line for line in lines[3:] if not line.startswith(('Recovery ', 'Checkpoint '))).strip()
+        warning = _recovery_notice(recovery_info,
+                                  effective_status if effective_status is not None else first.group(2).strip(),
+                                  resume_available=resume_available and (allow_process_actions or worker_state_actions))
+        if rest:
+            needs_attention = first.group(2).strip().replace(' ', '_') == 'NEEDS_ATTENTION'
+            attributes = 'class="tm-tui-attention" open' if needs_attention else 'class="tm-runtime-diagnostics"'
+            label = '需要人工处理 · 运行详情' if needs_attention else '运行诊断'
+            warning += (f'<details {attributes}><summary>{label}</summary>'
+                        f'<pre class="tm-tui-summary-extra">{_e(rest)}</pre></details>')
     return f'<div class="tm-tui-header-stats" data-tui-pane="header"><dl class="tm-tui-kv-grid">{cells}</dl>{warning}</div>'
 
 
@@ -1603,14 +1647,15 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
             summary_catalog.append(selected_item)
     cycle_summaries = {item["id"]: cycle_summary(task_root, catalog, item["id"])
                        for item in summary_catalog}
-    # The native TUI bridge renders a persisted Cycle snapshot. For Worker
-    # mode, never let its possibly stale RUNNING label override the verified
-    # Worker process state also used by Task List and Worker tabs.
+    # The native TUI bridge renders a persisted Cycle snapshot.
+    # Never let a stale RUNNING snapshot override the verified lifecycle used
+    # by Task List and Agent tabs, including single-runner Tasks.
     monitor_state = run_monitor.data(run)
     pause_pending = (not selected_worker and run.get("state") == "LIVE"
                      and str(monitor_state.get("status") or "").upper() == "PAUSED"
                      and str(monitor_state.get("phase") or "").lower() == "control_requested")
-    status = (run.get("state") if selected_worker else projection.get("status")) or run.get("state") or run.get("raw_status")
+    status = (run.get("state") if selected_worker or run.get("state") not in {None, "UNKNOWN", "LIVE"}
+              else projection.get("status")) or projection.get("status") or run.get("state") or run.get("raw_status")
     if pause_pending:
         status = "PAUSE REQUESTED"
     cycle = projection.get("cycle_id") or run.get("cycle")
@@ -1647,7 +1692,7 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
         </div>
         <div class="tm-tui-title-actions">
           <span class="tm-run-freshness" data-run-freshness role="status" aria-live="polite">初始只读快照 · 8 秒自动检查</span>
-          <a class="tm-plan-header-link" href="/research-plan/?observer_id={_e(ident)}" title="查看或编辑当前任务的 Research Plan" style="font-size:12px;white-space:nowrap;color:#bfdbfe">Research Plan ↗</a>
+          <a class="tm-plan-header-link" href="/research-plan/?observer_id={_e(ident)}" title="查看或编辑当前任务的 Research Plan" style="font-size:12px;white-space:nowrap;color:var(--tm-link)">Research Plan ↗</a>
           <a class="tm-run-settings-link" href="/settings/?observer_id={_e(ident)}"
              aria-label="运行设置" title="运行设置">
              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -1699,11 +1744,12 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
                 <div class="tm-tui-section-title">运行概况</div>
                 {_tui_summary(parts.get("header", "(none)"),
                               attention=projection.get("attention"), show_codex_quota=True,
+                              recovery_info=projection.get("recovery_info"),
                               quota_snapshot=quota_snapshot, worker_account=pinned_worker_account, explore_map_card=explore_map,
                               resume_available=can_resume_state(run_monitor.data(run)),
                               run_available=(status_key in {"OVER", "CANCELLED", "STOPPED", "IDLE", "NEW"}),
                               allow_process_actions=not bool(selected_worker),
-                              effective_status=status_key if selected_worker or pause_pending else None,
+                              effective_status=status_key,
                               worker_state_actions=bool(selected_worker and worker_actions),
                               worker_cycle_progress=worker_cycle_progress)}
                 {quota_auto_card(projection.get("quota_auto_adjust"),
@@ -2431,8 +2477,14 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
         for(let i=0;i<Math.max(oldExtras.length,freshExtras.length);i++){{
           if(!oldExtras[i])current.append(freshExtras[i]);
           else if(!freshExtras[i])oldExtras[i].remove();
-          else if(oldExtras[i].outerHTML!==freshExtras[i].outerHTML)
-            oldExtras[i].replaceWith(freshExtras[i]);
+          else {{
+            const oldDetails=oldExtras[i].querySelector('[data-recovery-details]');
+            const newDetails=freshExtras[i].querySelector('[data-recovery-details]');
+            if(oldDetails&&newDetails&&oldDetails.textContent===newDetails.textContent)
+              newDetails.open=oldDetails.open;
+            if(oldExtras[i].outerHTML!==freshExtras[i].outerHTML)
+              oldExtras[i].replaceWith(freshExtras[i]);
+          }}
         }}
         return true;
       }}

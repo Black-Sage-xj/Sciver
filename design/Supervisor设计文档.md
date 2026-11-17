@@ -34,6 +34,12 @@ Worker FAILED
 
 进入 Engineering repair 的前提：无活跃同任务 Worker、锁定相同故障 fingerprint、存在安全 checkpoint 或已提交角色边界、未弃用 Cycle、未触发科学预算 guard；provider capacity 不能触发源码修改。工程动作和“真实科研恢复”必须分开记账，只有后续真实活动才能标记恢复。
 
+原生 Goal 没有终端 Provider 错误而返回 blocked 时，保留原线程、工作区、Goal 摘要哈希与其公开原因，交 SDK 做依赖/合同诊断；不对未变条件 clear/restart 两次。此中断不是 Finding、Judge verdict、预算续批或科研保全授权。历史 `repeated_unexpected_block` 同样禁止无已验证修复的 plain resume；Provider 容量、额度和预算路径保留各自守卫。
+
+工程候选接收与失败 invocation 绑定的紧凑公开证据，包括冻结科学、最近相关交付和已观察加载 Skill 的当前规则/哈希；当前规则不冒充历史版本证明。记录不授予修改科学状态或受保护策略的权限。普通代码候选继续通过独立差分验收；`repair_plan.json` 也可返回 `needs_dependency / needs_rule_revision / needs_configuration`、具体原因和缺失依赖，此类诊断必须无源码/测试变更，不安装文件、不授权 Resume。缺计划文件即使进程退出 0 也属于未交付；脱敏退出信息和输出片段随候选证据保留。
+
+明确依赖等待仍保留恢复 owner，排程定期做无模型条件检查。源代码、相关已加载 Skill、身份/配置、checkpoint 或恢复控制记录变化后可重新诊断；时间到达本身不触发相同的付费工程重试。外部输入变化可通过更新来源配置或 SDK recovery_control 通知恢复 owner。Console 对单任务及 Worker 均投影当前失败绑定的持久恢复记录，分别展示诊断、等待依赖、受控恢复及已核实活动；活跃对话和 PID 均不能单独证明科研已恢复。
+
 ## 不可逾越的边界
 
 - 不擅自恢复用户主动暂停/终止的任务，不在 Goal Completion 后重新开科研 Cycle。

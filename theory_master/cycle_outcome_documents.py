@@ -14,12 +14,12 @@ from .science_graph_store import ScienceGraphStore
 from .outcome_guide import graph_summary_text
 
 _MARKDOWN_GENERATOR = "theory-master/cycle-outcome"
-_MARKDOWN_VERSION = 2
+_MARKDOWN_VERSION = 3
 _JSON_GENERATOR = "theory-master/cycle-outcome-json"
 _JSON_VERSION = 2
 _V1_MARKER_RE = re.compile(r"^<!-- theory-master/cycle-outcome/source:([0-9a-f]{64}) -->$")
 _V2_MARKER_RE = re.compile(
-    r"^<!-- theory-master/cycle-outcome/v2 source:([0-9a-f]{64}) render:([0-9a-f]{64}) -->$"
+    r"^<!-- theory-master/cycle-outcome/v[23] source:([0-9a-f]{64}) render:([0-9a-f]{64}) -->$"
 )
 
 
@@ -35,9 +35,10 @@ def outcome_document_json_ref(cycle_id: str) -> str:
     return f"notes/outcomes/{cycle_id}.json"
 
 
-def _source_digest(outcome: dict[str, Any], lock: dict[str, Any], original_decision: str) -> str:
+def _source_digest(outcome: dict[str, Any], lock: dict[str, Any], original_decision: str,
+                   *, version: int | None = None) -> str:
     payload = {
-        "version": _MARKDOWN_VERSION,
+        "version": _MARKDOWN_VERSION if version is None else version,
         "outcome": outcome,
         "lock": lock,
         "original_decision": original_decision,
@@ -57,30 +58,42 @@ def _render_outcome_body(
     if not raw_verdicts and original_decision:
         raw_verdicts = set(re.findall(r"(?m)^verdict:\s*(\S+)", original_decision))
     compatibility_only = bool(raw_verdicts - {str(outcome["verdict"])})
+    labels = {"supported": "支持", "rejected": "反驳", "open": "尚无法判定",
+              "unadjudicated": "阶段性研究记录 · 未裁决"}
     lines = [
-        f"# Cycle {cycle_id} · Outcome",
+        f"# {outcome.get('title') or 'Cycle ' + cycle_id + ' · 研究报告'}",
         "",
+        "**本轮结果：** " + ("历史裁决（原始类型见裁决记录）" if compatibility_only
+                           else labels.get(outcome["verdict"], str(outcome["verdict"]))),
+        "",
+    ]
+    metadata = [
         f"- Cycle ID: `{cycle_id}`",
         f"- Hypothesis ID: `{outcome['hypothesis_id']}`",
         "- Original Decision ID(s): " + ", ".join(
             f"`{item['id']}`" for item in (outcome.get("source_decisions") or [outcome])
         ),
-        f"- {'Stored compatibility verdict' if compatibility_only else 'Judge verdict'}: `{outcome['verdict']}`",
-        "",
-        "本页按 SQLite 中保存的原始记录整理该 Cycle 的裁决，不改变 Judge 的结论或扩大其适用范围。",
+        f"- {'研究状态（尚无 Judge 裁决）' if outcome['verdict'] == 'unadjudicated' else 'Stored compatibility verdict' if compatibility_only else 'Judge verdict'}: `{outcome['verdict']}`",
     ]
     if compatibility_only:
         lines.extend(["", "原始 Decision 的裁决类型为：" + ", ".join(
             f"`{value}`" for value in sorted(raw_verdicts) if value
         ) + "。数据库兼容字段不可替代原始类型。"])
     if guide := graph_summary_text(outcome):
-        lines.extend(["", "## 图谱导览", "", guide])
+        lines.extend(["", "## 本轮概览", "", guide])
+    from .research_report import expand_documents, fold_legacy_summary
+    context = outcome.get("report_context") or {}
+    body = fold_legacy_summary(str(context.get("body", outcome.get("summary")) or ""), has_guide=bool(outcome.get("graph_summary")))
+    lines.extend(["", expand_documents(body, context.get("documents") or [])])
+    lines.extend(["", '<details class="research-adjudication">',
+                  "<summary>" + ("阶段性研究记录" if outcome["verdict"] == "unadjudicated" else "Judge 裁决与正式科学记录") + "</summary>", ""])
+    lines.extend(metadata)
     for label, value in (
         ("冻结命题", lock.get("hypothesis")),
         ("冻结范围", lock.get("scope")),
         ("决定性检验", outcome.get("decisive_test") or lock.get("decisive_test")),
-        ("本轮结论", outcome.get("summary")),
         ("Judge 裁决依据", outcome.get("judge_rationale")),
+        ("此前 Judge 返工要求（尚未完成）", outcome.get("prior_judge_objection")),
     ):
         if value:
             lines.extend(["", f"## {label}", "", str(value).strip()])
@@ -94,15 +107,15 @@ def _render_outcome_body(
         if values:
             lines.extend(["", f"## {label}", ""])
             lines.extend(f"- {str(value).strip()}" for value in values)
-    if outcome.get("report_ref"):
-        lines.extend(["", "## 原始报告", "", f"[[{outcome['report_ref']}]]"])
     if original_decision.strip():
         lines.extend(["", "## 原始 Decision 正文", "", original_decision.strip()])
     lines.extend([
-        "", "## 结构化来源记录", "",
+        "", "### 结构化来源记录", "",
         f"[[{outcome_document_json_ref(cycle_id)}|打开独立 JSON 审计记录]]",
-        "", "完整的结构化记录单独保存，避免在人类可读正文中重复整份 JSON。", "",
+        "", "</details>", "",
     ])
+    if context.get("reproduction_index"):
+        lines.extend(["", str(context["reproduction_index"])])
     return "\n".join(lines)
 
 
@@ -117,7 +130,7 @@ def render_outcome_document(
     )
     source_digest = _source_digest(outcome, normalized_lock, original_decision)
     render_digest = hashlib.sha256((body + "\n").encode("utf-8")).hexdigest()
-    marker = f"<!-- {_MARKDOWN_GENERATOR}/v2 source:{source_digest} render:{render_digest} -->"
+    marker = f"<!-- {_MARKDOWN_GENERATOR}/v{_MARKDOWN_VERSION} source:{source_digest} render:{render_digest} -->"
     return marker + "\n" + body + "\n"
 
 
@@ -220,7 +233,9 @@ def _valid_v2_json(existing: str) -> bool:
     original_decision = document.get("original_decision")
     if not isinstance(outcome, dict) or not isinstance(lock, dict) or not isinstance(original_decision, str):
         return False
-    if document.get("source_digest") != _source_digest(outcome, lock, original_decision):
+    if document.get("source_digest") not in {
+            _source_digest(outcome, lock, original_decision, version=version)
+            for version in (2, 3)}:
         return False
     expected = document.get("_render_digest")
     payload = {key: value for key, value in document.items() if key != "_render_digest"}

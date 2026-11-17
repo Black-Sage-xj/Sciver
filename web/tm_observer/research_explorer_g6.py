@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .research_reader_ui import READER_CSS
+
 G6_VERSION = "5.1.1"
 
 GRAPH_CSS = r"""
@@ -96,6 +98,7 @@ GRAPH_CSS = r"""
 .ex-actions{position:absolute;top:12px;left:12px;right:12px;display:flex;align-items:center;flex-wrap:wrap;gap:6px;z-index:3;pointer-events:none}
 .ex-actions>*{pointer-events:auto}
 .ex-actions button{padding:7px 10px;font-size:12px;background:#23232c;color:#f1f5f9;border:1px solid #484851}
+.ex-actions button.ex-color-mode{background:#1c2432;color:#eef2fa}
 .ex-actions button[aria-pressed="true"]{border-color:#60a5fa;background:#1e3a5f;color:#dbeafe}
 .ex-actions .ex-zoom-percent{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;min-width:58px;height:30px;padding:0 7px;border:1px solid #565c69;border-radius:6px;background:#171c28;color:#e2e8f0;font-size:12px;font-variant-numeric:tabular-nums;white-space:nowrap}
 .ex-actions .ex-divider{height:17px;border-left:1px solid #52525b}
@@ -261,6 +264,10 @@ GRAPH_HTML = r"""
 <script defer src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js"></script>
+<script defer data-manual src="https://cdn.jsdelivr.net/npm/prismjs@1.30.0/prism.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/prismjs@1.30.0/components/prism-python.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/prismjs@1.30.0/components/prism-bash.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/prismjs@1.30.0/components/prism-json.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css">
 <script>
 TM_GRAPH_JS
@@ -271,4 +278,4 @@ TM_GRAPH_JS
 def graph_content() -> str:
     script = Path(__file__).with_name("research_explorer_g6.js").read_text(encoding="utf-8")
     tree_script = Path(__file__).with_name("research_explorer_layout_c.js").read_text(encoding="utf-8")
-    return GRAPH_CSS + GRAPH_HTML.replace("TM_GRAPH_JS", tree_script + "\n" + script)
+    return GRAPH_CSS + READER_CSS + GRAPH_HTML.replace("TM_GRAPH_JS", tree_script + "\n" + script)

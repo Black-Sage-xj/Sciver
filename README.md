@@ -40,18 +40,18 @@ Inspect task status, research stages, and agent activity from desktop and mobile
 
 ## Quick start: install the release (recommended)
 
-For regular use, install the two `.whl` packages from [Release v0.1.0](https://github.com/Black-Sage-xj/Sciver/releases/tag/v0.1.0). They include the engine and prebuilt Web UI; Git and Node.js are not required. Use **Python 3.12+** on Linux, macOS, or Windows with WSL2. Replace `python3.12` below with your installed newer Python version if needed. For source development and editable installation, see [Contributing](CONTRIBUTING.md#development-installation).
+For regular use, install the two `.whl` packages from [Release v0.1.1](https://github.com/Black-Sage-xj/Sciver/releases/tag/v0.1.1). They include the engine and prebuilt Web UI; Git and Node.js are not required. Use **Python 3.12+** on Linux, macOS, or Windows with WSL2. Replace `python3.12` below with your installed newer Python version if needed. For source development and editable installation, see [Contributing](CONTRIBUTING.md#development-installation).
 
 ### Give this to your Agent
 
 Copy this prompt into your coding Agent to install Sciver, run the offline Test0 check, and open the Web UI:
 
 ```text
-Please install and start the Sciver release for me. First check that Python 3.12+ is available; on Windows, work inside WSL2. Open https://github.com/Black-Sage-xj/Sciver/releases/tag/v0.1.0 and download sciver-0.1.0-py3-none-any.whl, tm_observer-0.1.0-py3-none-any.whl, INSTALL.md, and SHA256SUMS into ~/sciver-install/v0.1.0. Verify both wheel SHA256 checksums. No source checkout is needed; do not install the automatically generated Source code archives. Run these commands in order:
+Please install and start the Sciver release for me. First check that Python 3.12+ is available; on Windows, work inside WSL2. Open https://github.com/Black-Sage-xj/Sciver/releases/tag/v0.1.1 and download sciver-0.1.1-py3-none-any.whl, tm_observer-0.1.1-py3-none-any.whl, INSTALL.md, and SHA256SUMS into ~/sciver-install/v0.1.1. Verify both wheel SHA256 checksums. No source checkout is needed; do not install the automatically generated Source code archives. Run these commands in order:
 
 python3.12 -m venv "$HOME/sciver-venv"
 source "$HOME/sciver-venv/bin/activate"
-python -m pip install --no-index --find-links "$HOME/sciver-install/v0.1.0" 'sciver==0.1.0' 'tm-observer==0.1.0'
+python -m pip install --no-index --find-links "$HOME/sciver-install/v0.1.1" 'sciver==0.1.1' 'tm-observer==0.1.1'
 sciver smoke
 sciver quickstart
 
@@ -60,12 +60,12 @@ If an installation, virtual environment, or source checkout already exists, insp
 
 ### Install it yourself
 
-Download `sciver-0.1.0-py3-none-any.whl`, `tm_observer-0.1.0-py3-none-any.whl`, `INSTALL.md`, and `SHA256SUMS` from the Release page above into a new `~/sciver-install/v0.1.0` directory. Verify both wheels against the checksum list. Choose the `.whl` packages; the automatically generated **Source code (zip/tar.gz)** files contain source, not installable wheels. Then run:
+Download `sciver-0.1.1-py3-none-any.whl`, `tm_observer-0.1.1-py3-none-any.whl`, `INSTALL.md`, and `SHA256SUMS` from the Release page above into a new `~/sciver-install/v0.1.1` directory. Verify both wheels against the checksum list. Choose the `.whl` packages; the automatically generated **Source code (zip/tar.gz)** files contain source, not installable wheels. Then run:
 
 ```bash
 python3.12 -m venv "$HOME/sciver-venv"
 source "$HOME/sciver-venv/bin/activate"
-python -m pip install --no-index --find-links "$HOME/sciver-install/v0.1.0" 'sciver==0.1.0' 'tm-observer==0.1.0'
+python -m pip install --no-index --find-links "$HOME/sciver-install/v0.1.1" 'sciver==0.1.1' 'tm-observer==0.1.1'
 sciver smoke
 sciver quickstart
 ```
@@ -111,7 +111,7 @@ Without `--prepare-only`, `test` starts real model-based research and uses accou
 
 ### Before starting real research
 
-- Release users should first run `python -m pip install --find-links "$HOME/sciver-install/v0.1.0" 'sciver[sdk]==0.1.0'` in the activated environment to install model-client dependencies. This step downloads extra dependencies; see [Wheel installation](docs/distribution.md) for fully offline deployment. The source development installation already includes the SDK dependencies.
+- Release users should first run `python -m pip install --find-links "$HOME/sciver-install/v0.1.1" 'sciver[sdk]==0.1.1'` in the activated environment to install model-client dependencies. This step downloads extra dependencies; see [Wheel installation](docs/distribution.md) for fully offline deployment. The source development installation already includes the SDK dependencies.
 - Install a supported Codex CLI and log in to your model provider; the CLI is not bundled with the Python package. After installing the CLI, log in with `sciver codex-account login-1`, then check `sciver codex-account status`.
 - Select available models and accounts in the Web UI. The model tier named `test` still makes real model requests and consumes quota; it is separate from the offline setup check.
 - `sciver web` defaults to the active Python for computation. Run `python -m pip install numpy scipy` for numerical work, or run `export THEORYMASTER_COMPUTE_PYTHON=/absolute/path/to/python` to select your scientific environment. Explicit settings are preserved.

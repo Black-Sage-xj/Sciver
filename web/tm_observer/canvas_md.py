@@ -298,6 +298,7 @@ def _sqlite_graph_projection(root: Path) -> dict[str, Any]:
             h["source_timestamp"] = original_times.get(h["id"])
             h["registered_at"] = h.get("created_at")
             for outcome in h.get("cycle_outcomes") or []:
+                outcome.pop("report_context", None)  # Frozen supplements are read through /report, not the graph index.
                 original_outcome_ref = outcome.get("document_ref")
                 if original_outcome_ref:
                     outcome["document_ref"] = _readable_markdown_ref(root, original_outcome_ref)
@@ -366,6 +367,8 @@ def _sqlite_graph_projection(root: Path) -> dict[str, Any]:
         nodes.append({
             "id": h["id"], "type": "text", "text": text,
             "outcome": h.get("outcome") if kind == "Hypothesis" else None,
+            "hypothesis_summary": h.get("summary") if kind == "Hypothesis" else None,
+            "lineage_summary": source_role_text(h) if kind == "Hypothesis" else None,
             "dossier_ref": h.get("resolved_dossier_ref") if kind == "Hypothesis" else None,
             "unavailable_dossier_ref": h.get("unavailable_dossier_ref") if kind == "Hypothesis" else None,
             "source_timestamp": h.get("source_timestamp") if kind == "Hypothesis" else None,
@@ -598,7 +601,16 @@ def read_document(root: Path, path: str, offset: int = 0) -> dict[str, Any]:
     return {
         "id": path, "title": _first_heading(text) or PurePosixPath(path).stem,
         "content": text, "next_offset": end if end < size else None,
+        **_report_document_alias(root, path, offset),
     }
+
+
+def _report_document_alias(root: Path, path: str, offset: int) -> dict[str, str]:
+    if offset:
+        return {}
+    from theory_master.research_report import report_cycle_for_path
+    cycle = report_cycle_for_path(root / "science_graph.sqlite3", path)
+    return {"report_cycle": cycle} if cycle else {}
 
 
 def _build_index_uncached(root: Path) -> dict[str, Any]:
@@ -621,6 +633,8 @@ def _build_index_uncached(root: Path) -> dict[str, Any]:
             "semantic": {
                 **project_node(raw),
                 "outcome": raw.get("outcome"),
+                "hypothesis_summary": raw.get("hypothesis_summary"),
+                "lineage_summary": raw.get("lineage_summary"),
                 "dossier_ref": raw.get("dossier_ref"),
                 "unavailable_dossier_ref": raw.get("unavailable_dossier_ref"),
                 "source_timestamp": raw.get("source_timestamp"),

@@ -19,6 +19,7 @@ SCI_STATUS_MAP = {
     "failed": "FAILED",
     "paused": "PAUSED",
     "needs_attention": "NEEDS_ATTENTION",
+    "no_qualified_candidate": "NEEDS_ATTENTION",
     "cancelled": "INTERRUPTED",
     "interrupted": "INTERRUPTED",
 }

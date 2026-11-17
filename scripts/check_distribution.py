@@ -93,7 +93,7 @@ def check_distribution(work: Path) -> dict:
     environment = work / "venv"
     venv.EnvBuilder(with_pip=True).create(environment)
     python = environment / "bin/python"
-    run([python, "-m", "pip", "install", "--no-index", "--find-links", wheels, "tm-observer==0.1.0"])
+    run([python, "-m", "pip", "install", "--no-index", "--find-links", wheels, "tm-observer==0.1.1"])
     sciver = environment / "bin/sciver"
     observer = environment / "bin/tm-observer"
     run([sciver, "--help"])

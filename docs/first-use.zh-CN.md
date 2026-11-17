@@ -31,7 +31,7 @@ tm-observer serve --search-root "$SCIVER_WORKSPACE" --host 127.0.0.1 --port 8787
 先安装受支持的 Codex CLI，确保 `codex --version` 可执行，再使用 Sciver 的账号登录步骤。桌面端登录不代表 Sciver 已配置完成。
 
 ```bash
-python -m pip install 'sciver[sdk]==0.1.0'
+python -m pip install 'sciver[sdk]==0.1.1'
 export THEORYMASTER_COMPUTE_PYTHON="$(command -v python)"
 codex --version
 sciver codex-account login-1

@@ -40,18 +40,18 @@ Sciver 面向复杂、开放、需要长期探索的科学问题，帮助研究�
 
 ## 快速开始：推荐安装发布版
 
-普通用户推荐安装 [Release v0.1.0](https://github.com/Black-Sage-xj/Sciver/releases/tag/v0.1.0) 中的两个 `.whl` 包，包含引擎和已构建的网页界面，无需 Git 或 Node.js。需要 **Python 3.12+**，支持 Linux、macOS 和 Windows 的 WSL2；以下命令中的 `python3.12` 可替换为已安装的更新版本 Python。源码开发与可编辑安装见 [参与开发](CONTRIBUTING.md#development-installation)。
+普通用户推荐安装 [Release v0.1.1](https://github.com/Black-Sage-xj/Sciver/releases/tag/v0.1.1) 中的两个 `.whl` 包，包含引擎和已构建的网页界面，无需 Git 或 Node.js。需要 **Python 3.12+**，支持 Linux、macOS 和 Windows 的 WSL2；以下命令中的 `python3.12` 可替换为已安装的更新版本 Python。源码开发与可编辑安装见 [参与开发](CONTRIBUTING.md#development-installation)。
 
 ### 交给你的 Agent 安装
 
 复制下面这段给编程 Agent，完成安装、离线 Test0 自检并打开网页：
 
 ```text
-请帮我实际安装并启动 Sciver 发布版。先检查 Python 3.12+ 是否可用；Windows 请在 WSL2 中操作。打开 https://github.com/Black-Sage-xj/Sciver/releases/tag/v0.1.0，将 sciver-0.1.0-py3-none-any.whl、tm_observer-0.1.0-py3-none-any.whl、INSTALL.md 和 SHA256SUMS 下载到 ~/sciver-install/v0.1.0，并核对两个 wheel 的 SHA256。无需克隆源码，也不要安装自动生成的 Source code 压缩包。依次运行：
+请帮我实际安装并启动 Sciver 发布版。先检查 Python 3.12+ 是否可用；Windows 请在 WSL2 中操作。打开 https://github.com/Black-Sage-xj/Sciver/releases/tag/v0.1.1，将 sciver-0.1.1-py3-none-any.whl、tm_observer-0.1.1-py3-none-any.whl、INSTALL.md 和 SHA256SUMS 下载到 ~/sciver-install/v0.1.1，并核对两个 wheel 的 SHA256。无需克隆源码，也不要安装自动生成的 Source code 压缩包。依次运行：
 
 python3.12 -m venv "$HOME/sciver-venv"
 source "$HOME/sciver-venv/bin/activate"
-python -m pip install --no-index --find-links "$HOME/sciver-install/v0.1.0" 'sciver==0.1.0' 'tm-observer==0.1.0'
+python -m pip install --no-index --find-links "$HOME/sciver-install/v0.1.1" 'sciver==0.1.1' 'tm-observer==0.1.1'
 sciver smoke
 sciver quickstart
 
@@ -60,12 +60,12 @@ sciver quickstart
 
 ### 自己安装
 
-从上面的 Release 页面下载 `sciver-0.1.0-py3-none-any.whl`、`tm_observer-0.1.0-py3-none-any.whl`、`INSTALL.md` 和 `SHA256SUMS`，放到新建的 `~/sciver-install/v0.1.0` 目录，按校验清单核对两个 wheel。选择 `.whl` 安装包；自动生成的 **Source code (zip/tar.gz)** 是源码，不是安装包。然后运行：
+从上面的 Release 页面下载 `sciver-0.1.1-py3-none-any.whl`、`tm_observer-0.1.1-py3-none-any.whl`、`INSTALL.md` 和 `SHA256SUMS`，放到新建的 `~/sciver-install/v0.1.1` 目录，按校验清单核对两个 wheel。选择 `.whl` 安装包；自动生成的 **Source code (zip/tar.gz)** 是源码，不是安装包。然后运行：
 
 ```bash
 python3.12 -m venv "$HOME/sciver-venv"
 source "$HOME/sciver-venv/bin/activate"
-python -m pip install --no-index --find-links "$HOME/sciver-install/v0.1.0" 'sciver==0.1.0' 'tm-observer==0.1.0'
+python -m pip install --no-index --find-links "$HOME/sciver-install/v0.1.1" 'sciver==0.1.1' 'tm-observer==0.1.1'
 sciver smoke
 sciver quickstart
 ```
@@ -111,7 +111,7 @@ sciver test Test0 ~/Sciver-workspace/another-test0 --prepare-only --open
 
 ### 开始真实研究前
 
-- Release 安装用户先在已激活的环境中执行 `python -m pip install --find-links "$HOME/sciver-install/v0.1.0" 'sciver[sdk]==0.1.0'`，安装模型客户端依赖；这一步需要联网下载额外依赖，完全离线部署见 [wheel 安装](docs/distribution.md)。源码开发安装已包含 SDK 依赖。
+- Release 安装用户先在已激活的环境中执行 `python -m pip install --find-links "$HOME/sciver-install/v0.1.1" 'sciver[sdk]==0.1.1'`，安装模型客户端依赖；这一步需要联网下载额外依赖，完全离线部署见 [wheel 安装](docs/distribution.md)。源码开发安装已包含 SDK 依赖。
 - 安装受支持的 Codex CLI，并完成模型提供方登录；CLI 不随 Python 包捆绑。安装 CLI 后，用 `sciver codex-account login-1` 登录第一个账号，再用 `sciver codex-account status` 检查状态。
 - 在网页中选择可用模型与账号。名为 `test` 的模型档位仍会调用真实模型、消耗额度，与上述离线自检不同。
 - `sciver web` 默认把当前 Python 作为计算环境；需要数值计算库时，执行 `python -m pip install numpy scipy`。也可先执行 `export THEORYMASTER_COMPUTE_PYTHON=/absolute/path/to/python` 指定已有科学 Python，显式设置会保留。

@@ -31,7 +31,7 @@ Open `http://127.0.0.1:8787/run/`. Refresh Task List, open the prepared task, an
 Install a supported Codex CLI so `codex --version` succeeds. Then use Sciver's managed account login rather than assuming your desktop login is shared:
 
 ```bash
-python -m pip install 'sciver[sdk]==0.1.0'
+python -m pip install 'sciver[sdk]==0.1.1'
 export THEORYMASTER_COMPUTE_PYTHON="$(command -v python)"
 codex --version
 sciver codex-account login-1

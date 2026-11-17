@@ -6,7 +6,7 @@ The observer wheel depends on the matching `sciver` SDK version.
 
 ## Install a reviewed release
 
-Put the reviewed `sciver-0.1.0-*.whl` and `tm_observer-0.1.0-*.whl` files in
+Put the reviewed `sciver-0.1.1-*.whl` and `tm_observer-0.1.1-*.whl` files in
 one directory. Replace `/absolute/path/to/reviewed-wheels` below with that
 directory, then create and activate a new environment:
 
@@ -14,7 +14,7 @@ directory, then create and activate a new environment:
 python3.12 -m venv "$HOME/sciver-venv"
 source "$HOME/sciver-venv/bin/activate"
 python -m pip install --no-index --find-links /absolute/path/to/reviewed-wheels \
-  'sciver==0.1.0' 'tm-observer==0.1.0'
+  'sciver==0.1.1' 'tm-observer==0.1.1'
 sciver --help
 tm-observer --help
 sciver smoke
@@ -26,11 +26,11 @@ fake backend. Continue with [First use](first-use.md) or
 empty graph, then configure an account before starting real model calls.
 Running these wheels does not require a source checkout or Node.js. The two
 base wheels support offline preparation and viewing. Before real research,
-install the SDK extra (`python -m pip install 'sciver[sdk]==0.1.0'`) and a
+install the SDK extra (`python -m pip install 'sciver[sdk]==0.1.1'`) and a
 supported Codex CLI. The extra downloads model-client dependencies, including
 `openai-codex` and `mcp`; CLI login alone does not install them. For a fully
 offline deployment, supply those dependency wheels in the reviewed wheel
-directory and install with `--no-index --find-links` and `sciver[sdk]==0.1.0`.
+directory and install with `--no-index --find-links` and `sciver[sdk]==0.1.1`.
 
 ## Verify release artifacts
 

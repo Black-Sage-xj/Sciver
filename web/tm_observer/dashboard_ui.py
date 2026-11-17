@@ -8,14 +8,7 @@ from __future__ import annotations
 
 import html
 
-THEME_BOOTSTRAP_SCRIPT = """<script data-sciver-theme-bootstrap>
-(function() {
-  "use strict";
-  let theme="black";
-  try { if(window.localStorage.getItem("sciver-theme-v1")==="blue")theme="blue"; } catch(_err) {}
-  document.documentElement.setAttribute("data-sciver-theme",theme);
-})();
-</script>"""
+from .appearance_ui import LIGHT_STYLE, THEME_BOOTSTRAP_SCRIPT
 
 STYLE = """
 <style>
@@ -441,6 +434,23 @@ a.tm-explore-map:focus-visible { outline:2px solid #93c5fd; outline-offset:3px; 
 .tm-tui-cycle-edit:hover { background:#333338; }
 
 .tm-tui-summary-extra { color:#e4e4e7; margin:7px 0 0; padding:8px 3px; font-size:12px; white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.55; }
+.tm-runtime-notice { --notice-accent:#93c5fd; margin-top:12px; padding:12px 15px;
+  border:1px solid var(--tm-border); border-left:3px solid var(--notice-accent);
+  border-radius:9px; background:var(--tm-hover); color:var(--tm-text); min-width:0; }
+.tm-runtime-notice[data-tone="warning"] { --notice-accent:#fcd34d; }
+.tm-runtime-notice[data-tone="error"] { --notice-accent:#fda4af; }
+.tm-runtime-notice > strong { color:var(--notice-accent); font-size:12px; }
+.tm-runtime-notice > p { margin:5px 0 0; font-size:12px; line-height:1.65; color:var(--tm-muted); }
+.tm-runtime-notice details { margin-top:8px; }
+.tm-runtime-notice .tm-runtime-records { margin-top:8px; font-size:11px; padding:4px 8px; }
+.tm-runtime-notice summary,.tm-runtime-diagnostics > summary { cursor:pointer; font-size:11px; color:var(--tm-muted); }
+.tm-runtime-notice dl { display:grid; grid-template-columns:110px minmax(0,1fr); gap:8px 12px; margin:12px 0 0; }
+.tm-runtime-notice dt { color:var(--tm-muted); font-size:11px; }
+.tm-runtime-notice dd { margin:0; min-width:0; font-size:11px; line-height:1.65; }
+.tm-runtime-notice code { white-space:pre-wrap; overflow-wrap:anywhere; }
+.tm-runtime-diagnostics { margin-top:10px; }
+@media(max-width:600px) { .tm-runtime-notice dl { grid-template-columns:minmax(0,1fr); gap:4px; }
+  .tm-runtime-notice dd + dt { margin-top:8px; } }
 .tm-tui-summary-details { background:#242015; border:1px solid #5b471e; border-radius:8px; padding:8px 11px; margin:9px 0 0; color:#fcd9a1; }
 .tm-tui-summary-details > summary { font-size:11px; cursor:pointer; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .tm-tui-workflow-title { margin:12px 0 8px; padding-top:12px; border-top:1px solid var(--tm-border); }
@@ -1139,7 +1149,7 @@ body.stage-height-focus .tm-content { padding:0; max-width:none; }
   .tm-content .stage-preview-head { padding:14px; }
 }
 
-/* Workspace-wide appearance preference. Both palettes share one layout. */
+/* Workspace-wide appearance preference. All palettes share one layout. */
 html[data-sciver-theme="black"] {
   --tm-bg:#09090b; --tm-panel:#101013; --tm-side:#0c0c0e;
   --tm-hover:#1b1b1f; --tm-border:#27272a; --tm-text:#fafafa;
@@ -1167,7 +1177,7 @@ html[data-sciver-theme="blue"] .tm-content .stage-canvas { background:#061226; }
 .tm-appearance-panel select { min-width:170px; max-width:100%; padding:9px 12px; border:1px solid var(--tm-border); border-radius:8px; color:var(--tm-text); background:var(--tm-panel); }
 .tm-appearance-panel select:focus-visible { outline:2px solid var(--tm-accent); outline-offset:2px; }
 </style>
-"""
+""" + LIGHT_STYLE
 
 _ICONS = {
     "research_chat": '<path d="M4 5h16v11H9l-5 4V5z"/><path d="M8 9h8M8 12h5"/>',
@@ -1410,9 +1420,10 @@ def dashboard_shell(title: str, body: str, active: str = "workflow", *,
   "use strict";
   const key="sciver-theme-v1";
   const picker=document.querySelector("[data-sciver-theme-picker]");
-  const active=()=>document.documentElement.getAttribute("data-sciver-theme")==="blue"?"blue":"black";
+  const valid=theme=>["black","blue","white"].includes(theme)?theme:"black";
+  const active=()=>valid(document.documentElement.getAttribute("data-sciver-theme"));
   function apply(theme) {{
-    const next=theme==="blue"?"blue":"black";
+    const next=valid(theme);
     document.documentElement.setAttribute("data-sciver-theme",next);
     if(picker)picker.value=next;
   }}
@@ -1424,7 +1435,7 @@ def dashboard_shell(title: str, body: str, active: str = "workflow", *,
     }});
   }}
   window.addEventListener("storage",event=>{{
-    if(event.key===key)apply(event.newValue);
+    if(event.key===key || event.key===null)apply(event.newValue);
   }});
 }})();
 </script>{BELL_SCRIPT}{chat_widget}</body></html>"""

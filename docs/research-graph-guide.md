@@ -63,6 +63,8 @@ Research Lead maintains the frontier, Judge adjudicates scientific claims, the S
 
 ## 6. A reading sequence
 
+The right reader separates **Hypothesis** (claim and conditions) from **Research conclusions** (per-Cycle verdict, basis, scope, and open questions). Each Cycle has one **Read research report** entry. The report reuses the overview and includes the narrative, folded original adjudication and reproduction index. Supplementary documents can be embedded by section with their sources and frozen versions. The directory supports section reads; Agents read the same content through `report-read`. Old report links resolve to this report.
+
 1. Click a frontier state at the top to open the branch list and locate an H.
 2. Click its upper half to read the proposition, conditions, and test criteria.
 3. Click its lower half to inspect each Cycle's frozen test, Judge rationale, findings, questions, and boundaries; then open the full Markdown report.

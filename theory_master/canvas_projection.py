@@ -333,6 +333,7 @@ class CanvasProjectionMixin:
                         evidence_refs=list(outcome_record.get("evidence_refs") or []),
                         report_ref=str(outcome_record.get("report_ref") or "") or None,
                         graph_summary=outcome_record.get("graph_summary"),
+                        report_context=outcome_record.get("report_context"),
                         record_only=bool(outcome_record.get("record_only", True)),
                     )
                     cycle_outcome = next(

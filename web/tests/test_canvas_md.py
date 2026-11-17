@@ -23,6 +23,36 @@ from tm_observer.web import ThreadingHTTPServer, make_handler
 
 
 class CanvasMDTests(unittest.TestCase):
+    def test_unified_cycle_report_is_read_only_and_old_document_links_resolve(self):
+        from theory_master.science_graph_store import ScienceGraphStore
+        database = self.notebook / "science_graph.sqlite3"
+        body = "## Main results\nA specific bounded result.\n\n## Interpretation\nNecessary limitations."
+        with ScienceGraphStore(database) as store:
+            store.add_hypothesis("H-0042")
+            store.append_outcome(outcome_id="old-1", hypothesis_id="H-0042", cycle_id="1",
+                verdict="supported", title="One research report", summary=body,
+                judge_rationale="A frozen comparison", report_ref="notes/detail", record_only=True,
+                report_context={"schema": "theory-master/research-report/v1", "body": body, "documents": []})
+        before = database.read_bytes(), (self.notebook / "notes/detail.md").read_bytes()
+        route = f"/api/canvas-md/tasks/{self.ident}/report"
+        raw, status = canvas_md_get(route, "cycle=1", self.repo, self.state)
+        report = json.loads(raw)
+        self.assertEqual(status, 200)
+        self.assertNotIn("report_context", build_index(self.notebook)["nodes"][0]["semantic"]["cycle_outcomes"][0])
+        self.assertEqual(report["title"], "One research report")
+        self.assertEqual(report["content"].count("A specific bounded result."), 1)
+        self.assertIn('class="research-adjudication"', report["content"])
+        self.assertIn("A frozen comparison", report["content"])
+        selected, _ = canvas_md_get(route, "cycle=1&section=main-results", self.repo, self.state)
+        self.assertIn("A specific bounded result.", json.loads(selected)["content"])
+        self.assertNotIn("Necessary limitations", json.loads(selected)["content"])
+        alias = read_document(self.notebook, "notes/detail.md")
+        self.assertEqual(alias["report_cycle"], "1")
+        with self.assertRaises(ExplorerError) as missing:
+            canvas_md_get(route, "cycle=2", self.repo, self.state)
+        self.assertEqual(missing.exception.status, 404)
+        self.assertEqual((database.read_bytes(), (self.notebook / "notes/detail.md").read_bytes()), before)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

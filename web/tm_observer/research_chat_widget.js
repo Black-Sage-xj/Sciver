@@ -54,6 +54,14 @@
   const $=id=>document.getElementById(id), panel=$('sc-chat-panel'), launcher=$('sc-chat-launcher'),
     frame=$('sc-chat-frame'), loading=$('sc-chat-loading'), retry=$('sc-chat-retry'), startOver=$('sc-chat-start-over'), full=$('sc-chat-full'), max=$('sc-chat-maximize');
   const params=new URLSearchParams(location.search), routeTask=location.pathname.match(/^\/run\/([a-f0-9]{16})\//)?.[1];
+  const syncFrameTheme=()=>{
+    try {
+      frame.contentDocument?.documentElement.setAttribute('data-sciver-theme',
+        document.documentElement.getAttribute('data-sciver-theme')||'black');
+    } catch (_) {}
+  };
+  new MutationObserver(syncFrameTheme).observe(document.documentElement,
+    {attributes:true,attributeFilter:['data-sciver-theme']});
   const task=params.get('observer_id') || routeTask || root.dataset.taskId || '';
   const context=/^[a-f0-9]{16}$/.test(task)?task:'';
   const contextKey='sciver-chat-session-v1:'+context, openKey='sciver-chat-open-v1', geometryKey='sciver-chat-geometry-v1';
@@ -109,6 +117,7 @@
   retry.addEventListener('click',load);
   startOver.addEventListener('click',()=>{ currentSession='';store('sessionStorage',contextKey,'');load(); });
   frame.addEventListener('load',()=>{
+    syncFrameTheme();
     clearTimeout(loadTimer);
     let valid=false;
     try { valid=Boolean(frame.contentDocument.querySelector('.tm-chat-embedded .tm-research-chat')); } catch (_) {}

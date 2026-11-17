@@ -77,7 +77,7 @@ function ensureOverviewColorToggle(){
   const toolbar=$('ex-zoom-percent')?.parentElement;
   button.style.cssText=(toolbar?'':'position:absolute;top:55px;left:12px;z-index:8;')+
     'padding:6px 10px;border:1px solid #596579;border-radius:7px;'+
-    'background:#1c2432;color:#eef2fa;font:600 12px system-ui;'+
+    'font:600 12px system-ui;'+
     'cursor:pointer;box-shadow:0 3px 12px #0008';
   const refresh=()=>{
     button.textContent='远景颜色：'+(overviewColorMode==='frontier'?'前沿':'结论')+' ⇄';
@@ -330,7 +330,13 @@ function abbreviate(s,maxUnits=32){
 }
 function sourceTypeColor(edge){
   const node=index?.nodes.find(n=>n.id===edge.fromNode);
-  return (palette[knownType(node||{})]||palette.Unknown).line;
+  const style=palette[knownType(node||{})]||palette.Unknown;
+  return lightGraph()?style.fill:style.line;
+}
+const lightGraph=()=>document.documentElement?.getAttribute('data-sciver-theme')==='white';
+function edgeWidth(base,highlighted){
+  // Keep branches readable in the full-tree overview (often 10–15% zoom).
+  return Math.max(base,(highlighted?2.2:1.15)/safeZoom());
 }
 function inputColorMap(target){
   const input=(index?.edges||[]).filter(e=>e.toNode===target)
@@ -577,48 +583,40 @@ function outcomeTime(outcome){
   if(outcome.recorded_at)return '记录时间 · '+compactTime(outcome.recorded_at);
   return '裁决时间未记录';
 }
+function readerVerdict(outcome){
+  const kind=normalizedOutcomeKind(outcome);
+  const labels={supported:'支持',rejected:'反驳',open:'尚无法判定',
+    unadjudicated:'未裁决',legacy:'历史记录'};
+  return '<span class="ex-verdict" data-verdict="'+esc(kind||'none')+'">'+
+    esc(labels[kind]||'未标记')+'<small>'+esc(outcomeVerdictLabel(outcome))+'</small></span>';
+}
+function readerDocumentButton(ref,label){
+  return ref?'<button type="button" class="ex-ref ex-document-link" data-ref="'+esc(uri('doc',ref))+'">'+
+    esc(label)+' <span aria-hidden="true">↗</span></button>':'';
+}
 function outcomeDetailsHtml(outcomes){
   const records=Array.isArray(outcomes)?outcomes.filter(hasRecordedOutcome):[];
-  if(!records.length)return '';
-  const facts=(heading,items)=>Array.isArray(items)&&items.length?
-    '<h4>'+esc(heading)+'</h4><ul>'+items.map(s=>'<li>'+esc(s)+'</li>').join('')+'</ul>':'';
   const guideHtml=guide=>guide?'<section class="ex-outcome-guide">'+
-    mdHtml(guide.conclusion||'',null)+
-    [['basis','关键依据'],['scope','适用范围'],['open_question','本节点未决问题']]
-      .filter(([key])=>guide[key]).map(([key,label])=>'<p><strong>'+label+'：</strong></p>'+
-        mdHtml(guide[key],null)).join('')+'</section>':'';
-  const detail=outcome=>'<details'+(outcome===records[records.length-1]?' open':'')+
-    '><summary>Cycle '+esc(outcome.cycle_id)+' · '+esc(outcomeVerdictLabel(outcome))+'</summary>'+
-    '<p class="muted">'+esc(outcomeTime(outcome))+'</p>'+
+    '<div class="ex-conclusion ex-md">'+mdHtml(guide.conclusion||'',null)+'</div>'+
+    '<dl class="ex-guide-facts">'+[['basis','关键依据'],['scope','适用范围'],['open_question','未决问题']]
+      .filter(([key])=>guide[key]).map(([key,label])=>'<div><dt>'+label+'</dt><dd class="ex-md">'+
+        mdHtml(guide[key],null)+'</dd></div>').join('')+'</dl></section>':'';
+  const detail=outcome=>'<details class="ex-cycle-result"'+(outcome===records[records.length-1]?' open':'')+
+    '><summary><span class="ex-cycle-label">Cycle '+esc(outcome.cycle_id)+'</span>'+readerVerdict(outcome)+'</summary>'+
+    '<div class="ex-result-body"><p class="ex-result-time">'+esc(outcomeTime(outcome))+'</p>'+
+    (outcome.review_state==='unadjudicated'||outcome.verdict==='unadjudicated'?
+      '<p class="ex-reader-notice">阶段性研究记录 · 执行未完成，尚无 Judge 科学裁决。</p>':'')+
     guideHtml(outcome.graph_summary)+
-    (outcome.graph_summary?'<details class="ex-outcome-record"><summary>裁决与完整科学记录</summary>':'')+
-    (outcome.source_timestamps?.length?
-      '<p class="muted">原始来源时间：'+outcome.source_timestamps.map(esc).join(' · ')+'</p>':'')+
-    (outcome.summary?'<div class="ex-md">'+mdHtml(outcome.summary,null)+'</div>':'')+
-    (outcome.decisive_test?'<p><strong>冻结检验：</strong>'+esc(outcome.decisive_test)+'</p>':'')+
-    (outcome.review_state==='unadjudicated'?
-      '<p class="muted">此记录属于本猜想的阶段性科研保全，不是 Judge 科学裁决；研究执行未完成。</p>':'')+
-    (outcome.prior_judge_objection?'<p><strong>此前 Judge 返工要求（未完成）：</strong>'+
-      esc(outcome.prior_judge_objection)+'</p>':'')+
-    (outcome.judge_rationale?'<p><strong>裁决理由：</strong>'+esc(outcome.judge_rationale)+'</p>':'')+
-    facts('确立的科学认识',outcome.findings)+
-    facts('尚未解决的问题',outcome.open_questions)+
-    facts('适用范围与限制',outcome.boundary)+
-    (Array.isArray(outcome.evidence_refs)&&outcome.evidence_refs.length?
-      '<p class="muted">Evidence ID（仅编号，具体证据请查阅科研证据登记记录）：'+
-      outcome.evidence_refs.map(esc).join(' · ')+'</p>':'')+
-    (outcome.graph_summary?'</details>':'')+
-    (outcome.document_ref?'<p><button class="ex-ref" data-ref="'+esc(uri('doc',outcome.document_ref))+
-      '">阅读本 Cycle Outcome 文档 →</button></p>':
-      outcome.unavailable_document_ref?'<p class="muted">Cycle Outcome 文档尚不可读取：'+
-        esc(outcome.unavailable_document_ref)+'</p>':'')+
-    (outcome.report_ref?'<p><button class="ex-ref" data-ref="'+esc(uri('doc',outcome.report_ref))+
-      '">阅读原始科研报告 →</button></p>':
-      outcome.unavailable_report_ref?'<p class="muted">原始报告引用不可读取：'+
-        esc(outcome.unavailable_report_ref)+'</p>':'')+'</details>';
-  return '<section class="ex-section ex-outcome-details" id="ex-outcome-details"><h3>Cycle Outcomes · '+
-    esc(records.length)+'</h3><p class="muted">包含 Judge 科学裁决与未裁决的阶段性保全；两者不得混同。</p>'+
-    records.map(detail).join('')+'</section>';
+    (!outcome.graph_summary?'<p class="ex-legacy-preview">'+esc(String(outcome.summary||outcome.judge_rationale||'概览尚未记录。').slice(0,360))+
+      (String(outcome.summary||'').length>360?'…':'')+'</p>':'')+
+    '<div class="ex-reader-documents">'+
+    '<button type="button" class="ex-ref ex-document-link" data-ref="'+esc(uri('report',outcome.cycle_id))+'">'+
+    '阅读研究报告 <span aria-hidden="true">↗</span></button></div></div></details>';
+  return '<section class="ex-reader-card ex-outcome-details" id="ex-outcome-details" aria-labelledby="ex-results-title">'+
+    '<header class="ex-reader-section-head"><span class="ex-section-number" aria-hidden="true">02</span><div>'+
+    '<h3 id="ex-results-title">研究结论 <span class="ex-result-count">'+records.length+' 轮</span></h3>'+
+    '<p>每轮检验得到了什么</p></div></header>'+
+    (records.length?records.map(detail).join(''):'<p class="ex-reader-empty">尚无本轮结论，等待研究与裁决。</p>')+'</section>';
 }
 // Highlight exactly two outgoing scientific hops within the visible graph.
 // Provenance/reference links never invent successors or extend the hop count.
@@ -703,7 +701,8 @@ function g6Data(layoutBase=false){
       ...portFor(outgoing.get(n.id),'out',height)]};
     return {id:n.id,type:'rect',data:nodeData,style:{
       size:nodeStyle.size,radius:10,zIndex:100,fill:nodeFill(n),fillOpacity:1,
-      stroke:isTarget?'#ffffff':isEdgeEndpoint?'#fde68a':isDownstream?'#a5f3fc':
+      stroke:lightGraph()?(isTarget?'#1d4ed8':isEdgeEndpoint?'#92400e':
+        isDownstream||isSource?'#0e7490':style.fill):isTarget?'#ffffff':isEdgeEndpoint?'#fde68a':isDownstream?'#a5f3fc':
         isSource?'#67e8f9':semantic.frontier_status==='active'?'#bfdbfe':style.line,
       lineWidth:isTarget?4:isEdgeEndpoint?3.8:isDownstream?3.6:isSource?3.1:
         semantic.frontier_status==='active'?2.8:1.8,
@@ -722,21 +721,24 @@ function g6Data(layoutBase=false){
     const highlighted=active||isIncoming||isDownstream||isHovered;
     const dim=!!(target||selectedEdge)&&!highlighted;
     const type=isScientificEdge(e);
-    const bright=isHovered?'#7dd3fc':active?'#fef08a':isIncoming?(traceColor.get(key)||'#67e8f9'):
+    const bright=lightGraph()?(isHovered?'#1d4ed8':active?'#92400e':
+      isIncoming?(traceColor.get(key)||'#0e7490'):isDownstream?'#0e7490':type?'#64748b':'#7c8594'):
+      isHovered?'#7dd3fc':active?'#fef08a':isIncoming?(traceColor.get(key)||'#67e8f9'):
       isDownstream?'#67e8f9':type?'#e2e8f0':'#cbd5e1';
+    const baseLineWidth=isHovered?6:active?5:isDownstream?4.4:isIncoming?4.1:dim?2.4:type?3.3:3;
     return {
       id:key,source:e.fromNode,target:e.toNode,
-      data:{sourceEdge:e},
+      data:{sourceEdge:e,baseLineWidth,highlighted},
       style:{sourcePort:'out:'+key,targetPort:'in:'+key,
         // All relations are solid. Directional selection brightens successors,
         // while an explicitly clicked edge gets a separate gold accent.
         stroke:bright,
-        lineWidth:isHovered?6:active?5:isDownstream?4.4:isIncoming?4.1:dim?2.4:type?3.3:3,
+        lineWidth:edgeWidth(baseLineWidth,highlighted),
         lineDash:[],endArrow:true,
-        opacity:highlighted?1:dim?.28:1,
+        opacity:highlighted?1:dim?(lightGraph()?.55:.28):1,
         zIndex:isHovered?24:active?20:isDownstream?12:isIncoming?11:1,
         router:{type:'orth',padding:18},
-        shadowBlur:highlighted?active?16:10:0,
+        shadowBlur:!lightGraph()&&highlighted?active?16:10:0,
         shadowColor:highlighted?bright:'transparent',
         cursor:'pointer',increasedLineWidthForHitTesting:12}
     };
@@ -748,7 +750,7 @@ function g6Data(layoutBase=false){
 // PDF-reader style "previous view" history: store only completed navigation actions.
 // Free panning, pinching, hovering, scrolling are captured with the current view but
 // NEVER create new history entries. State is private to this browser tab/task.
-const trail=[];let trailIndex=-1,historySerial=-1,restoring=false,navSerial=0;
+const trail=[];let trailIndex=-1,historySerial=-1,restoring=false,navSerial=0,docOriginView=null;
 function captureView(){
   let camera=null;
   if(graphReady&&graph){
@@ -996,7 +998,7 @@ function repaintHoveredEdges(previous){
   if(!graphReady||!graph)return;
   const ids=new Set([previous,hoveredEdge]);
   const edges=g6Data(true).edges.filter(e=>ids.has(e.id));
-  if(edges.length){graph.updateEdgeData(edges.map(({id,style})=>({id,style})));
+  if(edges.length){graph.updateEdgeData(edges.map(({id,data,style})=>({id,data,style})));
     Promise.resolve(graph.draw()).catch(e=>showError(e.message));}
 }
 function closeEdgeMenu(){
@@ -1210,8 +1212,14 @@ function updateZoomLabels(){
     if(Object.entries(next).some(([key,value])=>n.style?.[key]!==value))
       changes.push({id:n.id,style:next});
   }
-  if(changes.length){
-    graph.updateNodeData(changes);
+  const edgeChanges=[];
+  for(const e of graph.getEdgeData()){
+    const lineWidth=edgeWidth(e.data.baseLineWidth,e.data.highlighted);
+    if(e.style.lineWidth!==lineWidth)edgeChanges.push({id:e.id,style:{lineWidth}});
+  }
+  if(changes.length||edgeChanges.length){
+    if(changes.length)graph.updateNodeData(changes);
+    if(edgeChanges.length)graph.updateEdgeData(edgeChanges);
     Promise.resolve(graph.draw()).catch(err=>showError('缩放标签更新失败：'+err.message));
   }
 }
@@ -1262,7 +1270,7 @@ async function updateSelectionWithoutLayout(opts={}){
     await renderGraph({...opts,focus:opts.focus&&selected?.kind==='node'?selected.id:null});return;
   }
   graph.updateNodeData(next.nodes.map(({id,style})=>({id,style})));
-  graph.updateEdgeData(next.edges.map(({id,style})=>({id,style})));
+  graph.updateEdgeData(next.edges.map(({id,data,style})=>({id,data,style})));
   await graph.draw(); // Only paint styles: NEVER re-run Dagre on a node click.
   await syncElementVisibility();
   if(opts.focus&&selected?.kind==='node')await graph.focusElement(selected.id,
@@ -1433,13 +1441,15 @@ function resolve(target,source){
 function mdHtml(text,source){
   if(!window.marked||!window.DOMPurify)return '<pre>'+esc(text)+'</pre>';
   const math=[];
-  let protectedText=text.replace(/(\$\$[\s\S]*?\$\$|(?<!\\)\$(?!\$)[^\n$]+(?<!\\)\$)/g,raw=>{
+  let protectedText=text.replace(/(```[\s\S]*?```|~~~[\s\S]*?~~~|`+[^`\n]*`+)|(\$\$[\s\S]*?\$\$|(?<!\\)\$(?!\$)[^\n$]+(?<!\\)\$)/g,(raw,code)=>{
+    if(code)return code;
     const block=raw.startsWith('$$');math.push({value:raw.slice(block?2:1,block?-2:-1),block});
     return 'TMKATEXPLACEHOLDER'+(math.length-1)+'END';
   });
   protectedText=protectedText.replace(/(```[\s\S]*?```|~~~[\s\S]*?~~~|`+[^`\n]*`+)|!\[\[([^\]\n]+)\]\]/g,(full,code,link)=>{
     if(code)return code;
     const [target,label]=link.split('|'),width=/^\d{1,4}$/.test(label||'')?Number(label):null;
+    if(target.split('#')[0].toLowerCase().endsWith('.md'))return '[['+link+']]';
     return '<img src="'+esc(target)+'" alt="'+esc(width?target:(label||target))+
       '" data-vault-image="1"'+(width?' width="'+width+'"':'')+'>';
   });
@@ -1451,6 +1461,9 @@ function mdHtml(text,source){
   const result=window.DOMPurify.sanitize(window.marked.parse(protectedText));
   const doc=new DOMParser().parseFromString('<div id="parsed">'+result+'</div>','text/html');
   const wrap=doc.getElementById('parsed');
+  if(window.Prism)wrap.querySelectorAll('pre code[class*="language-"]').forEach(code=>{
+    window.Prism.highlightElement(code);
+  });
   wrap.querySelectorAll('img').forEach(img=>{
     const raw=img.getAttribute('src')||'';
     if(!/^https?:\/\//i.test(raw)){
@@ -1528,11 +1541,54 @@ function nodeHeaderDisclosure(fields){
       ':</span> <span class="ex-node-tag-value">'+esc(field.value)+'</span></div>'
     ).join('')+'</div></details>';
 }
+function withoutRepeatedTitle(body,title){
+  const heading=/^(\s*(?:<!--[\s\S]*?-->\s*)*)# ([^\n]+)\n?/.exec(body);
+  return heading&&heading[2].trim()===String(title).trim()?
+    heading[1]+body.slice(heading[0].length):body;
+}
+function hypothesisReaderHtml(node,header,timeLine,key){
+  const sem=node.semantic||{};
+  const summary=sem.hypothesis_summary;
+  // Only the SDK's explicit claim/conditions format is split; legacy prose is
+  // kept intact. The raw Markdown and scientific records remain unchanged.
+  const parts=typeof summary==='string'&&/^主张：([\s\S]+)；条件：([\s\S]+)；状态：[^\n]+。$/.exec(summary);
+  const body=parts?'<dl class="ex-hypothesis-facts"><div><dt>主张</dt><dd class="ex-md">'+
+    mdHtml(parts[1],null)+'</dd></div><div><dt>适用条件</dt><dd class="ex-md">'+
+    mdHtml(parts[2],null)+'</dd></div></dl>':
+    '<div class="ex-md">'+mdHtml(typeof summary==='string'?summary:
+      withoutRepeatedTitle(header.body,node.label),null)+'</div>';
+  const frontier=hypothesisFrontier(sem);
+  const branchLabels={active:'继续研究',parked:'暂缓研究',closed:'研究已收束',unknown:'未标记'};
+  const branchReasons=(sem.frontiers||[]).filter(f=>f.reason);
+  const whole=sem.whole_h_assessment;
+  const assessment=['supported','rejected','open'].includes(sem.scientific_status)&&
+    sem.legacy_identity_review?.status!=='unadjudicated_whole_h'&&whole&&hasRecordedOutcome(whole)?
+    '<div class="ex-whole-assessment">整体猜想裁决 '+readerVerdict(whole)+'</div>':
+    '<p class="ex-assessment-note">整体猜想尚无单独裁决，各轮结果见下方。</p>';
+  const dossier=sem.dossier_ref?readerDocumentButton(sem.dossier_ref,'查看完整猜想文档'):
+    '<p class="ex-reader-empty">暂未关联可读取的猜想文档。</p>';
+  const outcomes=sem.cycle_outcomes?.length?sem.cycle_outcomes:
+    (sem.outcome&&String(sem.outcome.cycle_id??'').trim()?[sem.outcome]:[]);
+  return '<section class="ex-reader-card ex-hypothesis-details" id="ex-hypothesis-details" aria-labelledby="ex-hypothesis-title">'+
+    '<header class="ex-reader-section-head"><span class="ex-section-number" aria-hidden="true">01</span><div>'+
+    '<h3 id="ex-hypothesis-title">猜想</h3><p>这项研究要检验什么</p></div></header>'+
+    '<h2 class="ex-hypothesis-title">'+esc(node.label)+'</h2>'+timeLine+body+
+    '<div class="ex-reader-documents">'+dossier+'</div></section>'+
+    outcomeDetailsHtml(outcomes)+
+    '<details class="ex-reader-context"><summary>研究分支 · '+esc(branchLabels[frontier])+'</summary>'+
+    '<p class="muted">记录后续研究安排与收束原因。</p>'+
+    (branchReasons.length?branchReasons.map(f=>'<p><strong>'+esc(branchLabels[f.status]||f.status)+
+      '</strong> · '+esc(f.reason)+'</p>').join(''):'<p class="muted">暂无分支原因记录。</p>')+'</details>'+
+    '<details class="ex-reader-context ex-reader-sources"><summary>引用与节点信息</summary>'+assessment+nodeHeaderDisclosure(header.fields)+
+    (sem.lineage_summary?'<div class="ex-md">'+mdHtml(sem.lineage_summary,null)+'</div>':'')+
+    outbound(key)+refsBlock(key)+'</details>';
+}
 async function navigate(kind,id,anchor='',options={}){
   if(!index)return;
   if(kind==='node'&&!index.nodes.some(n=>n.id===id))return;
   if(kind==='edge'&&!index.edges.some(e=>ID(e.id||e.fromNode+'->'+e.toNode)===id))return;
   const request=++navSerial;
+  if(['doc','report'].includes(kind)&&!['doc','report'].includes(selected?.kind))docOriginView=captureView();
   if(options.record!==false)rememberBefore();
   selected={kind,id,anchor};
   const key=uri(kind,id);
@@ -1550,18 +1606,11 @@ async function navigate(kind,id,anchor='',options={}){
         compactTime(m.timestamp||sourceHeaderTime):'');
     const timeLine=when?'<div class="ex-node-time">'+esc(when)+'</div>':'';
     const estimatedNote=timeEstimate?'<p class="muted">'+esc(timeEstimate.note)+'</p>':'';
-    const identityNote=m.legacy_identity_review?.status==='unadjudicated_whole_h'
-      ?'<p class="muted">历史身份待核验：当前整体 Open 仅为迁移占位，并非 Judge 对整个 H 的科学裁决；保留下方各 Cycle 原始结论。</p>':'';
-    const dossierButton=knownType(node)==='Hypothesis'?
-      (m.dossier_ref?
-        '<div class="ex-section"><button class="ex-ref" data-ref="'+esc(uri('doc',m.dossier_ref))+'">查看完整猜想文档 →</button></div>':
-        '<p class="muted">当前无法关联到可读取的猜想档案'+
-        (m.unavailable_dossier_ref?'（数据库登记的文件路径不可读取）':'（请检查后台服务版本、文档索引及文件同步）')+'；这不代表猜想原文不存在。</p>') : '';
-
-    reader.innerHTML='<h2>'+esc(node.label)+'</h2>'+timeLine+
-      nodeHeaderDisclosure(header.fields)+estimatedNote+identityNote+dossierButton+
-      '<div class="ex-md">'+mdHtml(header.body,null)+'</div>'+
-      outcomeDetailsHtml(m.cycle_outcomes?.length?m.cycle_outcomes:(m.outcome?[m.outcome]:[]))+outbound(key)+refsBlock(key);
+    reader.innerHTML=knownType(node)==='Hypothesis'?hypothesisReaderHtml(node,header,timeLine,key):
+      '<h2>'+esc(node.label)+'</h2>'+timeLine+
+      nodeHeaderDisclosure(header.fields)+estimatedNote+
+      '<div class="ex-md">'+mdHtml(withoutRepeatedTitle(header.body,node.label),null)+'</div>'+
+      outbound(key)+refsBlock(key);
     if(options.reveal!==false)revealNode(id);
     await updateSelectionWithoutLayout({focus:options.zoomNode?false:options.focus!==false,
       animateFocus:options.animateFocus===true});
@@ -1572,7 +1621,7 @@ async function navigate(kind,id,anchor='',options={}){
     }
     const linked=(index.references[key]||[]).filter(r=>r.kind==='doc'&&r.id!==m.dossier_ref)
       .sort((a,b)=>Number(b.id.startsWith('nodes/'))-Number(a.id.startsWith('nodes/')))[0];
-    if(linked){
+    if(linked&&knownType(node)!=='Hypothesis'){
       const section=document.createElement('section');section.className='ex-section';
       section.innerHTML='<h3>关联 Markdown</h3><p class="muted">关联文档单独阅读，不合并到当前 Canvas 节点。</p>'+
         '<button class="ex-ref" data-ref="'+esc(uri('doc',linked.id))+'">打开关联文档：'+esc(linked.id)+' →</button>';
@@ -1596,13 +1645,29 @@ async function navigate(kind,id,anchor='',options={}){
     try{
       const doc=await api(base()+'/document?path='+encodeURIComponent(id));
       if(request!==navSerial||selected?.kind!==kind||selected.id!==id)return;
-      reader.innerHTML='<h2>'+esc(doc.title)+'</h2><div class="ex-meta">Markdown · '+
-        esc(doc.id)+'</div><div class="ex-md" data-doc-content="1">'+mdHtml(doc.content,doc.id)+'</div>'+
+      if(doc.report_cycle)return navigate('report',doc.report_cycle,anchor,{...options,record:false});
+      reader.innerHTML='<button class="ex-ref" type="button" data-doc-back="1">← 返回图谱位置</button><h2 class="ex-document-title">'+esc(doc.title)+'</h2><div class="ex-meta">Markdown · '+
+        esc(doc.id)+'</div><div class="ex-md" data-doc-content="1">'+mdHtml(withoutRepeatedTitle(doc.content,doc.title),doc.id)+'</div>'+
         (doc.next_offset!==null&&doc.next_offset!==undefined?
           '<button class="ex-ref" data-doc-more="'+doc.next_offset+'">加载后续 Markdown 内容 ↓</button>':'')+
         outbound(key)+refsBlock(key);
       await updateSelectionWithoutLayout();
     }catch(e){reader.textContent='无法加载：'+e.message}
+  }else if(kind==='report'){
+    try{
+      const doc=await api(base()+'/report?cycle='+encodeURIComponent(id)+'&section='+encodeURIComponent(anchor));
+      if(request!==navSerial||selected?.kind!==kind||selected.id!==id)return;
+      reader.innerHTML='<button class="ex-ref" type="button" data-doc-back="1">← 返回图谱位置</button>'+
+        '<p class="ex-report-kicker">Cycle '+esc(id)+' · '+(doc.adjudication_status==='unadjudicated'?'阶段性研究报告':'研究报告')+'</p>'+
+        '<h2 class="ex-document-title">'+esc(doc.title)+'</h2>'+
+        (anchor?'<button class="ex-ref" data-ref="'+esc(uri('report',id))+'">查看完整报告</button>':'')+
+        '<details class="ex-report-toc"><summary>报告目录 · 按章节阅读</summary><nav aria-label="报告章节">'+
+        (doc.sections||[]).filter(s=>s.level===2).map(s=>'<button class="ex-ref" data-ref="'+
+          esc(uri('report',id)+'#'+s.id)+'">'+esc(s.title)+'</button>').join('')+'</nav></details>'+
+        '<div class="ex-md" data-doc-content="1">'+mdHtml(withoutRepeatedTitle(doc.content,doc.title),doc.id)+'</div>'+
+        (doc.next_offset!==null&&doc.next_offset!==undefined?'<button class="ex-ref" data-report-more="'+doc.next_offset+'">加载后续报告内容 ↓</button>':'');
+      await updateSelectionWithoutLayout();
+    }catch(e){reader.textContent='无法加载研究报告：'+e.message}
   }
   if(request!==navSerial)return;
   reader.scrollTop=0;
@@ -1611,7 +1676,7 @@ async function navigate(kind,id,anchor='',options={}){
       reader.querySelector('.ex-outcome-details'):null;
     if(outcomeTarget)outcomeTarget.scrollIntoView({block:'start'});
     else if(anchor!=='outcome'){
-      const candidates=reader.querySelectorAll('.ex-md h1,.ex-md h2,.ex-md h3,.ex-md h4,.ex-md h5,.ex-md h6');
+      const candidates=reader.querySelectorAll('.ex-md h1,.ex-md h2,.ex-md h3,.ex-md h4,.ex-md h5,.ex-md h6,.ex-hypothesis-title,.ex-document-title');
       const target=Array.from(candidates).find(h=>h.id===anchor||h.textContent.trim()===anchor||
         h.textContent.trim().startsWith(anchor));
       if(target)target.scrollIntoView({block:'start'});
@@ -1621,6 +1686,37 @@ async function navigate(kind,id,anchor='',options={}){
   else if(!restoring)syncBrowserLocation(false);
 }
 reader.addEventListener('click',async e=>{
+  if(e.target.closest('[data-doc-back]')){
+    const origin=docOriginView;
+    if(origin?.taskId===taskId&&origin.selected?.kind){
+      await navigate(origin.selected.kind,origin.selected.id,origin.selected.anchor||'',{focus:false,reveal:false});
+      if(origin.camera&&graph){
+        await graph.zoomTo(origin.camera.zoom,false);
+        await graph.translateTo(origin.camera.position,false);
+        updateZoomLabels();updateSourceRail();
+      }
+      reader.scrollTop=origin.readerScroll||0;
+    }else if(trailIndex>0)await restoreView(-1);
+    else{
+      const related=(index.backlinks[uri('doc',selected?.id)]||[]).find(ref=>ref.kind==='node');
+      const nodeId=related?.id||index.nodes[0]?.id;
+      if(nodeId)await navigate('node',nodeId,'',{focus:false});
+    }
+    return;
+  }
+  const reportMore=e.target.closest('[data-report-more]');
+  if(reportMore&&selected?.kind==='report'){
+    const target={...selected},offset=Number(reportMore.dataset.reportMore);
+    reportMore.disabled=true;
+    try{
+      const page=await api(base()+'/report?cycle='+encodeURIComponent(target.id)+'&section='+encodeURIComponent(target.anchor||'')+'&offset='+offset);
+      if(selected?.kind!=='report'||selected.id!==target.id||selected.anchor!==target.anchor)return;
+      reader.querySelector('[data-doc-content]')?.insertAdjacentHTML('beforeend',mdHtml(page.content,page.id));
+      if(page.next_offset===null||page.next_offset===undefined)reportMore.remove();
+      else{reportMore.dataset.reportMore=String(page.next_offset);reportMore.disabled=false}
+    }catch(err){reportMore.disabled=false;reportMore.textContent='读取失败，点击重试：'+err.message}
+    return;
+  }
   const more=e.target.closest('[data-doc-more]');
   if(more){
     if(selected?.kind!=='doc')return;
@@ -1649,6 +1745,11 @@ function decodeHash(){
   const h=hash.indexOf('#');return {kind:hash.slice(0,i),id:hash.slice(i+1,h<0?undefined:h),
     anchor:h<0?'':hash.slice(h+1)};
 }
+window.addEventListener('hashchange',()=>{
+  const target=decodeHash();
+  if(!index||!target||selected&&target.kind===selected.kind&&target.id===selected.id&&target.anchor===(selected.anchor||''))return;
+  navigate(target.kind,target.id,target.anchor,{record:false,focus:false});
+});
 async function load({fresh=false}={}){
   try{
     const newIndex=await api(base()+'/index'),previous=index;
@@ -1661,7 +1762,7 @@ async function load({fresh=false}={}){
     const hash=decodeHash();
     const hashValid=hash&&((hash.kind==='node'&&index.nodes.some(n=>n.id===hash.id))||
       (hash.kind==='edge'&&index.edges.some(e=>ID(e.id||e.fromNode+'->'+e.toNode)===hash.id))||
-      hash.kind==='doc');
+      ['doc','report'].includes(hash.kind));
     const saved=history.state?.tmExplorerView;
     if(fresh&&!hashValid){
       // A new direct visit or a task switch has no explicit document target.
@@ -1675,7 +1776,7 @@ async function load({fresh=false}={}){
     }else if(saved?.taskId===taskId&&(!saved.selected||
       (saved.selected.kind==='node'&&index.nodes.some(n=>n.id===saved.selected.id))||
       (saved.selected.kind==='edge'&&index.edges.some(e=>ID(e.id||e.fromNode+'->'+e.toNode)===saved.selected.id))||
-      saved.selected.kind==='doc')){
+      ['doc','report'].includes(saved.selected.kind))){
       await restoreSnapshot(saved,history.state?.tmExplorerIndex);
     }else if(hashValid){
       await navigate(hash.kind,hash.id,hash.anchor,{record:false,focus:false});
@@ -1910,4 +2011,9 @@ $('ex-query').addEventListener('input',()=>{
   },250);
 });
 window.addEventListener('DOMContentLoaded',()=>{initPaneControls();load({fresh:true})});
+if(typeof MutationObserver!=='undefined'&&document.documentElement){
+  new MutationObserver(()=>{
+    if(graphReady)updateSelectionWithoutLayout().catch(err=>showError(err.message));
+  }).observe(document.documentElement,{attributes:true,attributeFilter:['data-sciver-theme']});
+}
 })();

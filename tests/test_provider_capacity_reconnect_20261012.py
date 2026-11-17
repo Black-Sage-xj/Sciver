@@ -188,9 +188,9 @@ class ModelCapacityReconnectTests(unittest.TestCase):
                         context_prompt="",handoff_path=str(Path(td)/"item.json"),
                         thread_id=thread.id,model="gpt-6-sol",provider="CodexHTTPS",
                     )
-            self.assertEqual(runner.call_count,3)
+            runner.assert_called_once()
             sleeper.assert_not_called()
-            self.assertEqual(cleared,[thread.id,thread.id])
+            self.assertEqual(cleared,[])
 
     def test_persisted_elapsed_window_expires_before_new_provider_call(self):
         with tempfile.TemporaryDirectory() as td:

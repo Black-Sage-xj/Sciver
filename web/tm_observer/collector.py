@@ -460,6 +460,11 @@ def collect_run(task: TaskLocation | Path) -> dict[str, Any]:
             (research_state, "execution_active", research_source, "fallback"),
         ],
     )
+    qualification_stopped = (research_state.get("status") == "no_qualified_candidate"
+                             and research_state.get("execution_active") is False)
+    if qualification_stopped:
+        execution_active = False
+        provenance["execution_active"] = Fact(False, research_source, "execution_active").provenance()
 
     # Task List aggregates *all* registered Workers, not only the Worker
     # owning the newest numeric Cycle. Otherwise a completed Worker-2 Cycle
@@ -494,6 +499,9 @@ def collect_run(task: TaskLocation | Path) -> dict[str, Any]:
             "field": "verified_worker_identity" if live_worker else "execution_active + process_identity",
             "method": "derived",
         }
+    elif qualification_stopped:
+        state = "NEEDS_ATTENTION"
+        provenance["state"] = Fact(state, research_source, "status", "scientific_status_normalization").provenance()
     elif cycle_status_upper in {"RUNNING", "ACTIVE", "STARTING", "RECOVERING"} and not pid_alive:
         state = "ORPHANED"
         provenance["state"] = {

@@ -3,6 +3,7 @@ from __future__ import annotations
 """Official Codex SDK transport adapter."""
 
 import json
+import hashlib
 import logging
 import os
 import shutil
@@ -961,12 +962,8 @@ class CodexBackend:
             if observed >= int(token_allowance):
                 raise NativeGoalBudgetExceeded(identifier, observed, int(token_allowance))
 
-        # Native blocked is never Investigator's permission to end research.
-        # A bounded automatic re-entry handles accidental self-block while
-        # preserving the same frozen objective and scientific thread; repeating
-        # the fault beyond this guard is an operational failure, not science.
-        premature_block_retries = 0
-        max_premature_block_retries = 2
+        # Native Goal owns its own blocked audit. Re-entering unchanged work
+        # cannot repair an external dependency or a contract conflict.
         while True:
             capacity_error = ""
             terminal_provider_error = ""
@@ -1039,22 +1036,18 @@ class CodexBackend:
                 return identifier, read_goal_findings(goal, Path(handoff_path))
             if goal.status == "blocked" and not capacity_error and not terminal_provider_error:
                 capacity_window.clear()
-                if premature_block_retries < max_premature_block_retries:
-                    premature_block_retries += 1
-                    # A finished logical Goal must be cleared before starting
-                    # another, but the scientific conversation stays intact.
-                    thread._client.thread_goal_clear(thread.id)
-                    capacity_event("NATIVE_GOAL_UNEXPECTED_BLOCK_RETRY",
-                                   retry=premature_block_retries)
-                    continue
-                from .supervisor_incident import NativeGoalRuntimeFailure
-                self.last_native_goal["unexpected_block_retries"] = premature_block_retries
-                self.last_native_goal["runtime_failure_kind"] = "repeated_unexpected_block"
+                from .supervisor_incident import NativeGoalRuntimeFailure, _safe
+                self.last_native_goal.update(
+                    runtime_failure_kind="native_goal_dependency_blocked",
+                    objective_sha256=hashlib.sha256(goal_objective.encode()).hexdigest(),
+                    reported_block_reason=_safe(goal.final_response, 1800),
+                    automatic_reentries=0,
+                )
                 raise NativeGoalRuntimeFailure(
                     thread_id=identifier,
-                    error="Native Goal repeatedly returned unauthorized blocked "
-                          "without a provider error or Investigator budget limit; "
-                          "operational recovery required, not scientific preservation."
+                    error="Native Goal returned blocked without a terminal provider error; "
+                          "SDK dependency or contract diagnosis is required before resuming. "
+                          "No scientific verdict or preservation is authorized.",
                 )
             if goal.status != "blocked" or not capacity_error or provider not in ACCOUNT_PROVIDERS:
                 capacity_window.clear()

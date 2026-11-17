@@ -134,6 +134,15 @@ def _bold_field(text: str, field: str) -> str:
 class ScienceGraphStore:
     """Single-host SQLite canonical graph store; all writes use IMMEDIATE txn."""
 
+    def _report_reference(self, record: dict[str, Any]) -> str:
+        cycle = str(record.get("cycle_id") or "")
+        if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", cycle):
+            canonical = f"notes/outcomes/{cycle}.md"
+            candidate = self.path.parent / canonical
+            if candidate.is_file() and not candidate.is_symlink():
+                return canonical
+        return str(record.get("report_ref") or record.get("document_ref") or "")
+
     def __init__(self, database: str | Path, *, readonly: bool = False,
                  allow_after_goal_seal: bool = False):
         self.path = Path(database)
@@ -565,6 +574,7 @@ class ScienceGraphStore:
                        report_ref: str | None = None,
                        source_decisions: list[dict[str, Any]] | None = None,
                        graph_summary: dict[str, str] | None = None,
+                       report_context: dict[str, Any] | None = None,
                        authorized_revision_reason: str | None = None,
                        record_only: bool = False) -> None:
         """Record a Cycle evaluation, updating the single H Outcome in place.
@@ -587,6 +597,13 @@ class ScienceGraphStore:
             from .outcome_guide import validate_graph_summary
             validate_graph_summary(graph_summary)
             evaluation["graph_summary"] = dict(graph_summary)
+        if report_context is not None:
+            if (not isinstance(report_context, dict)
+                    or report_context.get("schema") != "theory-master/research-report/v1"
+                    or not isinstance(report_context.get("body"), str)
+                    or not isinstance(report_context.get("documents"), list)):
+                raise ValueError("invalid research report context")
+            evaluation["report_context"] = json.loads(json.dumps(report_context, ensure_ascii=False))
         with self.transaction():
             old = self.db.execute(
                 "SELECT source_json FROM cycle_evaluations WHERE id=?",(outcome_id,),
@@ -1255,7 +1272,7 @@ class ScienceGraphStore:
                     refs = [str(ref) for ref in (outcome.get("evidence_refs") or []) if ref]
                     if refs:
                         row["evidence_refs"] = refs[:3]
-                    report_ref = outcome.get("report_ref") or outcome.get("document_ref")
+                    report_ref = self._report_reference(outcome)
                     if report_ref:
                         row["detail_ref"] = str(report_ref)
                     if outcome.get("goal_gate"):
@@ -1291,7 +1308,7 @@ class ScienceGraphStore:
                         summary = clipped(latest.get("summary"), 48)
                         if summary:
                             latest_view["result"] = summary
-                    detail = latest.get("report_ref") or latest.get("document_ref")
+                    detail = self._report_reference(latest)
                     if detail:
                         latest_view["detail_ref"] = str(detail)
                 candidate: dict[str, Any] = {
@@ -1503,7 +1520,7 @@ class ScienceGraphStore:
                     summary = clipped(outcome.get("summary"), 140)
                     if summary:
                         row["summary"] = summary
-                ref = outcome.get("report_ref") or outcome.get("document_ref")
+                ref = self._report_reference(outcome)
                 if ref:
                     row["detail_ref"] = str(ref)
                 compact_outcomes.append(row)
@@ -1617,7 +1634,9 @@ class ScienceGraphStore:
             "claim": str(node.get("summary") or ""),
             "whole_h_assessment": {key: whole.get(key) for key in whole_fields if key in whole},
             "cycle_outcomes": [
-                {key: row.get(key) for key in outcome_fields if key in row}
+                {**{key: row.get(key) for key in outcome_fields if key in row},
+                 "report_ref": self._report_reference(row),
+                 "report_read": {"cycle_id": str(row.get("cycle_id") or ""), "operation": "report-read"}}
                 for row in cycle_rows
             ],
             "frontiers": [{
@@ -1698,7 +1717,7 @@ class ScienceGraphStore:
         raw_refs = record.get("evidence_refs") or []
         refs = [safe_ref(item) for item in raw_refs if isinstance(item, str)] if isinstance(raw_refs, list) else []
         refs = list(dict.fromkeys(item for item in refs if item))
-        report_ref = safe_ref(record.get("report_ref") or record.get("document_ref"))
+        report_ref = safe_ref(self._report_reference(record))
         research_refs: dict[str, str] = {}
         memory_status = None
         if memory is not None:
@@ -1735,6 +1754,7 @@ class ScienceGraphStore:
             "evidence_refs_omitted": (len(raw_refs) - len(refs[:8])) if isinstance(raw_refs, list) else 0,
             "source_sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest() if raw else None,
             "report_ref": report_ref or None,
+            "report_read": {"operation": "report-read", "cycle_id": ident},
             "memory_status": memory_status,
             "research_root_relative_refs": research_refs,
             "research_root_source": "existing research_root Context; never a graph authority",

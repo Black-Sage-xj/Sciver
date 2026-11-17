@@ -33,11 +33,12 @@ def _appearance_settings_panel() -> str:
     return (
         '<section class="tm-task-settings-panel tm-appearance-panel" aria-label="外观设置">'
         '<h2>外观</h2>'
-        '<p class="tm-task-settings-hint">在黑色与深蓝色主题之间切换，立即应用于整个 Web UI。'
+        '<p class="tm-task-settings-hint">在白色、黑色与深蓝色主题之间切换，立即应用于整个 Web UI。'
         '偏好仅保存在当前浏览器，不改变科研任务或其他用户的设置。</p>'
         '<div class="tm-appearance-row">'
         '<label for="sciver-theme-picker">颜色主题</label>'
         '<select id="sciver-theme-picker" data-sciver-theme-picker aria-label="颜色主题">'
+        '<option value="white">白色 · 简洁</option>'
         '<option value="black">黑色 · 经典</option>'
         '<option value="blue">蓝色 · 深海</option>'
         '</select></div></section>'

@@ -86,11 +86,11 @@ Canvas 不是 Workflow 状态板、Evidence Registry、原始数据仓库或完�
 
 ## 5. Reporter 图谱导览与完整报告
 
-Reporter 的当前 `report` 合同为 v4：返回 `title`、完整报告 `summary` 与独立 `graph_summary`，没有 Canvas-writing Stage。导览的四个正文字符串分别为本轮结论 `conclusion`、关键依据 `basis`、必要范围及资料来源身份 `scope`、本节点未决问题 `open_question`（无剩余问题时为空）。合计 900 字符是安全上限而非写作目标，保留判断结论所需的科学细节。
+Reporter 的当前 `report` 合同为 v5：返回 `title`、三节研究正文 `summary` 与独立 `graph_summary`，没有 Canvas-writing Stage。正文从问题与必要条件开始；SDK 在唯一主报告开头复用概览，加入正式裁决、补充材料与复现索引。导览的四个正文字符串分别为本轮结论 `conclusion`、关键依据 `basis`、必要范围及资料来源身份 `scope`、本节点未决问题 `open_question`（无剩余问题时为空）。合计 900 字符是安全上限而非写作目标，保留判断结论所需的科学细节。
 
 - 导览以本轮新增、排除或仍未判明的认识开头；继承知识保留背景身份。关键依据保留决定性数值、区间相对冻结门槛的位置或证明原因；不以核验完成替代科学结论。
 - 完整实验步骤、证据清单、全局研究背景与复现材料通过档案和报告读取。未决问题优先表达本节点缺口，不机械重复整个任务的完整曲线、盲测等目标。
-- SDK 将导览保存到 Cycle Outcome 的 `source_json`，不再从完整报告开头截取新节点导览。Web 的图上短卡片优先呈现结论，点击后显示完整导览，原报告及正式科学记录折叠读取；Canvas 与 Agent 上下文保留导览全部语义字段。图上的短预览本身不是完整科学结论。
+- SDK 将导览保存到 Cycle Outcome 的 `source_json`，不再从完整报告开头截取新节点导览。Web 的图上短卡片优先呈现结论，点击后显示完整导览，每轮只给出一个「阅读研究报告」入口；报告内按章节读取正文，展开正式裁决与固定版本补充文档。Canvas 与 Agent 上下文保留导览全部语义字段。图上的短预览本身不是完整科学结论。
 - 导览不返回或覆盖 ID、Judge verdict、scientific_status、frontier_status、Evidence 引用、谱系、坐标或下一 Cycle 计划。正式科学字段仍来自 Judge、Lead synthesis 和 Evidence。文字润色不扩大局部结论范围。
 - active、parked、closed 均展示已记录的分支原因，未记录时明确标注；整体 H 未评估而本轮已裁决时，展示文案明确区分两者。
 - 历史 Outcome 缺少导览时兼容读取原报告；缓存旧 Reporter 交付可恢复，不自动调用模型生成新解释，也不改写冻结命题、历史报告或裁决。

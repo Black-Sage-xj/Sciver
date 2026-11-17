@@ -109,7 +109,7 @@ def canvas_md_get(
     if len(parts) != 5 or parts[:3] != ["api", "canvas-md", "tasks"]:
         raise ExplorerError("API 不存在", 404)
     observer_id, action = parts[3:]
-    if action not in {"index", "document", "search", "workers"}:
+    if action not in {"index", "document", "report", "search", "workers"}:
         raise ExplorerError("API 不存在", 404)
     root = vault_root(search_root, observer_id, state)
     query = parse_qs(raw_query, keep_blank_values=True)
@@ -118,13 +118,23 @@ def canvas_md_get(
     elif action == "index":
         # Reuse the serialized graph payload as well as the parsed index.
         return build_index_payload(root, observer_id), 200
-    elif action == "document":
+    elif action in {"document", "report"}:
         raw_offset = (query.get("offset") or ["0"])[0]
         try:
             offset = int(raw_offset)
         except (TypeError, ValueError) as exc:
             raise ExplorerError("无效文档分页偏移量", 400) from exc
-        result = read_document(root, (query.get("path") or [""])[0], offset=offset)
+        if action == "document":
+            result = read_document(root, (query.get("path") or [""])[0], offset=offset)
+        else:
+            from theory_master.research_report import read_report
+            try:
+                result = read_report(root / "science_graph.sqlite3", (query.get("cycle") or [""])[0],
+                    section=(query.get("section") or [""])[0], offset=offset, max_chars=1024 * 1024)
+            except KeyError as exc:
+                raise ExplorerError("本轮研究报告不存在", 404) from exc
+            except ValueError as exc:
+                raise ExplorerError(str(exc), 400) from exc
     else:
         result = search_payload(root, (query.get("q") or [""])[0])
     return (json.dumps(result, ensure_ascii=False) + "\n").encode("utf-8"), 200

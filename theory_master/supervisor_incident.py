@@ -7,6 +7,7 @@ redacted. The reviewer never receives write authority through this module.
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from pathlib import Path
 from typing import Any
@@ -135,6 +136,70 @@ def incident_context(cycle_dir: Path, state: dict[str, Any], *, role: str = "") 
         },
         "recovery_action": _safe(recovery.get("action"), 80),
     }
+
+
+def loaded_rule_paths(cycle_dir: Path, state: dict[str, Any]) -> list[Path]:
+    """Resolve observed Skill reads against the SDK whitelist, never log paths."""
+    from .skills import role_skills
+    from .supervisor_incident_session import _incident_chat_config_path
+    recovery = state.get("recovery") or {}
+    native = state.get("native_goal") or {}
+    role = str(recovery.get("role") or "investigator")
+    thread = str(recovery.get("thread_id") or native.get("thread_id")
+                 or (state.get("threads") or {}).get(role) or "")
+    try:
+        config = _incident_chat_config_path(cycle_dir.parent)
+        refs = {ref.directory: ref.skill_md for ref in role_skills(role, task_config_path=config)}
+    except (OSError, ValueError, KeyError):
+        return []
+    names = {str(row.get("skill") or "") for row in _tail(cycle_dir / "runtime_events.jsonl")
+             if row.get("event") == "SKILL_LOADED"
+             and str(row.get("role") or row.get("agent") or "") == role
+             and (not thread or row.get("thread_id") == thread)}
+    return [refs[name] for name in sorted(names) if name in refs]
+
+
+def engineering_evidence(cycle_dir: Path, state: dict[str, Any]) -> dict[str, Any]:
+    """Bounded public science/contract context for diagnosis, never an edit grant."""
+    focus = incident_context(cycle_dir, state)
+    rows = _tail(cycle_dir / "events.jsonl")
+    # Exclude later invocations when inspecting an older failure occurrence.
+    index = next((i for i, row in enumerate(rows) if row.get("type") == "role.started"
+                  and (row.get("payload") or {}).get("invocation_id") == focus["invocation_id"]), None)
+    if index is None:
+        rows = []  # Missing invocation binding is not permission to mix unrelated outputs.
+    else:
+        end = next((i for i in range(index + 1, len(rows))
+                    if rows[i].get("type") == "role.started"), len(rows))
+        rows = rows[:end]
+    outputs = {}
+    for row in rows:
+        payload = row.get("payload") or {}
+        role = payload.get("role")
+        if row.get("type") == "role.completed" and role in {"investigator", "judge", "challenger"}:
+            outputs[role] = _safe(json.dumps(payload.get("output"), ensure_ascii=False), 4500)
+    lock = state.get("hypothesis_lock") or {}
+    frozen = {key: str(lock.get(key) or "") for key in ("hypothesis", "scope", "decisive_test")}
+    rules = []
+    for path in loaded_rule_paths(cycle_dir, state)[:8]:
+        try:
+            if path.is_symlink() or path.stat().st_size > 32_000:
+                continue
+            data = path.read_bytes()
+        except OSError:
+            continue
+        text = data.decode("utf-8", "replace")
+        excerpt = (text if len(text) <= 6000 else
+                   text[:3000] + "\n[... middle omitted ...]\n" + text[-3000:])
+        rules.append({"skill": path.parent.name, "current_sha256": hashlib.sha256(data).hexdigest(),
+                      "current_rule_excerpt": _safe(excerpt, 6200)})
+    return {"schema": "theory-master/engineering-evidence/v1", "incident": focus,
+            "frozen_science": {key: _safe(value, 4500) for key, value in frozen.items()},
+            "frozen_science_sha256": hashlib.sha256(
+                json.dumps(frozen, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
+            "latest_bound_outputs": outputs, "observed_skills_current_rules": rules,
+            "reported_native_block": _safe((state.get("native_goal") or {}).get("reported_block_reason"), 1800),
+            "boundary": "Public records for diagnosis only; clipped text and current rules do not certify historical science or authorize changing it."}
 
 
 class NativeGoalRuntimeFailure(RuntimeError):

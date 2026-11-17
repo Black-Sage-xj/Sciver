@@ -79,6 +79,8 @@ def inputs(root: Path, state: dict) -> str:
     if checkpoint:
         paths.append(Path(str(checkpoint)))
     paths.append(root / str(state.get('cycle_id') or '') / 'recovery_control.json')
+    from .supervisor_incident import loaded_rule_paths
+    paths += loaded_rule_paths(root / str(state.get('cycle_id') or ''), state)
     hashes = {}
     for path in paths:
         if '__pycache__' in path.parts:
@@ -161,6 +163,10 @@ def due(cycle: Path, state: dict, *, at: float | None = None) -> bool:
     if job.get('status') in {'stopped', 'activity_verified'}:
         # A fresh recorded failure occurrence still needs a new review.
         return job.get('input_digest') != inputs(cycle.parent, state)
+    if job.get('dependency_wait'):
+        # The owner still polls cheaply. Time alone cannot make an unchanged
+        # engineering dependency justify another paid diagnosis/edit turn.
+        return job.get('input_digest') != inputs(cycle.parent, state)
     return ((time.time() if at is None else at) >= float(job.get('next_wakeup_epoch') or 0)
             or job.get('input_digest') != inputs(cycle.parent, state))
 
@@ -182,12 +188,18 @@ def finish_action(cycle: Path, state: dict, result: dict) -> dict:
     reason = str(result.get('reason') or result.get('diagnosis') or 'Independent verification pending')[:2000]
     phase = 'resume_authorized' if result.get('action') == 'resume' else 'waiting'
     revision = int(job.get('plan_revision') or 0)
+    validation = (result.get('engineering_skill') or {}).get('validation') or {}
+    dependency_wait = phase != 'resume_authorized' and validation.get('disposition') in {
+        'needs_dependency', 'needs_rule_revision', 'needs_configuration'}
     if phase == 'resume_authorized':
         action, dependency, delay = 'verify_runtime_activity', 'official_runner_launch', BASE_DELAY
     else:
-        validation = (result.get('engineering_skill') or {}).get('validation') or {}
         action = 'prepare_validation' if validation.get('validator') is None and 'validator' in reason.lower() else 'replan'
+        if dependency_wait:
+            action = str(validation['disposition'])
         dependency = reason
+        if dependency_wait:
+            dependency += '\nRequired dependency: ' + str(validation.get('dependency') or '')[:4000]
         delay = min(MAX_DELAY, BASE_DELAY * 2 ** min(revision // RETRY_WINDOW, 6))
         revision += 1
     history = list(job.get('history') or [])
@@ -195,11 +207,12 @@ def finish_action(cycle: Path, state: dict, result: dict) -> dict:
                     'action': job.get('current_action'), 'result': reason,
                     'session_id': result.get('session_id'),
                     'validation': {key: value for key, value in ((result.get('engineering_skill') or {}).get('validation') or {}).items()
-                                   if key in {'phase', 'validator', 'reason', 'evidence_path'}}})
+                                   if key in {'phase', 'validator', 'reason', 'evidence_path', 'disposition', 'dependency'}}})
     job.update(status=phase, owner_pid=None, current_action=action,
                plan_revision=revision, blocking_dependency=dependency,
                next_wakeup_epoch=time.time() + delay, input_digest=inputs(cycle.parent, state),
                history=history[-12:], last_result=reason, resume_session_id=result.get('session_id') if phase == 'resume_authorized' else None)
+    job['dependency_wait'] = dependency_wait
     return save_job(cycle, job)
 
 
@@ -224,4 +237,5 @@ def projection(cycle: Path) -> dict:
     return {key: job.get(key) for key in (
         'recovery_owner', 'status', 'current_action', 'next_wakeup_epoch',
         'blocking_dependency', 'last_verified_progress', 'plan_revision', 'owner_pid')
-    } | {'executing': bool(job.get('status') == 'working' and process_identity_alive(job.get('owner_pid'), job.get('owner_start_ticks')))}
+    } | {'dependency_wait': bool(job.get('dependency_wait')),
+         'executing': bool(job.get('status') == 'working' and process_identity_alive(job.get('owner_pid'), job.get('owner_start_ticks')))}

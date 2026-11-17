@@ -35,6 +35,8 @@ def test_web_projects_guide_and_branch_reason_without_touching_scientific_record
     node = build_index(tmp_path)["nodes"][0]
     assert node["semantic"]["cycle_outcomes"][0]["graph_summary"] == GUIDE
     assert node["semantic"]["cycle_outcomes"][0]["summary"] == "Full report preserved."
+    assert node["semantic"]["hypothesis_summary"] == compose_hypothesis_summary(
+        "The local mean meets the bound", "Historical sample measure")
     assert "整体 H 尚未登记裁决" in node["text"]
     assert "状态：待检验" not in node["text"]
     assert reason in node["text"]
@@ -44,7 +46,7 @@ def test_web_projects_guide_and_branch_reason_without_touching_scientific_record
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="requires Node.js")
-def test_new_guide_leads_split_card_and_full_record_is_folded_but_legacy_stays_readable():
+def test_guide_leads_split_card_and_one_report_entry_replaces_repeated_full_body():
     bootstrap, marker, _ = HARNESS.partition("  onReady();await tick();")
     assert marker
     script = bootstrap + r"""
@@ -64,9 +66,10 @@ def test_new_guide_leads_split_card_and_full_record_is_folded_but_legacy_stays_r
   const html=elements['ex-reader'].innerHTML;
   assert(html.includes('ex-outcome-guide'));
   for(const value of Object.values(guide))assert(html.includes(value));
-  assert(html.indexOf(guide.conclusion)<html.indexOf('FULL REPORT BACKGROUND FIRST'));
-  assert(html.includes('<details class="ex-outcome-record"><summary>'));
-  assert(!html.includes('<details class="ex-outcome-record" open'));
+  assert(!html.includes('FULL REPORT BACKGROUND FIRST'));
+  assert(!html.includes('ex-outcome-record'));
+  assert(html.includes('data-ref="report:1"'));
+  assert.equal((html.match(/阅读研究报告/g)||[]).length,1);
   const card=elements['ex-outcome-cards'].children.find(c=>c.dataset.nodeId==='A');
   assert(card.children[1].children[1].textContent.includes(guide.conclusion));
   assert(!card.children[1].children[1].textContent.includes('FULL REPORT'));

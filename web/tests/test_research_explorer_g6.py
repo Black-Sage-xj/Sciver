@@ -53,7 +53,7 @@ class FakeGraph {
   getNodeData(id){return id?this.data.nodes.find(n=>n.id===id):this.data.nodes}
   getEdgeData(){return this.data.edges}
   updateNodeData(data){for(const n of data){const old=this.getNodeData(n.id);if(old)old.style={...old.style,...n.style}}}
-  updateEdgeData(data){for(const e of data){const old=this.data.edges.find(x=>x.id===e.id);if(old)old.style={...old.style,...e.style}}}
+  updateEdgeData(data){for(const e of data){const old=this.data.edges.find(x=>x.id===e.id);if(old){old.style={...old.style,...e.style};if(e.data)old.data={...old.data,...e.data}}}}
   async setElementVisibility(changes,animate){
     this.visibilityCalls=(this.visibilityCalls||0)+1;
     assert.equal(animate,false,'fold visibility must be instantaneous');
@@ -366,7 +366,7 @@ const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
   assert(scrolled>0,'Outcome click scrolls to final H judgment');
   assert(elements['ex-reader'].innerHTML.includes('ex-outcome-details'));
   const hReader=elements['ex-reader'].innerHTML;
-  assert(hReader.includes('<h2>'),'selected H remains readable by title');
+  assert(hReader.includes('<h2 class="ex-hypothesis-title">'),'selected H remains readable by title');
   assert(hReader.includes('<div class="ex-node-time">H 时间 · 10-07-22:43</div>'),
     'true original H time is in the RIGHT reader, not in graph card');
   assert(hReader.includes('裁决时间 · 2026-10-08 00:45+08:00'),
@@ -561,8 +561,10 @@ const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
     '7% label remains visibly sized');
   assert(Number.parseFloat(labelFor('H-0034').style.fontSize)<=72,
     'fallback labels obey the normal pixel cap');
-  assert(!elements['ex-reader'].innerHTML.includes('ex-outcome-details'),
-    'unjudged Hypothesis reader must not contain an Outcome section');
+  assert(!elements['ex-reader'].innerHTML.includes('class="ex-cycle-result"'),
+    'unjudged Hypothesis reader must not invent a Cycle result');
+  assert(elements['ex-reader'].innerHTML.includes('尚无本轮结论'),
+    'unjudged Hypothesis reader explains the empty conclusion section');
   // Historical multi-cycle verdicts and multiple frontier branches are independent.
   const h8=nodes.find(n=>n.id==='H-0008');
   h8.semantic.frontiers=[{status:'closed'},{status:'active'},{status:'parked'}];

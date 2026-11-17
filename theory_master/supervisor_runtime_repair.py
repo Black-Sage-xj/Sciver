@@ -109,16 +109,19 @@ def _invoke_codex(sandbox: Path, model: str, prompt: str) -> tuple[bool, str]:
     with tempfile.TemporaryFile(mode="w+b") as output:
         child = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=output,
                                  stderr=subprocess.STDOUT, start_new_session=True)
+        timed_out = False
         try:
             child.communicate(input=prompt.encode(), timeout=MAX_REPAIR_SECONDS)
         except subprocess.TimeoutExpired:
             os.killpg(child.pid, signal.SIGKILL)
             child.wait()
-            return False, "Isolated Codex repair timed out."
+            timed_out = True
         output.seek(0, 2)
-        output.seek(max(0, output.tell() - 2500))
-        tail = _SECRET.sub(r"\1=[redacted]", output.read().decode("utf-8", "replace"))
-    return child.returncode == 0, tail[-1200:]
+        output.seek(max(0, output.tell() - 12_000))
+        from .supervisor_incident_session import _redact
+        tail = _redact(output.read().decode("utf-8", "replace"), 12_000)[-6000:]
+    return not timed_out and child.returncode == 0, (
+        ("Isolated Codex repair timed out. " if timed_out else f"exit_code={child.returncode}\n") + tail)
 
 
 def _validate_candidate(sandbox: Path, target: Path) -> tuple[bool, str]:

@@ -108,9 +108,13 @@ Lock 原子登记 H identity，冻结 `id / hypothesis / scope / decisive_test` 
 
 Evidence 先由 Registry 登记，再生成裁决视图。SDK 负责 producer invocation、路径和内容 hash、来源访问层级及受保护数据身份的技术校验。调用产物 manifest 只能证明执行产物身份，不能单凭它证明事前冻结或 held-out / Final Gate 资格。`adjudicable` 表示技术上可交付裁决，不表示结论为真。不可读来源不能获得可裁决资格；历史或漂移产物不能伪装成本轮独立验证。
 
+普通预分 train/validation 的方法隔离与受保护盲测身份分别处理。数据来自 benchmark、被称为 holdout，或来源追溯字段为 `origin_unverified`，均不自动增加 SDK 盲测认证门槛。Investigator 如实记录分组核验、方法固定、执行顺序和限制；强认证缺失限制相应强身份主张。任务或冻结检验明确要求的事前预测、隔离和 Final Gate 仍须满足，不能靠路径、登记时哈希或 Agent 自述升级已暴露/事后数据的身份。
+
 Judge 消费 compact `investigation_result` 和明确限定范围的历史裁决视图，独立决定 Evidence 是否回答冻结检验。历史视图从当前 Registry 权威无副作用地生成，不信任旧 Manifest 的资格快照，不重新登记旧证据。
 
 Judge 的 objection 必须是冻结命题内的最小可执行增量；SDK 验证后按既有有限返工和资源边界调度。没有新正式提交的研究、预算否决或运行失败，均不能冒充新 Findings 或 terminal `open`。没有可裁决 Evidence 时保存非科学停止原因与检查点。
+
+Judge 在现有 rationale/requested_resolution 中说明所缺的必要冻结前提、现有结果为何不足和剩余可执行的科学比较。SDK 自动绑定的 `C-1` 仅是路由锚点；结构授权不声称证明异议内容的科学必要性。SDK 不按 holdout 关键词替代科学裁决，也不直接改写旧 Judge 决定。
 
 ### 综合、前沿和任务完成
 
@@ -118,7 +122,7 @@ Judge 的 objection 必须是冻结命题内的最小可执行增量；SDK 验�
 
 Reporter 通过 `title/summary` 交付报告标题与完整 Markdown 正文，`summary` 承载全文。SDK 将同一科学叙事保存为报告笔记和对应 Cycle Outcome 的标题、正文，不创建独立 Decision 图节点。SQLite 的 H / External、H→H 谱系与 Cycle Outcome 由 SDK 持久化；Canvas 是确定性展示投影。
 
-Reporter 的 `report` 正文依次组织为结论摘要、问题与必要条件、主要结果、解释与限制；SDK 在末尾统一追加第五节复现索引。主要结果按科学问题组织，相关已有图片嵌入对应论证位置并附解释性图注，已确认的数值可整理为精简对照表。纯理论结果无需装饰性图片或空表格。必要限定保留在影响解读的位置，完整限制集中说明。
+Reporter 的 `report` v5 正文依次组织为问题与必要条件、主要结果、解释与限制。SDK 在唯一主报告开头复用 `graph_summary`，加入折叠的正式 Judge 记录与复现索引，不再生成第二份人类阅读报告。主要结果按科学问题组织，相关已有图片嵌入对应论证位置并附解释性图注，已确认的数值可整理为精简对照表。补充 Markdown/章节可使用 `![[path.md#Section|Label]]`；SDK 保存来源哈希与所选文本，正文保持必要论证。纯理论结果无需装饰性图片或空表格。必要限定保留在影响解读的位置，完整限制集中说明。
 
 SDK 仅向 Reporter 提供从可用于本轮报告的 Evidence 投影出的 `report_materials`，列明原始引用、文件类型、可用状态和图片入口；范围与限制继续由 `evidence_scope_digest` 承载。只读查看这些素材用于理解已有图片或转录已确立数值，不授予重新分析数据、增加证据或改变裁决的权限。SDK 不读取原始数组来推导新结果，不依据文件名决定科学相关性。
 
@@ -178,11 +182,13 @@ Task 有稳定整数 ID，Cycle 在 Task 内独立递增。新任务的 Research
 
 事务顺序为：终局 Judge → Scientific Synthesis → Scientific Model commit → Frontier / report / Outcome 和展示投影。各层可幂等恢复，下游失败不重做上游科学判断。
 
-Reporter `report` v4 分别返回完整报告 `summary` 与图谱导览 `graph_summary`。导览以本轮结论、关键依据、必要适用范围及本节点未决问题组织阅读上下文，不产生科学裁决、前沿状态或下一轮计划。SDK 原样保存完整报告，将独立导览放入 Cycle Outcome 的 `source_json`，供 Canvas、Web 与 Agent 只读视图使用；新导览不再由报告前缀截取得到。历史 Outcome、缓存旧报告和冻结命题保留原内容，不因合同升级而新增模型调用或回填科学解释。
+Reporter `report` v5 分别返回研究正文 `summary` 与唯一概览 `graph_summary`。导览以本轮结论、关键依据、必要适用范围及本节点未决问题组织阅读上下文，不产生科学裁决、前沿状态或下一轮计划。SDK 原样保存正文、导览和固定版本补充材料 `report_context` 到 Cycle Outcome 的 `source_json`，装配 `notes/outcomes/<Cycle>.md`；概览不是正文前缀截取。Web 与 Agent 的 `report-read` 使用同一装配和章节索引。历史 Outcome、缓存旧报告和冻结命题保留原内容，不因合同升级而新增模型调用或回填科学解释。
 
 transport timeout、inactivity watchdog 和进程异常属于调用恢复。中途 progress、delta 或 interrupt 引发的完成事件不能冒充合法 final output。恢复同一 thread 时给最小 continuation；只有合法最终输出才能进入合同闭合与 Evidence 登记。
 
 运行恢复、工程修复和科学审计独立登记。恢复继续累计真实活动和调用计量，离线等待不算科研执行时间。观测序号和 UI 状态不得反向决定身份、资源预算或科学结论。
+
+资格审查以 `no_qualified_candidate` 停止时，监控投影为 `NEEDS_ATTENTION`，保留科学状态、停止原因与原有恢复权限。读取历史任务时，已停止的科学状态优先于残留的 `run_state.RUNNING`；Task Console 的 Agent 页签与 State 卡片使用一致的生命周期和进程核验结果。
 
 历史记录只读保留。缺少 `science_graph.sqlite3` 的 legacy workspace 必须显式迁移后执行；runtime 不以旧 Canvas 路径回退。迁移不静默重解释历史 Evidence、Outcome 或 Judge verdict。
 

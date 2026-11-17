@@ -10,6 +10,7 @@ from typing import Any
 
 from .project_setup_ui import setup_panel
 
+from .appearance_ui import LIGHT_STYLE, THEME_BOOTSTRAP_SCRIPT
 
 _STYLE = """
 .tm-research_chat-view .tm-main{height:100vh;min-height:0;display:flex;flex-direction:column;overflow:hidden}
@@ -688,6 +689,6 @@ def embedded_page(snapshot: dict[str, Any], *, task_id: str = "") -> str:
     """Render the shared chat without the dashboard or a recursive launcher."""
     return ('<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<title>Sciver · Research Chat</title></head><body class="tm-chat-embedded">'
+            '<title>Sciver · Research Chat</title>' + THEME_BOOTSTRAP_SCRIPT + '</head><body class="tm-chat-embedded">'
             + page_body(snapshot, embedded=True, task_id=task_id)
-            + f'<style>{_EMBED_STYLE}</style><script src="/research-chat/widget.js" defer></script></body></html>')
+            + f'<style>{_EMBED_STYLE}</style>' + LIGHT_STYLE + '<script src="/research-chat/widget.js" defer></script></body></html>')

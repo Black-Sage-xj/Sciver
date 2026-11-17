@@ -18,7 +18,7 @@ class ExplorerVisualConsistencyTest(unittest.TestCase):
         self.assertIn("index.stats.doc_count+' 文档'", page)
         self.assertNotIn("当前文件（非历史快照）", page)
         self.assertNotIn("旧版坐标视图", page)
-        self.assertNotIn("ex-legacy", page)
+        self.assertNotIn('id="ex-legacy"', page)
         self.assertNotIn("toLocaleTimeString", page)
         self.assertNotIn("当前文件（非历史快照）", EXPLORER_HTML)
         self.assertNotIn("toLocaleTimeString", EXPLORER_HTML)

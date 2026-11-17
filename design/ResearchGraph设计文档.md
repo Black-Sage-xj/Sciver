@@ -19,7 +19,7 @@
 - `cycle_evaluations` 保存终局 Cycle Outcome 的结构化原文，并对 `cycle_id` 设唯一索引；重放同一内容幂等，第二个不同 Outcome 拒绝。新 H 的锁定归属由 `hypothesis_cycle_owners` 约束。
 - `frontier_branches` 独立保存每个 H 的 `active/parked/closed` 研究机会状态；它不由 H 的图度数或 Outcome verdict 推导。`scientific_edges` 保存有类型的 H→H 演化关系，External 及其关联关系存于独立表。Agent 读取统一的 SQLite 只读视图，不解析 Canvas 文件。
 - 旧 `outcomes` 表保留每 H 一行，作为历史全 H 判断与旧前沿代码的兼容字段；它**不是**新规范下的 Cycle Outcome 列表。旧 H 的局部 Decision 导入时只进入 `cycle_evaluations`，不改这行的科学命运。新 H 与单一冻结 Cycle 完全同范围，终局裁决同步其 H 状态。
-- `notes/outcomes/<Cycle ID>.md` 由已存 Judge 数据确定性生成，逐项列出科学结论、原 Decision 正文和原报告；完整结构化记录单独放在同名 `.json` 文件。Markdown 与 JSON 均有来源/渲染完整性标记。只有可验证的 SDK 生成文件允许随模板升级，人工编辑或来源不明的文件必须保留并报告冲突。
+- `notes/outcomes/<Cycle ID>.md` 是该轮唯一主报告：同一份图谱概览、研究正文、折叠的 Judge/正式科学记录、补充材料和复现索引；完整结构化记录单独放在同名 `.json` 文件。Markdown 与 JSON 均有来源/渲染完整性标记。只有可验证的 SDK 生成文件允许随模板升级，人工编辑或来源不明的文件必须保留并报告冲突。
 - `cycle_memory_index` 继续索引 Cycle 运行目录、状态和过程记录。原始 Canvas 的字节备份、`legacy_records`、`legacy_edges`、`legacy_conversion_map`、Evidence 和旧报告保持可追溯。
 
 ## 历史 Canvas 的整理规则
@@ -55,5 +55,12 @@
 - Reporter `report` v4 的 `graph_summary` 包含四个正文字符串：`conclusion`（本轮科学增量）、`basis`（决定性比较、区间或证明依据）、`scope`（必要条件及资料来源身份）、`open_question`（本节点的具体未决缺口，已解决时为空）。不把继承知识冒充本轮新增发现，不把任务级长期目标重复当作每个 H 的未完成检验，不生成下一轮计划。
 - 四字段合计 900 字符仅为防止超大交付的安全上限，不是写作目标；保持原有导览所需的科学细节。`summary` 继续保存完整报告，正式 `findings/open_questions/boundary` 仍由授权科学记录产生；导览不覆盖这些字段，也不推断裁决。
 - 导览可选地保存在不可变 Cycle Outcome 的 `source_json` 中，不新增数据库权威或重写历史记录。新记录在 Canvas/Web 展开处完整展示导览，Agent 的焦点与活跃前沿上下文保留全部导览字段；图上短卡片以结论开头，完整依据经点击或悬停可读。旧记录继续兼容读取原报告预览，不自动调用模型补写。
+
+## 单一研究报告（2026-11-16）
+
+- Reporter `report` v5 只写一次 `graph_summary`；`summary` 是问题与必要条件、主要结果、解释与限制三节正文，不再另写结论摘要。SDK 将同一概览用于图谱/节点和主报告开头，加入正式裁决与复现索引；旧 `summary` 正文保留。
+- SDK 不再生成第二份 `<Cycle>--<title>.md`。主报告固定为 `notes/outcomes/<Cycle>.md`，Reporter、H 档案索引、Web 和 Agent 详细引用沿用该入口。旧文档链接在 Web 解析到同轮只读报告视图，历史文件及 SQLite 裁决不改写。
+- `![[path.md#Section|Label]]` 表示显式引用已有补充 Markdown/章节；SDK 在 `report_context` 保存原文件 SHA-256、选择的文本与来源，用折叠块展示。只读取任务资料区或已登记可用文档资产，最多 12 个、每个来源文件 256 KiB；较大文件使用普通链接。嵌套引用保留为链接，代码中的示例保持字面文本。核心论证仍在主报告正文。
+- Agent `report-read <Cycle> [--section TITLE_OR_ID] [--offset N]` 与 Web `/report` 使用同一报告装配、章节索引和分页。概览不注入完整报告与附件；按需读取保留原科学权威和来源身份。历史未裁决保全报告明确标记其执行状态，不产生 Judge verdict。
 - active、parked、closed 均展示已记录的分支原因，缺失时明确提示原因未记录。有 Cycle 裁决但无整体 H 评估时，阅读文案明确标注整体 H 尚未登记裁决，不以本轮结论改写整个 H 的科学状态。
 - 猜想导览继续使用冻结科学定义，压缩时保留其中已声明的可判别区别及必要条件；完整动机和来源细节放在档案中。历史缺失摘要的整理属独立工作，本次不自动回填。

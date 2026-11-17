@@ -351,7 +351,8 @@ class ReporterPresentationTest(unittest.TestCase):
                            build_continuation_prompt(**shared)):
                 self.assertIn('"report_materials"', prompt)
                 self.assertIn("Do not write a reproduction index", prompt)
-                self.assertIn("four ordered sections", prompt)
+                self.assertIn("three ordered sections", prompt)
+                self.assertIn("do not write a second conclusion summary", prompt)
                 self.assertIn(assets[0]["assets"][0]["image_ref"], prompt)
 
     def test_missing_ambiguous_and_external_materials_are_explicit(self):
@@ -488,7 +489,7 @@ class ReporterPresentationTest(unittest.TestCase):
                 self.assertNotIn("987654321", note)
                 self.assertNotIn("## 复现索引", state["cycle_outcome_record"]["summary"])
                 if sample == "numerical":
-                    self.assertIn("![Comparison](../research/1/workspace/", note)
+                    self.assertIn("![Comparison](../../research/1/workspace/", note)
                     self.assertIn("图 1：", note)
                     self.assertIn("|A|1|", note)
                     self.assertIn(str(figure), unquote(report["summary"]))

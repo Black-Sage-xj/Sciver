@@ -88,6 +88,12 @@ def resume_blocker(state: dict[str, Any], *, for_repair: bool = False,
     budget = state.get("investigator_budget") or {}
     if isinstance(budget, dict) and (budget.get("exhausted") or budget.get("rejected")):
         return "Investigator budget guard is active; Supervisor cannot override it."
+    native = state.get("native_goal") or {}
+    if (native.get("runtime_failure_kind") in {
+            "native_goal_dependency_blocked", "repeated_unexpected_block"}
+            and not runtime_revalidated):
+        return ("Native Goal requires dependency or contract diagnosis; unchanged plain resume "
+                "is forbidden without an independently validated repair.")
     checkpoint = state.get("last_safe_checkpoint")
     valid_checkpoint = bool(checkpoint and Path(str(checkpoint)).is_file()
                             and not Path(str(checkpoint)).is_symlink())

@@ -105,10 +105,9 @@ def _h_text(node: dict[str, Any]) -> str:
         questions = outcome.get("open_questions") or []
         if questions and not outcome.get("graph_summary"):
             lines += ["", "**未解决：** " + preview(questions[0], 100)]
-        if outcome.get("document_ref"):
-            lines += ["", "[[" + str(outcome["document_ref"]) + "]]"]
-        if outcome.get("report_ref"):
-            lines += ["", "[[" + str(outcome["report_ref"]) + "]]"]
+        report_ref = outcome.get("document_ref") or outcome.get("report_ref")
+        if report_ref:
+            lines += ["", "[[" + str(report_ref) + "|阅读研究报告]]"]
     if status:
         label = {"active": "活跃", "parked": "暂缓", "closed": "关闭"}[status]
         lines += ["", f"**分支状态：** {label}；" +
@@ -238,7 +237,8 @@ def canvas_projection(store: ScienceGraphStore) -> dict[str, Any]:
             "id": n["id"], "type": "text", **loc,
             "color": str(legacy.get("color") or ("5" if is_h else "6")),
             "text": _h_text(n) if is_h else _external_text(n),
-            **({"outcome": n["outcome"], "cycle_outcomes": n["cycle_outcomes"],
+            **({"outcome": {k: v for k, v in (n["outcome"] or {}).items() if k != "report_context"} or None,
+                "cycle_outcomes": [{k: v for k, v in o.items() if k != "report_context"} for o in n["cycle_outcomes"]],
                 "whole_h_assessment": n["whole_h_assessment"], "cycle_count": n["cycle_count"],
                 "frontiers": n["frontiers"]} if is_h else {}),
         })

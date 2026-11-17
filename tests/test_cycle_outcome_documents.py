@@ -1,4 +1,6 @@
 from pathlib import Path
+import hashlib
+import json
 
 import pytest
 
@@ -6,6 +8,7 @@ from theory_master.cycle_outcome_documents import (
     _render_outcome_document_v1, backfill_outcome_documents,
     outcome_document_json_ref, outcome_document_ref, render_outcome_document,
     write_outcome_document,
+    _source_digest, _valid_v2_json,
 )
 from theory_master.science_graph_store import ScienceGraphStore
 
@@ -100,5 +103,18 @@ def test_legacy_sdk_outcome_document_can_be_migrated_only_when_unedited(tmp_path
     target.parent.mkdir(parents=True)
     target.write_text(_render_outcome_document_v1(outcome, lock=lock, original_decision=original_decision), encoding="utf-8")
     write_outcome_document(notes, outcome, lock=lock, original_decision=original_decision)
-    assert "/v2 source:" in target.read_text(encoding="utf-8").splitlines()[0]
+    assert "/v3 source:" in target.read_text(encoding="utf-8").splitlines()[0]
     assert (notes.parent / outcome_document_json_ref("13")).exists()
+
+
+def test_v2_json_lock_remains_verifiable_after_v3_renderer_upgrade():
+    outcome = {"id": "1", "cycle_id": "1", "hypothesis_id": "H-0001", "verdict": "open", "summary": "Old report"}
+    lock = {"hypothesis": "Frozen original claim", "scope": "Original scope"}
+    payload = {"_generated_by": "theory-master/cycle-outcome-json", "_version": 2,
+               "outcome": outcome, "lock": lock, "original_decision": "",
+               "source_digest": _source_digest(outcome, lock, "", version=2)}
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    payload["_render_digest"] = hashlib.sha256(canonical.encode()).hexdigest()
+    assert _valid_v2_json(json.dumps(payload))
+    payload["lock"]["hypothesis"] = "Changed by hand"
+    assert not _valid_v2_json(json.dumps(payload))

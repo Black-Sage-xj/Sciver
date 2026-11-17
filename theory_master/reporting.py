@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +11,7 @@ from .display import direction_text
 from .evidence import adjudicable_manifest_records
 from .report_materials import material_index, normalize_report_images, report_materials
 from .outcome_guide import validate_graph_summary
-from .runtime import atomic, canvas_ts, write_json
+from .runtime import canvas_ts, write_json
 
 
 def _unique_text(values: list[Any]) -> list[str]:
@@ -94,12 +93,11 @@ class ReportingMixin:
             validate_graph_summary(guide)
         notes_dir = self.spec.notes_mirror_dir or self.notes_dir or (self.cycle_dir / "notes")
         notes_dir.mkdir(parents=True, exist_ok=True)
-        # A vault directory is shared by a long-lived branch.  Prefix the
-        # report name with its immutable Cycle ID so repeated titles cannot
-        # silently overwrite an earlier scientific decision.
+        # Every Cycle has one canonical report, also used by the graph reader.
         cycle_ref = self.cycle_dir.name
-        slug = re.sub(r"[^\w.-]+", "-", report.get("title", branch["title"]))[:80].strip("-") or "decision"
-        note = notes_dir / f"{cycle_ref}--{slug}.md"
+        from .cycle_outcome_documents import write_outcome_document
+        from .research_report import snapshot_documents
+        note = notes_dir / "outcomes" / f"{cycle_ref}.md"
         if self.spec.notes_mirror_dir is not None:
             try:
                 note.resolve().relative_to(self.spec.notes_mirror_dir.resolve())
@@ -151,23 +149,6 @@ class ReportingMixin:
             "",
             "</details>",
         ])
-        atomic(
-            note,
-            f"# {report.get('title', branch['title'])}\n\n{note_body}\n\n"
-            + "\n".join(machine_index)
-            + "\n",
-        )
-        if self.branch_canvas is not None:
-            from .hypothesis_dossier import append_hypothesis_cycle_report
-            append_hypothesis_cycle_report(
-                canvas_path=self.branch_canvas, notes_root=notes_dir,
-                hypothesis_id=str(branch.get("hypothesis_ref") or ""),
-                cycle_id=cycle_ref, note_path=note,
-            )
-        branch["note_path"] = str(note)
-        branch["summary"] = str(report.get("summary") or "")
-        branch["timestamp"] = canvas_ts()
-
         # Report and guide are reading projections; formal scientific fields
         # still come from Judge, Lead synthesis and registered Evidence.
         source_id = str(branch.get("hypothesis_ref") or "").strip()
@@ -178,6 +159,9 @@ class ReportingMixin:
                 "SELECT 1 FROM hypotheses WHERE id=?", (source_id,)
             ).fetchone() is None:
                 raise ValueError(f"Reporter source H is missing from canonical SQLite graph: {source_id}")
+            committed_report = store.cycle_evaluation(cycle_ref)
+            if committed_report and committed_report.get("hypothesis_id") != source_id:
+                raise ValueError("Committed report belongs to a different Hypothesis")
 
         evidence_scope_digest = [
             {key: item.get(key) for key in (
@@ -189,7 +173,8 @@ class ReportingMixin:
             state.get("scientific_synthesis") if isinstance(state.get("scientific_synthesis"), dict) else {},
             evidence_scope_digest,
         )
-        report_ref = ""
+        report_ref = (note.resolve().relative_to(graph_db.resolve().parent).as_posix()
+                      if note.resolve().is_relative_to(graph_db.resolve().parent) else "")
         if self.branch_canvas is not None:
             canvas_root = self.branch_canvas.resolve().parent
             try:
@@ -227,7 +212,26 @@ class ReportingMixin:
         }
         if guide is not None:
             state["cycle_outcome_record"]["graph_summary"] = dict(guide)
-        branch["summary"] = str(report.get("summary") or "")
+        # Body paths are rendered relative to the canonical report, while the
+        # immutable original narrative remains in summary for source inspection.
+        if committed_report is None:
+            state["cycle_outcome_record"]["report_context"] = {
+                "schema": "theory-master/research-report/v1",
+                "body": note_body,
+                "reproduction_index": "\n".join(machine_index),
+                "documents": snapshot_documents(summary,
+                    task_root=self.branch_canvas.resolve().parent if self.branch_canvas else notes_dir.parent,
+                    note_path=note, materials=materials),
+            }
+        else:
+            state["cycle_outcome_record"] = committed_report
+        write_outcome_document(notes_dir, state["cycle_outcome_record"], lock=state.get("hypothesis_lock") or {})
+        if self.branch_canvas is not None:
+            from .hypothesis_dossier import append_hypothesis_cycle_report
+            append_hypothesis_cycle_report(canvas_path=self.branch_canvas, notes_root=notes_dir,
+                hypothesis_id=source_id, cycle_id=cycle_ref, note_path=note)
+        branch["note_path"] = str(note)
+        branch["summary"] = str(state["cycle_outcome_record"].get("summary") or "")
         branch["timestamp"] = canvas_ts()
         state["next_start_node_id"] = None
         state.pop("frontier_state", None)

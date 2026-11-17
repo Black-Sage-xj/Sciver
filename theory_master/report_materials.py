@@ -105,6 +105,8 @@ def normalize_report_images(body: str, materials: list[dict[str, Any]],
     def replace(match: re.Match[str]) -> str:
         wiki = match["wiki"]
         target = wiki.split("|", 1)[0] if wiki else match["angle"] or match["url"]
+        if wiki and target.split("#", 1)[0].lower().endswith(".md"):
+            return match.group()  # SDK freezes document/section embeds separately.
         decoded = unquote(target)
         hits = [a for a in figures if target in (a["reference"], a.get("image_ref"), a.get("path"))
                 or decoded in (a["reference"], a.get("path"))]

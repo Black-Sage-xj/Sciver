@@ -257,7 +257,7 @@ class HypothesisDossierProjectionTest(unittest.TestCase):
             self.assertIn("register deterministic smoke evidence", full)
             self.assertIn("Evidence 引用索引", full)
             self.assertIn("人类可读报告", full)
-            self.assertIn("[[notes/1--", full)
+            self.assertIn("[[notes/outcomes/1]]", full)
 
 
 if __name__ == "__main__":
