@@ -12,10 +12,12 @@
 | `benchmark_root` | 可选的 task-local 冻结/参考科学输入；未提供即不可用 |
 | `legacy_research_root` | 仅供历史迁移读取；不得用于新 runtime 写入 |
 | `notes_dir` | 人类可见的 `notes/` 目录 |
-| `notes_vault_root` | 可确定时提供的 Obsidian vault 根 |
-| `repo_root` | 仓库根 |
+| `notes_vault_root` | 可确定时提供的 Obsidian vault 技术导航根，不扩大科研来源权限 |
+| `repo_root` | 仓库技术导航根，不扩大科研来源权限 |
 
 缺失的锚点不会出现在 Context 中；不得推测其值，应报告缺失的锚点。已提供的路径无法解析时，只能从已知锚点做聚焦查找；仍无法定位就报告具体缺口，不得猜测内容。
+
+科研输入与历史产物的检索、目录枚举和读取限于本次获准的任务根及明确授权的外部来源。可按需追踪本任务的历史 H、Cycle、legacy 根与 Required Context 授权文件；文件不在预先列出的清单中不妨碍范围内的必要发现。共同父目录、仓库或笔记库可读，不构成搜索其他任务的授权；SDK、软件和库源码仅按技术用途访问。来源无法在此范围内恢复时，报告具体缺口或使用当前获准的 Literature 路径。
 
 Required Context 是科学输入文本，SDK 不会从 prose 自动抽取路径、生成 `source_manifest` 或自动打开文件做字段/字面值核验。`[[nodes/某笔记|显示名]]` 中的显示名不是路径；裸节点名是图谱 ID，不是文件。
 
