@@ -581,18 +581,26 @@ class InvestigationMixin:
         target_text = " ".join(str(task.get(key) or "") for key in (
             "search_target", "expected_external_evidence", "new_search_lead"
         )).casefold()
-        context_text = str(task.get("domain_context") or "").casefold()
         # Do not trust legacy `why_external_needed`: older Semantic Closure
         # mechanically wrote "requires external literature" even for benchmark
         # files/repositories. Resource identity comes from the actual target,
-        # explicit search lead, source lock, and source-specific context.
+        # explicit search lead and source lock. Required Context often lists
+        # benchmark files even when the requested evidence is scholarly.
         scholarly = re.search(r"\b(?:paper|literature|doi|journal|arxiv|scholarly|preprint)\b|文献|论文", target_text)
         artifact = re.search(
-            r"\b(?:benchmark|repository|repo|upstream|dataset|webpage|website|web page|source record|prediction template)\b"
+            r"\b(?:repository|repo|upstream|webpage|website|web page|source record|prediction template)\b"
             r"|\b\S+\.(?:csv|tsv|txt|json|py|xlsx|xls)\b|外部文件|仓库|网页",
-            f"{target_text} {context_text}",
+            target_text,
         )
-        return bool(artifact and not scholarly)
+        data_fetch = re.search(
+            r"\b(?:download|fetch|retrieve|obtain|acquire)\s+"
+            r"(?:(?:the|missing|raw|public|original|benchmark|input)\s+){0,6}"
+            r"(?:dataset|data|inputs|files)\b"
+            r"|(?:下载|获取|取得)(?:缺失的|原始|公开|基准|输入|的|\s){0,12}"
+            r"(?:数据集|数据文件|输入数据|原始数据|数据)",
+            target_text,
+        )
+        return bool((artifact or data_fetch) and not scholarly)
 
     def _validate_pending_literature_task(self, state: dict[str, Any]) -> tuple[bool, str]:
         """Validate the current pending scholarly task before Literature invocation."""
@@ -735,6 +743,67 @@ class InvestigationMixin:
             state.setdefault("lead_literature_results", {})[lead_stage] = result
             return result
 
+        return self._execute_lead_literature_task(state, task, lead_stage=lead_stage)
+
+    def _resume_reclassified_lead_literature(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        """Continue the original detour after its artifact classification was fixed.
+
+        This is not another scientific search authorization. The persisted
+        request must match the interrupted gap and must now pass the guard.
+        Transport failures and genuinely exhausted detours retain their guards.
+        """
+        attention = (state.get("attention")
+                     or state.get("interrupted_lead_literature") or {})
+        record = state.get("external_artifact_reclassification") or {}
+        stage = str(attention.get("lead_stage") or "")
+        task = record.get("task")
+        gap_id = str(attention.get("source_gap_id") or "")
+        if (attention.get("code") != "lead_literature_unavailable"
+                or stage != "frontier_proposal" or not gap_id
+                or record.get("source_gap_id") != gap_id
+                or not isinstance(task, dict)
+                or (task.get("source_gap_id") or task.get("gap_id")) != gap_id
+                or task.get("triggered_by") != "research_lead"
+                or int((state.get("lead_literature_detours") or {}).get(stage) or 0) != 1
+                or stage in (state.get("lead_literature_results") or {})
+                or self._literature_task_is_external_artifact(task)):
+            return None
+        history = [item for item in state.get("literature_task_history") or []
+                   if isinstance(item, dict)
+                   and (item.get("source_gap_id") or item.get("gap_id")) == gap_id]
+        if (not history or history[-1].get("status") not in {"reclassified_external_artifact", "queued"}
+                or self._normalize_literature_task(history[-1], triggered_by="research_lead")
+                != self._normalize_literature_task(task, triggered_by="research_lead")):
+            return None
+        pending = state.get("pending_literature_task")
+        if pending is not None and (
+                not isinstance(pending, dict)
+                or self._normalize_literature_task(pending, triggered_by="research_lead")
+                != self._normalize_literature_task(task, triggered_by="research_lead")):
+            return None
+        if pending is None:
+            queued, _ = self._queue_literature_task(state, task)
+            if not queued:
+                return None
+        self._emit(state, "lead.literature_detour_resumed", {
+            "source_gap_id": gap_id, "lead_stage": stage,
+            "reason": "persisted artifact classification no longer applies",
+            "detour_authorizations": 1,
+        })
+        self._persist(state)
+        result = self._execute_lead_literature_task(state, task, lead_stage=stage)
+        state["attention"] = {}
+        state["human_attention"] = ""
+        state.pop("interrupted_lead_literature", None)
+        self._persist(state)
+        return result
+
+    def _execute_lead_literature_task(
+        self, state: dict[str, Any], task: dict[str, Any], *, lead_stage: str,
+    ) -> dict[str, Any]:
+        """Deliver one already-authorized request, including interrupted delivery."""
+        gap_id = str(task.get("source_gap_id") or task.get("gap_id"))
+        task_type = str(task.get("task_type") or "targeted_source")
         ready, ready_reason = self._validate_pending_literature_task(state)
         if not ready:
             reason = (
@@ -759,7 +828,8 @@ class InvestigationMixin:
             raise RecoveryStop(reason)
 
         literature_task = state.get("pending_literature_task") or task
-        transport = self.scholarly_retriever(literature_task, self.cycle_workspace)
+        transport = (self._reusable_scholarly_transport(state, literature_task)
+                     or self.scholarly_retriever(literature_task, self.cycle_workspace))
         state["last_sdk_scholarly_retrieval"] = transport
         self._emit(state, "scholarly.transport_prepared", {
             "status": transport.get("status"),

@@ -542,6 +542,9 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
             state["sdk_runtime_capabilities"] = {"abandon_cycle_v1": True, "hot_role_route_v1": True}
             recovery = dict(state.get("recovery") or {})
             recovery.update({"action": "resume", "allow_thread_fallback": True, "resumed_at": now()})
+            interrupted_attention = state.get("attention") or {}
+            if interrupted_attention.get("code") == "lead_literature_unavailable":
+                state["interrupted_lead_literature"] = json.loads(json.dumps(interrupted_attention))
             state.update({"status": "active", "resumable": True, "recovery": recovery, "cycle_dir": str(self.cycle_dir), "cycle_id": run_id,
                           "master_id": self._master_id_for_cycle(run_id), "cycle_number": cycle_number(run_id), "owner_pid": os.getpid(), "execution_active": True,
                           "human_attention": None, "attention": {}})

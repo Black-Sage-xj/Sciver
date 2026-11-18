@@ -187,6 +187,113 @@ def test_transport_failure_does_not_allow_extra_search_or_empty_candidate_failur
     assert backend.roles.count("literature") == 0
 
 
+@pytest.mark.parametrize("target", [
+    "传感器跨批次识别的全局仿射校准与条件校准比较研究",
+    "Calibration methods and comparative results on the sensor drift dataset benchmark",
+])
+def test_benchmark_context_does_not_turn_scholarly_research_into_artifact_fetch(target):
+    assert not Workflow._literature_task_is_external_artifact({
+        "search_target": target,
+        "expected_external_evidence": "Comparative assumptions, results and limitations",
+        "domain_context": "/task/benchmark/inputs/data.csv /task/verify_inputs.py; dataset website",
+    })
+
+
+@pytest.mark.parametrize("target", [
+    "Download the missing raw dataset from the public archive",
+    "Retrieve the benchmark input data",
+    "下载原始数据集",
+    "从公开来源获取缺失的输入数据",
+])
+def test_explicit_data_acquisition_still_stays_outside_scholarly_transport(target):
+    assert Workflow._literature_task_is_external_artifact({"search_target": target})
+
+
+def test_repaired_artifact_classification_resumes_original_authorized_detour(tmp_path, monkeypatch):
+    workflow, backend, transports = make_workflow(tmp_path, {1})
+    with monkeypatch.context() as old_classifier:
+        old_classifier.setattr(workflow, "_literature_task_is_external_artifact", lambda task: True)
+        paused = workflow.run()
+    assert paused["attention"]["code"] == "lead_literature_unavailable"
+    assert transports == []
+    gap_id = paused["attention"]["source_gap_id"]
+    resumed = workflow.resume(workflow.cycle_dir.name)
+    assert resumed["status"] == "checkpoint_reached"
+    assert resumed["qualification_status"] == "qualified"
+    assert resumed["lead_literature_detours"] == {"frontier_proposal": 1}
+    assert len(transports) == 1
+    assert transports[0]["source_gap_id"] == gap_id
+    assert backend.roles.count("literature") == 1
+    assert backend.frontier_calls == 2
+    assert resumed["attention"] == {}
+    assert "lead.literature_detour_resumed" in (workflow.cycle_dir / "events.jsonl").read_text()
+
+
+def test_reclassified_request_that_then_hits_transport_failure_is_not_retried_again(tmp_path, monkeypatch):
+    workflow, backend, transports = make_workflow(tmp_path, {1, 2, 3}, transport_ok=False)
+    with monkeypatch.context() as old_classifier:
+        old_classifier.setattr(workflow, "_literature_task_is_external_artifact", lambda task: True)
+        workflow.run()
+    interrupted = workflow.resume(workflow.cycle_dir.name)
+    assert interrupted["attention"]["code"] == "lead_literature_unavailable"
+    assert len(transports) == 1
+    assert interrupted["literature_task_history"][-1]["status"] == "transport_blocked"
+    resumed = workflow.resume(workflow.cycle_dir.name)
+    assert resumed["attention"]["code"] == "lead_literature_detour_exhausted"
+    assert len(transports) == 1
+    assert backend.roles.count("literature") == 0
+
+
+def test_committed_literature_is_consumed_after_a_crash_without_repeating_delivery(tmp_path, monkeypatch):
+    workflow, backend, transports = make_workflow(tmp_path, {1})
+    with monkeypatch.context() as old_classifier:
+        old_classifier.setattr(workflow, "_literature_task_is_external_artifact", lambda task: True)
+        workflow.run()
+
+    def crash_after_committed_literature(*args, **kwargs):
+        raise RuntimeError("Injected crash after Literature committed, before result consumption")
+
+    with monkeypatch.context() as crash:
+        crash.setattr(workflow, "_complete_literature_task", crash_after_committed_literature)
+        with pytest.raises(RuntimeError, match="Injected crash"):
+            workflow.resume(workflow.cycle_dir.name)
+    interrupted = json.loads((workflow.cycle_dir / "research_state.json").read_text())
+    assert interrupted["status"] == "failed"
+    assert interrupted["pending_literature_task"]["status"] == "queued"
+    assert not interrupted.get("lead_literature_results")
+    assert len(transports) == 1
+    assert backend.roles.count("literature") == 1
+    resumed = workflow.resume(workflow.cycle_dir.name)
+    assert resumed["status"] == "checkpoint_reached"
+    assert resumed["qualification_status"] == "qualified"
+    assert resumed["pending_literature_task"] is None
+    assert resumed["lead_literature_results"]["frontier_proposal"]
+    assert resumed["lead_literature_detours"] == {"frontier_proposal": 1}
+    assert len(transports) == 1
+    assert backend.roles.count("literature") == 1
+    assert backend.frontier_calls == 2
+
+
+@pytest.mark.parametrize("mismatch", ["gap", "trigger", "stage", "authorization", "delivered"])
+def test_artifact_recovery_cannot_replay_an_unbound_or_delivered_request(tmp_path, monkeypatch, mismatch):
+    workflow, _, transports = make_workflow(tmp_path, {1})
+    with monkeypatch.context() as old_classifier:
+        old_classifier.setattr(workflow, "_literature_task_is_external_artifact", lambda task: True)
+        paused = workflow.run()
+    if mismatch == "gap":
+        paused["external_artifact_reclassification"]["source_gap_id"] = "other-gap"
+    elif mismatch == "trigger":
+        paused["external_artifact_reclassification"]["task"]["triggered_by"] = "judge"
+    elif mismatch == "stage":
+        paused["attention"]["lead_stage"] = "selection_repair"
+    elif mismatch == "authorization":
+        paused["lead_literature_detours"]["frontier_proposal"] = 0
+    else:
+        paused["lead_literature_results"] = {"frontier_proposal": {"status": "completed"}}
+    assert workflow._resume_reclassified_lead_literature(paused) is None
+    assert transports == []
+
+
 def test_guided_restarts_remain_distinct_after_history_reaches_twenty_entries():
     state = {
         "cycle_id": "1", "qualification_status": "pending",

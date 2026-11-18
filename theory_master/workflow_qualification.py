@@ -755,7 +755,15 @@ class QualificationMixin:
                 raise RecoveryStop(str(exc)) from exc
             if direction:
                 lead_context["operator_guidance"] = direction
-            frontier_output = self._call(state, "research_lead", lead_context)
+            resumed_literature = self._resume_reclassified_lead_literature(state)
+            if resumed_literature is not None:
+                lead_context["lead_literature_result"] = resumed_literature
+                frontier_output = self._call(
+                    state, "research_lead", lead_context,
+                    output_key="research_lead_frontier_after_literature",
+                )
+            else:
+                frontier_output = self._call(state, "research_lead", lead_context)
             literature_used = (
                 state.get("qualification_literature_used")
                 or (state.get("lead_literature_detours") or {}).get("frontier_proposal", 0)
