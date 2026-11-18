@@ -33,13 +33,11 @@ html[data-sciver-theme="white"] .tm-prep-dialog{background:#fff;color:#243952}ht
 
 
 def entry_panel() -> str:
-    return """<section class="tm-prep-entry" aria-labelledby="tm-prep-entry-title">
-<h2 id="tm-prep-entry-title">创建新项目</h2>
-<p>先与 Sciver 梳理问题、查阅资料，再一起确定研究计划。现在可以从一个明确问题，也可以从兴趣或观察到的现象开始。</p>
-<div class="tm-prep-entry-options">
-<button type="button" data-preparation-entry="clear"><strong>已有明确问题</strong><span>讨论目标、相关工作与可行路径，逐步确定 Research Plan。</span></button>
-<button type="button" data-preparation-entry="exploratory"><strong>从兴趣或现象开始</strong><span>从观察和疑问出发，了解领域背景，找到值得检验的问题。</span></button>
-</div><p data-prep-entry-status role="status"></p></section>"""
+    return """<div class="tm-research-starts tm-chat-intent-starts" aria-label="新建项目方式">
+<button type="button" class="tm-research-start" data-preparation-entry="clear"><strong>已有明确问题</strong><span class="tm-research-start-description">讨论目标、相关工作与可行路径，逐步确定 Research Plan。</span></button>
+<button type="button" class="tm-research-start" data-preparation-entry="exploratory"><strong>从兴趣或现象开始</strong><span class="tm-research-start-description">从观察和疑问出发，了解领域背景，找到值得检验的问题。</span></button>
+<button type="button" class="tm-research-start" data-research-mode="migration"><strong>迁移已有研究</strong><span class="tm-research-start-description">导入已有工作，整理研究资料并初始化项目。</span></button>
+</div><p class="tm-chat-entry-status" data-prep-entry-status role="status"></p>"""
 
 
 def session_panel(session: dict) -> str:

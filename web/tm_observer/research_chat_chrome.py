@@ -78,15 +78,13 @@ CHROME_STYLE = """
 .tm-chat-codex .tm-chat-export>summary{display:grid;place-items:center;min-width:27px;min-height:27px;font-size:19px;color:var(--chat-muted);border-radius:6px}
 .tm-chat-codex .tm-chat-export>summary:hover{background:var(--chat-panel)}
 .tm-chat-codex .tm-chat-export .tm-chat-popover-panel{top:calc(100% + 5px);bottom:auto;right:0;left:auto}
-.tm-chat-codex .tm-chat-entry-tools{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:center;gap:10px 25px}
-.tm-chat-codex .tm-chat-entry-tools>details{font-size:12px;color:var(--chat-muted)}
-.tm-chat-codex .tm-chat-entry-tools>details>summary{list-style:none;cursor:pointer;padding:4px 3px;text-align:center;white-space:nowrap}
-.tm-chat-codex .tm-chat-entry-tools>details>summary::-webkit-details-marker{display:none}
-.tm-chat-codex .tm-chat-project-options>summary{border:1px solid var(--chat-border,#52525b);border-radius:8px;padding:7px 12px!important;color:var(--chat-text,#f4f4f5);font-weight:600}
-.tm-chat-codex .tm-chat-project-options>summary:focus-visible{outline:2px solid #93c5fd;outline-offset:2px}
-.tm-chat-codex .tm-chat-entry-tools>details>summary span{margin-left:5px;color:var(--chat-muted)}
-.tm-chat-codex .tm-chat-entry-tools>details[open]{width:100%}
-.tm-chat-codex .tm-chat-entry-tools>details[open]>summary{margin-bottom:14px}
+.tm-chat-codex .tm-chat-entry-tools{min-width:0}
+.tm-chat-codex .tm-chat-entry-switch{display:grid;grid-template-columns:1fr 1fr;gap:4px;padding:4px;margin-bottom:10px;border:1px solid var(--chat-line);border-radius:10px;background:var(--chat-panel)}
+.tm-chat-codex .tm-chat-entry-switch button{min-height:36px;border:0;border-radius:7px;background:transparent;color:var(--chat-muted);font-size:12px;cursor:pointer}
+.tm-chat-codex .tm-chat-entry-switch button[aria-pressed="true"]{background:var(--chat-bg);color:var(--chat-text);font-weight:600}
+.tm-chat-codex .tm-chat-entry-switch button:disabled{opacity:.5;cursor:not-allowed}
+.tm-chat-codex .tm-chat-entry-status{margin:0;color:var(--chat-muted);font-size:12px}
+.tm-chat-codex .tm-chat-entry-status:empty{display:none}
 .tm-chat-codex .tm-research-starts{gap:8px;margin-bottom:8px}
 .tm-chat-codex .tm-chat-intent-starts{grid-template-columns:repeat(3,minmax(0,1fr))}
 .tm-chat-codex .tm-research-start,.tm-chat-codex .tm-research-start.primary{min-height:0;border:1px solid #ffffff0b;border-radius:10px;padding:13px 14px;background:transparent;color:var(--chat-text)}

@@ -158,7 +158,7 @@ def test_http_creation_is_visible_in_stale_cache_and_obeys_origin(tmp_path, monk
             return json.load(response)
     try:
         with urlopen(origin + "/research-chat/?new=1") as response:
-            assert "创建新项目" in response.read().decode()
+            assert "新建项目" in response.read().decode()
         with pytest.raises(HTTPError) as rejected:
             post("/api/research-chat/session", {"mode": "preparation", "entry": "clear"}, valid=False)
         assert rejected.value.code == 403

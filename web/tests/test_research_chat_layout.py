@@ -42,16 +42,16 @@ class ResearchChatLayoutTests(unittest.TestCase):
         self.assertEqual(html.count('data-research-task aria-label="选择项目任务"'), 1)
         self.assertLess(html.index('aria-label="选择项目任务"'), html.index('data-research-direct'))
         self.assertIn('aria-label="模型与推理强度"', html)
-        self.assertIn('<summary>科研工具 ', html)
-        self.assertIn('<summary>创建新项目 ', html)
-        self.assertIn('const autoWelcome=false;', html)
+        self.assertIn('data-entry-choice="existing" aria-pressed="true"', html)
+        self.assertIn('data-entry-choice="new" aria-pressed="false"', html)
+        self.assertNotIn('按研究合同建立项目', html)
         self.assertNotIn('直接开始聊天</label>', html)
         self.assertNotIn('<h3>和 Sciver 讨论科研</h3>', html)
         for skill in ('research-progress', 'research-discussion', 'research-next-steps'):
             self.assertIn(f'data-research-skill="{skill}"', html)
         for skill in ('research-intervention', 'research-evidence'):
             self.assertNotIn(f'data-research-skill="{skill}"', html)
-        self.assertEqual(html.count('<span class="tm-research-start-description">'), 3)
+        self.assertEqual(html.count('<span class="tm-research-start-description">'), 6)
 
     def test_legacy_setup_welcome_defaults_to_automatic_and_can_be_suppressed(self) -> None:
         self.assertIn('const autoWelcome=true;', setup_panel('/workspace'))

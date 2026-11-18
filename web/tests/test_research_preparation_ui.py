@@ -91,8 +91,19 @@ def test_browser_preparation_both_routes_save_conflict_and_create_real_task(tmp_
             page.on("request", lambda request: created_requests.append(request.url) if request.url.endswith("/create-project") else None)
             for index, entry in enumerate(("clear", "exploratory")):
                 page.goto(origin + "/research-chat/?new=1")
-                if page.locator('.tm-chat-project-options').count():
-                    page.locator('.tm-chat-project-options > summary').click()
+                if index == 0:
+                    expect(page.locator('[data-entry-choice="existing"]')).to_be_disabled()
+                    expect(page.locator('[data-entry-panel="new"]')).to_be_visible()
+                else:
+                    expect(page.locator('[data-entry-panel="existing"]')).to_be_visible()
+                    expect(page.locator('[data-entry-panel="existing"] .tm-research-start')).to_have_count(3)
+                    page.locator('[data-entry-choice="new"]').click()
+                    expect(page.locator('[data-entry-panel="existing"]')).not_to_be_visible()
+                    page.locator('[data-entry-choice="existing"]').click()
+                    expect(page.locator('[data-entry-panel="existing"]')).to_be_visible()
+                    page.locator('[data-entry-choice="new"]').click()
+                expect(page.locator('[data-entry-panel="new"] .tm-research-start')).to_have_count(3)
+                expect(page.locator('[data-research-mode="migration"]')).to_be_visible()
                 expect(page.locator('[data-preparation-entry="clear"]')).to_be_visible()
                 expect(page.locator('[data-preparation-entry="exploratory"]')).to_be_visible()
                 if index == 0 and os.environ.get("SCIVER_PREPARATION_PREVIEW"):
@@ -168,6 +179,17 @@ def test_browser_preparation_both_routes_save_conflict_and_create_real_task(tmp_
                 expect(link).to_be_visible()
                 link.click()
                 page.wait_for_url("**/run/*/")
+            page.goto(origin + "/research-chat/?new=1")
+            task_select = page.locator('[data-research-task]')
+            task_select.select_option(index=1)
+            page.locator('[data-entry-choice="new"]').click()
+            page.locator('[data-research-mode="migration"]').click()
+            page.wait_for_url("**/research-chat/?session=*")
+            migration = parse_qs(urlsplit(page.url).query)["session"][0]
+            from tm_observer import research_chat
+            row = research_chat._read(research_chat._store(tmp_path / "observer"), migration)
+            assert row["mode"] == "migration" and row["task_id"] is None
+            assert len(calls) == 2
             browser.close()
     finally:
         server.shutdown()

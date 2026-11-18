@@ -8,8 +8,6 @@ from pathlib import Path
 from functools import lru_cache
 from typing import Any
 
-from .project_setup_ui import setup_panel
-
 from .appearance_ui import LIGHT_STYLE, THEME_BOOTSTRAP_SCRIPT
 from .research_chat_chrome import CHROME_STYLE
 
@@ -144,6 +142,13 @@ _SCRIPT = """<script>
   };
   const navigateChat = path => location.assign(chatHref(path));
   if (embedded) root.querySelectorAll('a[href^="/research-chat/"]').forEach(link => link.href = chatHref(link.getAttribute('href')));
+
+  const entryChoices = root.querySelectorAll('[data-entry-choice]');
+  entryChoices.forEach(button => button.addEventListener('click', () => {
+    const choice = button.dataset.entryChoice;
+    entryChoices.forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+    root.querySelectorAll('[data-entry-panel]').forEach(panel => { panel.hidden = panel.dataset.entryPanel !== choice; });
+  }));
 
   const historyToggle = root.querySelector('[data-research-history-toggle]');
   if (historyToggle) {
@@ -502,7 +507,7 @@ _SCRIPT = """<script>
     }
     button.disabled = true;
     try {
-      const data = await request('/api/research-chat/session', {mode,task_id:taskId || undefined});
+      const data = await request('/api/research-chat/session', {mode,task_id:mode === 'migration' ? undefined : taskId || undefined});
       navigateChat('/research-chat/?session=' + encodeURIComponent(data.session_id));
     } catch (err) {
       button.disabled = false;
@@ -652,6 +657,13 @@ def page_body(snapshot: dict[str, Any], *, mode: str = "research", embedded: boo
         body = (
             '<div class="tm-research-entry">'
             '<div class="tm-chat-welcome"><h1>有什么想一起研究的？</h1></div>'
+            '<section class="tm-chat-entry-tools" aria-label="选择研究入口">'
+            '<div class="tm-chat-entry-switch" aria-label="研究入口分类">'
+            f'<button type="button" data-entry-choice="existing" aria-pressed="{str(bool(valid_tasks)).lower()}"' + ('' if valid_tasks else ' disabled') + '>已有项目</button>'
+            f'<button type="button" data-entry-choice="new" aria-pressed="{str(not valid_tasks).lower()}">新建项目</button></div>'
+            '<div data-entry-panel="existing"' + ('' if valid_tasks else ' hidden') + '>'
+            f'<div class="tm-research-starts tm-chat-intent-starts" aria-label="常用科研对话">{cards}</div></div>'
+            '<div data-entry-panel="new"' + (' hidden' if valid_tasks else '') + '>' + entry_panel() + '</div></section>'
             '<div class="tm-chat-first-composer">'
             '<div class="tm-chat-project-bar" aria-label="项目上下文"' + ('' if valid_tasks else ' hidden') + '>'
             '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3Z"/></svg>'
@@ -681,16 +693,6 @@ def page_body(snapshot: dict[str, Any], *, mode: str = "research", embedded: boo
             '<button type="submit" class="tm-research-direct-send" data-research-send aria-label="发送" title="发送" disabled>'
             '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5m-6 6 6-6 6 6"/></svg></button></div></div>'
             '</form></div>'
-            '<div class="tm-chat-entry-tools">'
-            '<details class="tm-chat-start-options"' + ('' if valid_tasks else ' hidden') + '><summary>科研工具 <span>⌄</span></summary>'
-            f'<div class="tm-research-starts tm-chat-intent-starts" aria-label="常用科研对话">{cards}</div>'
-            '</details><details class="tm-chat-project-options"><summary>创建新项目 <span>⌄</span></summary>'
-            + entry_panel()
-            + '<details class="tm-chat-legacy-setup"><summary>按研究合同建立项目</summary>'
-            + setup_panel(str(snapshot.get("workspace") or ""), auto_welcome=False) + '</details>'
-            + '<details class="tm-research-migrate"><summary>迁移已有研究</summary>'
-            '<button type="button" data-research-mode="migration">迁移已有工作并初始化任务</button></details>'
-            '</details></div>'
             '</div>'
         )
     streaming = bool(session and session.get("streaming"))

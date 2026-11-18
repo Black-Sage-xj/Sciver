@@ -47,13 +47,16 @@ class OnboardingTests(unittest.TestCase):
 
     def test_empty_research_chat_offers_preparation_without_an_existing_task(self):
         body = chat_body({'tasks': [], 'sessions': []})
-        self.assertIn('创建新项目', body)
+        self.assertIn('新建项目', body)
         self.assertIn('已有明确问题', body)
         self.assertIn('从兴趣或现象开始', body)
         document = BeautifulSoup(body, 'html.parser')
         self.assertIsNotNone(document.select_one('form[data-research-direct]'))
         self.assertIsNotNone(document.select_one('[data-research-prompt]'))
-        self.assertIn('hidden', document.select_one('.tm-chat-start-options').attrs)
+        self.assertTrue(document.select_one('[data-entry-panel="existing"]').has_attr('hidden'))
+        self.assertFalse(document.select_one('[data-entry-panel="new"]').has_attr('hidden'))
+        self.assertTrue(document.select_one('[data-entry-choice="existing"]').has_attr('disabled'))
+        self.assertIsNotNone(document.select_one('[data-research-mode="migration"]'))
         self.assertIsNotNone(document.select_one('[data-preparation-entry="clear"]'))
         self.assertIsNotNone(document.select_one('[data-preparation-entry="exploratory"]'))
         self.assertIsNone(document.select_one('[data-prep-draft]'))
