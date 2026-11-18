@@ -35,6 +35,7 @@ jobs:
       - name: Exercise settings and Worker controls in browsers
         env:
           TM_BROWSER_E2E: '1'
+          DEBUG: pw:browser
         run: python -m pytest -q web/tests/test_settings_browser.py web/tests/test_worker_close_browser_20261116.py web/tests/test_webui_browser_smoke_20261018.py
       - name: Build and validate Research Chat frontend
         working-directory: web/research_chat_frontend

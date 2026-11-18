@@ -1,31 +1,27 @@
-"""Opt-in real Firefox smoke test; no Selenium/Playwright dependency is required.
+"""Opt-in Firefox smoke test using the same Playwright runtime installed by CI.
 
 Run with TM_BROWSER_E2E=1 pytest -q web/tests/test_webui_browser_smoke_20261018.py.
+Requires playwright and its Firefox browser (python -m playwright install firefox).
 """
 from __future__ import annotations
 
-import json
 import os
-import shutil
-import socket
-import subprocess
 import threading
-import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.request import Request, urlopen
 
 from tm_observer.supervisor_view import _refresh_script
 
 
-@unittest.skipUnless(os.environ.get('TM_BROWSER_E2E') == '1'
-                     and shutil.which('firefox') and shutil.which('geckodriver'),
-                     'set TM_BROWSER_E2E=1 and install Firefox + geckodriver')
+@unittest.skipUnless(os.environ.get('TM_BROWSER_E2E') == '1',
+                     'set TM_BROWSER_E2E=1; install Playwright Firefox')
 class RealBrowserSmokeTests(unittest.TestCase):
     def test_firefox_keeps_shadow_dom_draft_until_safe_to_refresh(self):
+        from playwright.sync_api import sync_playwright
+
         state = {'requests': 0, 'lock': threading.Lock()}
-        refresh = _refresh_script(active=True, waiting=True).replace('const delay=3000;', 'const delay=100;')
-        page = ("<!doctype html><html><head><meta charset='utf-8'></head><body>"
+        refresh = _refresh_script(active=True, waiting=True)
+        page_html = ("<!doctype html><html><head><meta charset='utf-8'></head><body>"
                 "<details open id='details'><summary>details</summary></details>"
                 "<script>customElements.define('loquix-chat-composer',class extends HTMLElement {"
                 "constructor(){super();const root=this.attachShadow({mode:'open'});"
@@ -41,10 +37,10 @@ class RealBrowserSmokeTests(unittest.TestCase):
                     state['requests'] += 1
                 self.send_response(200)
                 self.send_header('Content-Type', 'text/html; charset=utf-8')
-                self.send_header('Content-Length', str(len(page)))
+                self.send_header('Content-Length', str(len(page_html)))
                 self.send_header('Cache-Control', 'no-store')
                 self.end_headers()
-                self.wfile.write(page)
+                self.wfile.write(page_html)
 
             def log_message(self, *_args):
                 pass
@@ -59,88 +55,41 @@ class RealBrowserSmokeTests(unittest.TestCase):
             server_thread.join(timeout=3)
         self.addCleanup(stop_server)
 
-        with socket.socket() as sock:
-            sock.bind(('127.0.0.1', 0))
-            driver_port = sock.getsockname()[1]
-        driver = subprocess.Popen(
-            ['geckodriver', '--host', '127.0.0.1', '--port', str(driver_port)],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        session_id = None
-        base = f'http://127.0.0.1:{driver_port}'
-
-        def command(method: str, path: str, body=None, *, timeout=4):
-            data = json.dumps(body).encode('utf-8') if body is not None else None
-            request = Request(base + path, data=data, method=method,
-                              headers={'Content-Type': 'application/json'})
-            with urlopen(request, timeout=timeout) as response:
-                return json.loads(response.read()) if response.status != 204 else {}
-
-        try:
-            deadline = time.time() + 10
-            while True:
-                if driver.poll() is not None:
-                    self.fail('geckodriver exited before accepting a session')
-                try:
-                    command('GET', '/status')
-                    break
-                except Exception:
-                    if time.time() >= deadline:
-                        self.fail('geckodriver did not become ready')
-                    time.sleep(0.1)
-            # Browser startup can exceed the short local-command deadline on a
-            # busy test host; page interaction assertions retain that deadline.
-            created = command('POST', '/session', {
-                'capabilities': {'alwaysMatch': {
-                    'browserName': 'firefox',
-                    'moz:firefoxOptions': {'args': ['-headless']},
-                }}
-            }, timeout=30)['value']
-            session_id = created.get('sessionId') or created.get('session_id')
-            self.assertTrue(session_id, 'WebDriver must return a session id')
-
-            def execute(script: str):
-                return command('POST', f'/session/{session_id}/execute/sync',
-                               {'script': script, 'args': []})['value']
-
-            command('POST', f'/session/{session_id}/url',
-                    {'url': f'http://127.0.0.1:{server.server_address[1]}/'})
-            for _ in range(50):
-                if execute('return document.readyState') == 'complete':
-                    break
-                time.sleep(0.05)
-            time.sleep(0.25)
-            with state['lock']:
-                self.assertEqual(state['requests'], 1, 'open details must defer reload')
-
-            execute("document.getElementById('details').open=false;"
-                    "document.querySelector('loquix-chat-composer').shadowRoot"
-                    ".querySelector('loquix-prompt-input').value='unsent human draft';")
-            time.sleep(0.25)
-            with state['lock']:
-                self.assertEqual(state['requests'], 1, 'a draft in the real shadow DOM must defer reload')
-
-            execute("document.querySelector('loquix-chat-composer').shadowRoot"
-                    ".querySelector('loquix-prompt-input').value='';")
-            deadline = time.time() + 3
-            while time.time() < deadline:
-                with state['lock']:
-                    if state['requests'] >= 2:
-                        break
-                time.sleep(0.05)
-            with state['lock']:
-                self.assertGreaterEqual(state['requests'], 2, 'polling resumes when it is safe to refresh')
-        finally:
-            if session_id:
-                try:
-                    command('DELETE', f'/session/{session_id}')
-                except Exception:
-                    pass
-            driver.terminate()
+        with sync_playwright() as browser_api:
+            # Use Playwright's matching Firefox build, not a system browser/driver.
+            browser = browser_api.firefox.launch(headless=True, timeout=60000)
             try:
-                driver.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                driver.kill(); driver.wait(timeout=3)
+                page = browser.new_page()
+                page.set_default_timeout(5000)
+                errors = []
+                page.on('pageerror', lambda error: errors.append(str(error)))
+                page.clock.install(time='2026-01-01T00:00:00Z')
+                url = f'http://127.0.0.1:{server.server_address[1]}/'
+                page.goto(url)
+                page.clock.pause_at('2026-01-01T00:01:00Z')
+
+                # Exercise multiple real polling callbacks without wall-clock sleeps.
+                page.clock.run_for(6000)
+                with state['lock']:
+                    self.assertEqual(state['requests'], 1, 'open details must defer reload')
+
+                page.evaluate("document.getElementById('details').open=false;"
+                              "document.querySelector('loquix-chat-composer').shadowRoot"
+                              ".querySelector('loquix-prompt-input').value='unsent human draft';")
+                page.clock.run_for(6000)
+                with state['lock']:
+                    self.assertEqual(state['requests'], 1, 'a draft in the real shadow DOM must defer reload')
+
+                page.evaluate("document.querySelector('loquix-chat-composer').shadowRoot"
+                              ".querySelector('loquix-prompt-input').value='';")
+                with page.expect_response(url) as reloaded:
+                    page.clock.run_for(3000)
+                self.assertEqual(reloaded.value.status, 200)
+                with state['lock']:
+                    self.assertGreaterEqual(state['requests'], 2, 'polling resumes when it is safe to refresh')
+                self.assertEqual(errors, [])
+            finally:
+                browser.close()
 
 
 if __name__ == '__main__':
