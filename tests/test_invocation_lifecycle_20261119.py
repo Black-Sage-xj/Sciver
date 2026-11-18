@@ -213,3 +213,36 @@ def test_semantic_control_signal_is_not_reclassified_as_failure(tmp_path, monkey
         if row.get("role") == "investigator"
     )
     assert row["state"] == "interrupted" and row["error_type"] == "RecoveryStop"
+
+
+def test_no_collector_projection_tracks_role_switch_before_backend_and_keeps_last_position(
+    tmp_path, monkeypatch
+):
+    workflow, backend, cycle = prepared(tmp_path, monkeypatch)
+    # Bound this offline continuation to one Cycle. This changes only this
+    # temporary fixture's configuration, never a live task or provider.
+    config_path = workflow.spec.config_path
+    config = json.loads(config_path.read_text())
+    config["max_cycles"] = 1
+    config_path.write_text(json.dumps(config))
+    workflow.spec = TaskSpec.from_config(config_path)
+    assert workflow.collector is None
+    original = backend.invoke
+    observed = []
+
+    def invoke(role, prompt, thread_id, model, provider):
+        science = json.loads((cycle / "research_state.json").read_text())
+        projection = json.loads((cycle / "run_state.json").read_text())
+        assert science["phase"] == f"{role}:running"
+        assert science["active_role"] == role
+        assert science["active_invocation_id"].startswith(f"inv-{cycle.name}-{role}-")
+        assert projection["current_agent"] == role
+        assert projection["phase"] == science["phase"]
+        observed.append(role)
+        return original(role, prompt, thread_id, model, provider)
+
+    monkeypatch.setattr(backend, "invoke", invoke)
+    state = workflow.resume("1")
+    assert observed.index("investigator") < observed.index("judge")
+    assert state["active_invocation_id"] is None
+    assert state["active_role"] == observed[-1]

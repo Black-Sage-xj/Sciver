@@ -338,8 +338,16 @@ class InvocationPreparation:
             "investigation_attempt"
         ):
             self.session.owner._save_attempt(self.session.state)
+        # While an invocation is active this is its current role. Completion
+        # retains the same value as the last execution position for recovery.
+        # Set it before role.started/persist so the no-Collector projection
+        # cannot label this invocation with the previous completed role.
         self.session.state.update(
-            {"status": "active", "phase": f"{self.session.role}:running"}
+            {
+                "status": "active",
+                "phase": f"{self.session.role}:running",
+                "active_role": self.session.role,
+            }
         )
         self.session.owner._emit(
             self.session.state,
