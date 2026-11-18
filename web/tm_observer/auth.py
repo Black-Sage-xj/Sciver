@@ -20,7 +20,7 @@ class BasicAuthCredentials:
 
 @dataclass(frozen=True)
 class ObservatoryAuth:
-    """One Observatory. Every account has the same interface and operator controls."""
+    """Configured Web accounts; each account is routed to its own workspace."""
 
     accounts: tuple[BasicAuthCredentials, ...]
 
@@ -113,18 +113,23 @@ def ensure_auth_file(path: Path | None = None, *, username: str = "tmobserver") 
     return path
 
 
-def authorize_header(header: str | None, credentials: AuthRealm) -> bool:
+def account_from_header(header: str | None, credentials: AuthRealm) -> BasicAuthCredentials | None:
+    """Resolve an authenticated Basic header to its configured account."""
     if not header or not header.startswith("Basic "):
-        return False
+        return None
     encoded = header[6:].strip()
     try:
         decoded = base64.b64decode(encoded, validate=True).decode("utf-8")
     except (ValueError, UnicodeDecodeError):
-        return False
+        return None
     if ":" not in decoded:
-        return False
+        return None
     username, password = decoded.split(":", 1)
-    return match_account(credentials, username, password) is not None
+    return match_account(credentials, username, password)
+
+
+def authorize_header(header: str | None, credentials: AuthRealm) -> bool:
+    return account_from_header(header, credentials) is not None
 
 
 def _session_key(credentials: BasicAuthCredentials) -> bytes:
@@ -179,13 +184,22 @@ def _verify_session_token_for_account(
     return hmac.compare_digest(signature, expected)
 
 
-def session_from_cookie(header: str | None, credentials: AuthRealm) -> bool:
+def account_from_cookie(header: str | None, credentials: AuthRealm) -> BasicAuthCredentials | None:
+    """Resolve the existing signed session cookie without changing its format."""
     if not header:
-        return False
+        return None
     cookie = SimpleCookie()
     try:
         cookie.load(header)
     except Exception:
-        return False
+        return None
     morsel = cookie.get(SESSION_COOKIE)
-    return morsel is not None and verify_session_token(morsel.value, credentials)
+    if morsel is not None:
+        for account in auth_accounts(credentials):
+            if _verify_session_token_for_account(morsel.value, account):
+                return account
+    return None
+
+
+def session_from_cookie(header: str | None, credentials: AuthRealm) -> bool:
+    return account_from_cookie(header, credentials) is not None

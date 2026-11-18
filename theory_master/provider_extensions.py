@@ -24,8 +24,8 @@ _ALLOWED = {"base_url", "source_file", "wire_api", "env_key", "requires_openai_a
 
 def local_provider_config() -> Path:
     """Prefer user config, with a Git-ignored development overlay."""
-    user = Path.home() / ".config" / "theory-master" / "provider_connections.toml"
-    if user.is_file():
+    user = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "theory-master" / "provider_connections.toml"
+    if user.is_file() or os.environ.get("SCIVER_ISOLATED_WORKSPACE") == "1":
         return user
     return Path(__file__).resolve().parents[1] / "config" / "local" / "provider_connections.toml"
 
@@ -123,6 +123,8 @@ def optional_account_quota_plugin():
     Public wheels do not ship this module. Its absence disables quota
     monitoring without affecting public Services availability.
     """
+    if os.environ.get("SCIVER_ISOLATED_WORKSPACE") == "1":
+        return None
     from importlib.util import module_from_spec, spec_from_file_location
     path = Path(__file__).resolve().parents[1] / "config" / "local" / "account_quota_extension.py"
     if not path.is_file() or path.is_symlink():

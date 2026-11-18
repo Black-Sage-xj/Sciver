@@ -42,7 +42,7 @@ The Observatory combines artifact viewing with operator controls. It delegates r
 
 The run-action POST endpoint requires a matching `Origin`/`Host`, `X-TM-Operator-Intent: 1`, JSON input, and a server-discovered task ID. SDK checks reject stale cycle/status/launch expectations and invalid state transitions. These request checks do not grant a read-only role or replace authentication. Scientific verdicts remain governed by the SDK's Agent contracts.
 
-Authentication is enforced only when an auth configuration is supplied. Without it, `_authorized()` accepts requests. Keep the default loopback binding for local use; for remote use, configure authentication and an authenticated HTTPS reverse proxy or SSH tunnel. All configured Observatory logins access the same interface, including its operator controls; do not distribute one as a read-only viewer account.
+Authentication is enforced only when an auth configuration is supplied. Without it, `_authorized()` accepts requests. Keep the default loopback binding for local use; for remote use, configure authentication and an authenticated HTTPS reverse proxy or SSH tunnel. Each configured Web account has its own workspace and can operate its own tasks.
 
 The retired TMCR engineering-request UI is not the current write boundary.
 
@@ -85,6 +85,29 @@ python -m tm_observer serve --search-root /path/to/your/research/workspace \
 ```
 
 Browser login uses a seven-day `HttpOnly; Secure; SameSite=Strict` cookie, so remote browser access should use HTTPS. HTTP Basic Auth remains available for API clients. Store credentials outside the checkout; the generated credential file is private to its owner.
+
+When the credential file contains additional accounts in the legacy `viewers`
+array, `serve` starts an authentication gateway and one backend process per
+account. The top-level account retains the configured search root and state
+directory. Each additional account receives a new empty workspace, chat store,
+project preparation area, SDK data root and application home under
+`<state-dir>/accounts/<account-name>-<stable-hash>/`. Adding an account and
+restarting the service creates its workspace automatically; subsequent restarts
+reuse it. Choose a state directory outside the primary account's search root so
+its scanner cannot discover another account's tasks.
+
+Only the currently selected model-provider authentication is seeded once into a
+new account's private home. Research, model conversations, plans and scientific
+records are never copied. Directory import and notebook moves stay within the
+account's workspace; task IDs, chat IDs and artifacts from another account are
+unavailable. Browser chat selections and drafts are also scoped by workspace.
+Provider service switching and host quota administration remain available to
+the primary account. Workspace settings and PDF conversion use each account's
+own configuration. Existing login cookies continue to work.
+
+These workspaces separate application data and normal workflows. Deploy
+separate OS users or containers when users also need a filesystem security
+boundary for model-executed code.
 
 An optional systemd user service keeps the server on loopback:
 

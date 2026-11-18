@@ -1,4 +1,5 @@
 import { bindComposerDraft } from "./drafts";
+import { workspaceStorage } from './workspace-storage';
 import { mergeSources, removeSubmittedSources, sourceKey, sourceMarkdown, type ReadingSource } from './research-sources';
 import {
   catalogHint, choicesWithCurrent, createCatalogRefresher, effortAfterModelChange, effortLabels,
@@ -28,6 +29,8 @@ import 'katex/dist/katex.min.css';
 import { ArrowDown, ChevronDown, Copy, LoaderCircle, Pencil, RotateCcw, Send, Square, Paperclip, Search, Quote, Download, GitFork, Maximize2, Minimize2, Bell, Plus, MoreHorizontal, FolderOpen, ArrowUp, X, ChevronUp } from 'lucide-react';
 import './styles.css';
 import './chat-surface.css';
+
+const localStorage = workspaceStorage('localStorage');
 
 type ChatMessage = FeatureMessage;
 type ActiveRun = RunDetails | null;
@@ -671,8 +674,8 @@ function App({ sessionId, mode }: { sessionId: string; mode: string }) {
   useEffect(() => {
     if (loading) return;
     try {
-      return bindComposerDraft(runtime.thread.composer, window.localStorage,
-        window.sessionStorage, sessionId, mode);
+      return bindComposerDraft(runtime.thread.composer, localStorage,
+        workspaceStorage('sessionStorage'), sessionId, mode);
     } catch { /* Storage access can be blocked by browser policy. */ }
   }, [runtime, loading, sessionId, mode]);
 
@@ -1078,7 +1081,7 @@ if (newModelSelect && newEffortSelect && document.querySelector<HTMLElement>('.t
     const effort = effortAfterModelChange(catalog, newModelSelect.value, newEffortSelect.value);
     updateSelect(newEffortSelect, effortsForModel(catalog, newModelSelect.value), effortLabels);
     newEffortSelect.value = effort;
-    try { window.localStorage.setItem('tm-research-chat-new-effort-v1', effort); } catch { /* Browser storage may be unavailable. */ }
+    try { localStorage.setItem('tm-research-chat-new-effort-v1', effort); } catch { /* Browser storage may be unavailable. */ }
     render();
   }, true);
   newEffortSelect.addEventListener('change', render);

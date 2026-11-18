@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { formatBytes, sameOriginAttachmentUrl, type ChatAttachment } from './chat-features';
 import { attachmentDraftKey, validateAttachmentFiles } from './attachment-utils';
+import { workspaceStorage } from './workspace-storage';
 export { attachmentAccept } from './attachment-utils';
 
 type UploadItem = { key: string; file?: File; attachment?: ChatAttachment; progress: number; status: 'uploading' | 'ready' | 'failed' | 'restoring'; error?: string };
 const MAX_FILES = 10;
+const localStorage = workspaceStorage('localStorage');
 
 export function useAttachments(sessionId: string, enabled: boolean, onError: (message: string) => void) {
   const [items, setItems] = useState<UploadItem[]>([]);

@@ -29,7 +29,8 @@ from .multi_worker import (
     CycleClaims, ProposalGate, _read_json, _save_json, attach_owner, finish_owned_claim, utcnow,
 )
 from .runtime_manager import (
-    _runtime_env, process_identity_alive, process_start_ticks, runtime_health,
+    _runtime_env, _service_command, _service_environment,
+    process_identity_alive, process_start_ticks, runtime_health,
     runtime_source_provenance,
 )
 
@@ -41,19 +42,14 @@ def _launch_detached_service(args: list[str], *, root: Path, env: dict[str, str]
     process self-registers the authoritative PID/start ticks.
     """
     unit = f"tm-{kind}-{uuid.uuid4().hex[:12]}"
-    forwarded = ("PYTHONPATH", "PATH", "HOME", "LANG", "LC_ALL", "HTTP_PROXY",
-                 "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy",
-                 "all_proxy", "no_proxy", "THEORYMASTER_CODEX_HOME", "THEORYMASTER_ENV_FILE",
-                 "THEORYMASTER_QUOTA_PROVIDER_FALLBACK")
-    values = [(k, v) for k, v in env.items() if k in forwarded or
-              k.startswith(("THEORY_MASTER", "THEORYMASTER_WORKER"))]
+    values = _service_environment(env).items()
     cmd = ["systemd-run", "--user", "--collect", "--unit", unit,
            "--working-directory", str(root)]
     cmd.extend(f"--setenv={key}={value}" for key, value in values)
     if getattr(output, "name", None) and str(output.name).startswith("/"):
         cmd.append(f"--property=StandardOutput=append:{output.name}")
         cmd.append("--property=StandardError=inherit")
-    proc = subprocess.run([*cmd, *args], cwd=root, env=env,
+    proc = subprocess.run([*cmd, *_service_command(args, env)], cwd=root, env=env,
                           stdin=subprocess.DEVNULL, stdout=output,
                           stderr=subprocess.STDOUT, check=False, timeout=15)
     if proc.returncode:

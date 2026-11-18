@@ -124,6 +124,13 @@ _SCRIPT = """<script>
 (() => {
   const root = document.querySelector('.tm-research-chat');
   if (!root) return;
+  const workspace = document.querySelector('meta[name="sciver-workspace"]')?.content || '';
+  const storageKey = key => workspace ? 'sciver-workspace:' + workspace + ':' + key : key;
+  const localStorage = {
+    getItem: key => window.localStorage.getItem(storageKey(key)),
+    setItem: (key, value) => window.localStorage.setItem(storageKey(key), value),
+    removeItem: key => window.localStorage.removeItem(storageKey(key)),
+  };
   const error = root.querySelector('.tm-research-error');
   const embedded = root.dataset.embedded === 'true';
   const chatHref = path => {

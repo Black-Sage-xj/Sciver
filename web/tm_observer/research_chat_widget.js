@@ -1,6 +1,8 @@
 /* One same-origin Research Chat runtime, shared by the compact and full pages. */
 (() => {
   'use strict';
+  const workspace = document.querySelector('meta[name="sciver-workspace"]')?.content || '';
+  const storageKey = key => workspace ? 'sciver-workspace:' + workspace + ':' + key : key;
   const navigationURL = href => {
     try {
       const url=new URL(href,location.href);
@@ -9,6 +11,7 @@
     } catch (_) { return null; }
   };
   const store = (kind, key, value) => {
+    key = storageKey(key);
     try { const storage=window[kind]; if (value === undefined) return storage.getItem(key); storage.setItem(key, value); } catch (_) {}
     return null;
   };

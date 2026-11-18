@@ -50,6 +50,7 @@ from .vault_files import FILE_ACTIONS, local_file_actions, route_action as vault
 from .research_explorer_ui import explorer_html
 from .research_chat import ResearchChatError, snapshot as research_chat_snapshot
 from .navigation_model import task_console_url
+from .workspace_scope import WorkspaceScopeError, host_route, scoped_state, task_in_workspace, workspace_path
 
 
 from .dashboard_ui import STYLE, THEME_BOOTSTRAP_SCRIPT, dashboard_shell
@@ -206,9 +207,10 @@ def stage_workflow_html(
     field_notes_state_dir: Path | None = None,
     workflow_version: str | None = None,
     display_mode: str = "overview",
+    include_change_requests: bool = True,
 ) -> str:
-    loaded = load_change_requests(allowed_flow_nodes=flow_node_ids())
-    requests = _tm_system_requests(loaded.requests)
+    loaded = load_change_requests(allowed_flow_nodes=flow_node_ids()) if include_change_requests else None
+    requests = _tm_system_requests(loaded.requests) if loaded is not None else ()
     overrides = _synced_field_notes(field_notes_state_dir) if field_notes_state_dir is not None else {}
     body = stage_workflow_body(
         requests,
@@ -220,7 +222,7 @@ def stage_workflow_html(
     # Historical TMCR manifests are not part of active scientific routing.
     # Keep diagnostics accessible, but never allow them to occupy the Workflow
     # landing screen ahead of the diagram.
-    if loaded.warnings:
+    if loaded is not None and loaded.warnings:
         items = "".join(f"<li>{_fmt(item)}</li>" for item in loaded.warnings)
         body += (
             f'<details class="tm-workflow-diagnostics"><summary>历史提请校验提示（{len(loaded.warnings)}）</summary>'
@@ -850,8 +852,10 @@ class StateCache:
     is returned while a later request retries after a short backoff.
     """
 
-    def __init__(self, search_root: Path, ttl_s: float = 5.0, *, git_ttl_s: float = 60.0, cold_wait_s: float = 8.0):
+    def __init__(self, search_root: Path, ttl_s: float = 5.0, *, git_ttl_s: float = 60.0, cold_wait_s: float = 8.0,
+                 isolated_workspace: bool = False):
         self.search_root = search_root
+        self.isolated_workspace = isolated_workspace
         self.ttl_s = max(0.2, float(ttl_s))
         self.git_ttl_s = max(5.0, float(git_ttl_s))
         self.cold_wait_s = max(0.1, float(cold_wait_s))
@@ -912,6 +916,8 @@ class StateCache:
             if additions:
                 state = {**state, "runs": [*state.get("runs", []), *additions],
                          "system": {**state.get("system", {}), "task_count": len(state.get("runs", [])) + len(additions)}}
+            if self.isolated_workspace:
+                state = scoped_state(state, self.search_root)
             self._created_runs = {ident: row for ident, row in self._created_runs.items() if ident not in discovered}
             git_info = self._git_snapshot
             if git_info is None and self._state is not None:
@@ -972,6 +978,8 @@ class StateCache:
         """Expose a confirmed local creation before the next workspace scan."""
         from .collector import collect_run
         run = collect_run(task_root)
+        if self.isolated_workspace and not task_in_workspace(run, self.search_root):
+            raise WorkspaceScopeError("新任务绑定不属于当前账户工作区")
         with self._condition:
             self._created_runs[run["observer_id"]] = run
             if self._state is not None:
@@ -1006,7 +1014,7 @@ class StateCache:
             elif now - self._at >= self.ttl_s:
                 self._start_state_refresh_locked()
             self._start_git_refresh_locked()
-            return self._state
+            return scoped_state(self._state, self.search_root) if self.isolated_workspace else self._state
 
 
 def make_handler(
@@ -1015,7 +1023,9 @@ def make_handler(
     auth: AuthRealm | None = None,
     *,
     field_notes_state_dir: Path | None = None,
+    isolated_workspace: bool = False,
 ):
+    cache.isolated_workspace = isolated_workspace
     notes_state_dir = (
         field_notes_state_dir
         or (static_manager.state_dir if static_manager is not None else cache.search_root / ".tm-observer-state")
@@ -1026,6 +1036,9 @@ def make_handler(
     access = AccessSettings(notes_state_dir, cache.search_root, auth)
     auth = access.current
 
+    def quota_snapshot(*, request_update: bool = False) -> dict | None:
+        return None if isolated_workspace else quota_history.snapshot(request_update=request_update)
+
     class Handler(BaseHTTPRequestHandler):
         server_version = "TMObservatory/0.2"
 
@@ -1033,6 +1046,16 @@ def make_handler(
                   status: HTTPStatus = HTTPStatus.OK, *, set_cookie: str | None = None,
                   cache_control: str = "no-store", etag: str | None = None,
                   retry_after: int | None = None, download_name: str | None = None) -> None:
+            if content_type.startswith("text/html"):
+                workspace_id = hashlib.sha256(str(cache.search_root.resolve()).encode()).hexdigest()[:16]
+                marker = f'<meta name="sciver-workspace" content="{workspace_id}">'.encode()
+                if b"<head>" in payload:
+                    payload = payload.replace(b"<head>", b"<head>" + marker, 1)
+                elif b"<head " in payload:
+                    start = payload.index(b"<head ")
+                    end = payload.find(b">", start)
+                    if end >= 0:
+                        payload = payload[:end + 1] + marker + payload[end + 1:]
             if etag and status == HTTPStatus.OK and self.headers.get("If-None-Match", "").strip() == etag:
                 self.send_response(HTTPStatus.NOT_MODIFIED)
                 self.send_header("Cache-Control", cache_control)
@@ -1080,6 +1103,16 @@ def make_handler(
             self.end_headers()
             self.wfile.write(payload)
 
+        def _workspace_route_allowed(self, path: str) -> bool:
+            if isolated_workspace and host_route(path, method=self.command):
+                if not self._authorized():
+                    self._send_unauthorized()
+                else:
+                    self._send('{"error":"此设置由服务管理员管理"}'.encode(),
+                               "application/json; charset=utf-8", HTTPStatus.FORBIDDEN)
+                return False
+            return True
+
         def do_GET(self) -> None:
             path = self.path.split("?", 1)[0]
             if path == "/favicon.svg":
@@ -1104,6 +1137,8 @@ def make_handler(
                     self.send_header("Cache-Control", "no-store")
                     self.send_header("Content-Length", "0")
                     self.end_headers()
+                return
+            if not self._workspace_route_allowed(path):
                 return
             if path == "/research-chat/widget.js":
                 script = Path(__file__).resolve().parent / "research_chat_widget.js"
@@ -1467,8 +1502,21 @@ def make_handler(
                 try:
                     matched = vault_route_action(path)
                     if matched and matched[1] in FILE_ACTIONS:
-                        data, content_type, filename = vault_get(path, self.path.partition("?")[2],
+                        if isolated_workspace and matched[1] == "vault-directories":
+                            params = parse_qs(self.path.partition("?")[2], keep_blank_values=True)
+                            directory = (params.get("path") or [""])[0] or str(cache.search_root)
+                            workspace_path(directory, cache.search_root)
+                            # Clamp the default/parent navigation at the account root.
+                            query = urlencode({"path": directory})
+                        else:
+                            query = self.path.partition("?")[2]
+                        data, content_type, filename = vault_get(path, query,
                             cache.search_root, state, local=self._local_file_actions())
+                        if isolated_workspace and matched[1] == "vault-directories":
+                            listing = json.loads(data)
+                            if listing.get("path") == str(cache.search_root.resolve()):
+                                listing["parent"] = None
+                            data = json.dumps(listing, ensure_ascii=False).encode()
                         self._send(data, content_type, download_name=filename)
                         return
                     if path.endswith("/image"):
@@ -1477,7 +1525,7 @@ def make_handler(
                         self._send(data, content_type)
                         return
                     data, status = canvas_md_get(path, self.path.partition("?")[2], cache.search_root, state)
-                except ExplorerError as exc:
+                except (ExplorerError, WorkspaceScopeError) as exc:
                     data = (json.dumps({"error": str(exc)}, ensure_ascii=False) + "\n").encode("utf-8")
                     status = exc.status
                 except (OSError, RuntimeError, ValueError):
@@ -1570,6 +1618,9 @@ def make_handler(
                     return
                 observer_id = parts[1]
                 if len(observer_id) != 16 or any(ch not in "0123456789abcdef" for ch in observer_id):
+                    self._send(b"not found\n", "text/plain; charset=utf-8", HTTPStatus.NOT_FOUND)
+                    return
+                if not any(row.get("observer_id") == observer_id for row in state.get("runs", [])):
                     self._send(b"not found\n", "text/plain; charset=utf-8", HTTPStatus.NOT_FOUND)
                     return
                 artifact = static_manager.state_dir / "runs" / observer_id / "sequence.html"
@@ -1859,7 +1910,7 @@ def make_handler(
                           history_cycle=(params.get("history_cycle") or [""])[0],
                           canvas_available=canvas_available,
                           worker_id=(params.get("worker") or [None])[0],
-                          quota_snapshot=quota_history.snapshot(request_update=True)).encode("utf-8"),
+                          quota_snapshot=quota_snapshot(request_update=True)).encode("utf-8"),
                           "text/html; charset=utf-8")
                 return
             if path in {"/", "/task-console/"}:
@@ -1959,7 +2010,7 @@ def make_handler(
                     run_detail_body(run, tab=tab, canvas_available=canvas_available,
                                     history_cycle=(params.get("history_cycle") or [""])[0],
                                     worker_id=(params.get("worker") or [None])[0],
-                                    quota_snapshot=quota_history.snapshot(request_update=True)),
+                                    quota_snapshot=quota_snapshot(request_update=True)),
                     active="run", back_href=parent_href,
                     breadcrumb_leaf=(
                         "Events" if tab == "events" else
@@ -2016,6 +2067,9 @@ def make_handler(
                 return
             elif path in {"/workflow-stage-preview", "/workflow-stage-preview/"}:
                 query = parse_qs(self.path.partition("?")[2], keep_blank_values=True)
+                if isolated_workspace and query.get("request"):
+                    self._send(b"not found\n", "text/plain; charset=utf-8", HTTPStatus.NOT_FOUND)
+                    return
                 selected_request_id = (query.get("request") or [None])[0]
                 workflow_version = (query.get("workflow_version") or [None])[0]
                 display_mode = (query.get("view") or ["overview"])[0]
@@ -2035,6 +2089,7 @@ def make_handler(
                         field_notes_state_dir=notes_state_dir,
                         workflow_version=workflow_version,
                         display_mode=display_mode,
+                        include_change_requests=not isolated_workspace,
                     )
                 except (OSError, ValueError, KeyError, TypeError, SyntaxError) as exc:
                     payload = _workflow_unavailable_html("Workflow 暂时不可用", exc,
@@ -2045,7 +2100,7 @@ def make_handler(
             elif path in {"/services", "/services/"}:
                 payload = services_html(
                     state, static_manager,
-                    quota_snapshot=quota_history.snapshot(),
+                    quota_snapshot=quota_snapshot(),
                     back_href=_remembered_console(self.headers.get("Cookie"), state),
                 ).encode("utf-8")
             else:
@@ -2057,6 +2112,8 @@ def make_handler(
         def do_POST(self) -> None:
             nonlocal auth
             path = self.path.split("?", 1)[0]
+            if not self._workspace_route_allowed(path):
+                return
             if path == "/api/settings/access":
                 if not self._authorized():
                     self._send_unauthorized()
@@ -2126,12 +2183,14 @@ def make_handler(
                             or size < 2 or size > 16000):
                         raise ValueError("invalid JSON request")
                     payload = json.loads(self.rfile.read(size).decode("utf-8"))
+                    if isolated_workspace and isinstance(payload, dict) and payload.get("action") == "move":
+                        workspace_path(payload.get("destination"), cache.search_root)
                     result = vault_post(path, payload, cache.search_root, cache.get(),
                                         local=self._local_file_actions())
                     if isinstance(payload, dict) and payload.get("action") == "move":
                         cache._at = 0.0
                     status = HTTPStatus.OK
-                except ExplorerError as exc:
+                except (ExplorerError, WorkspaceScopeError) as exc:
                     result, status = {"error": str(exc)}, HTTPStatus(exc.status)
                 except (ValueError, UnicodeError):
                     result, status = {"error": "无效笔记库请求"}, HTTPStatus.BAD_REQUEST
@@ -2197,8 +2256,12 @@ def make_handler(
                     code = HTTPStatus.OK
                     if parts == ["api", "research-chat", "import-preview"]:
                         from .project_setup import source_inventory
+                        if isolated_workspace:
+                            workspace_path(data.get("source_directory"), cache.search_root)
                         result = source_inventory(str(data.get("source_directory") or ""))
                     elif parts == ["api", "research-chat", "session"]:
+                        if isolated_workspace and data.get("source_directory"):
+                            workspace_path(data["source_directory"], cache.search_root)
                         result = create(notes_state_dir, state, data)
                     elif parts == ["api", "research-chat", "sources"]:
                         from .research_chat_sources import prepare_source
@@ -2265,7 +2328,7 @@ def make_handler(
                             cache._at = 0.0
                     else:
                         raise ResearchChatError("API 不存在", 404)
-                except ResearchChatError as exc:
+                except (ResearchChatError, WorkspaceScopeError) as exc:
                     result, code = {"error": str(exc)}, HTTPStatus(exc.status)
                 except (UnicodeError, ValueError, json.JSONDecodeError, TypeError):
                     result, code = {"error": "无效 JSON"}, HTTPStatus.BAD_REQUEST
@@ -2762,20 +2825,53 @@ def serve(
     auth_file: Path | None = None,
     open_browser: bool = False,
 ) -> None:
-    search_root = search_root.resolve()
     auth = load_auth_file(auth_file) if auth_file is not None else None
+    from .auth import auth_accounts
+    if auth is not None and len(auth_accounts(auth)) > 1:
+        from .account_workspaces import serve_accounts
+        serve_accounts(auth, search_root, host, port, cache_ttl,
+                       state_dir=state_dir or default_state_dir(),
+                       archify_root=archify_root or default_archify_root(),
+                       static_refresh=static_refresh, open_browser=open_browser)
+        return
+    _serve_single(search_root, host, port, cache_ttl, state_dir=state_dir,
+                  archify_root=archify_root, static_refresh=static_refresh,
+                  auth=auth, open_browser=open_browser)
+
+
+def _serve_single(
+    search_root: Path,
+    host: str = "127.0.0.1",
+    port: int = 8787,
+    cache_ttl: float = 5.0,
+    *,
+    state_dir: Path | None = None,
+    archify_root: Path | None = None,
+    static_refresh: float = 30.0,
+    auth: AuthRealm | None = None,
+    open_browser: bool = False,
+    isolated_workspace: bool = False,
+    ready=None,
+) -> None:
+    search_root = search_root.resolve()
+    state_dir = (state_dir or default_state_dir()).expanduser().resolve()
     cache = StateCache(search_root, cache_ttl)
-    manager = StaticViewManager(
+    manager = None if isolated_workspace else StaticViewManager(
         search_root,
-        state_dir or default_state_dir(),
+        state_dir,
         archify_root=archify_root or default_archify_root(),
         interval_s=static_refresh,
     )
     try:
-        server = ThreadingHTTPServer((host, int(port)), make_handler(cache, manager, auth))
+        server = ThreadingHTTPServer((host, int(port)), make_handler(
+            cache, manager, auth, field_notes_state_dir=state_dir,
+            isolated_workspace=isolated_workspace))
     except OSError as exc:
         raise OSError(f"Cannot listen on {host}:{port}: {exc}. Choose another port with --port 8788.") from exc
-    manager.start()
+    if ready is not None:
+        ready(server.server_port)
+    if manager is not None:
+        manager.start()
     browser_host = "127.0.0.1" if host in {"0.0.0.0", "127.0.0.1"} else host
     url = f"http://{browser_host}:{server.server_port}/"
     print(f"Sciver Web UI: {url}\nPress Ctrl+C to stop the server; task files are preserved.", flush=True)
@@ -2793,4 +2889,5 @@ def serve(
     finally:
         monitor_stop.set()
         server.server_close()
-        manager.stop()
+        if manager is not None:
+            manager.stop()

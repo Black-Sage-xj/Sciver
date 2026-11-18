@@ -500,11 +500,53 @@ def _supervisor_command(spec: Any, *, operation: str, identifier: str, launch_id
     return cmd
 
 
+_SERVICE_ENV = frozenset({
+    "PYTHONPATH", "PATH", "HOME", "LANG", "LC_ALL", "HTTP_PROXY", "HTTPS_PROXY",
+    "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+    "THEORYMASTER_CODEX_HOME", "THEORYMASTER_ENV_FILE", "THEORYMASTER_QUOTA_PROVIDER_FALLBACK",
+})
+_WORKSPACE_ENV = frozenset({
+    "SCIVER_ISOLATED_WORKSPACE", "SCIVER_WORKSPACE", "SCIVER_WORKSPACE_ID",
+    "SCIVER_DOCUMENT_CONVERSION_CONFIG", "SCIVER_SKILL_LIBRARY", "SCIVER_TEST_ROOT",
+    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME",
+    "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "TMPDIR", "SSL_CERT_FILE",
+    "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "THEORYMASTER_RUNTIME_PYTHON",
+    "THEORYMASTER_COMPUTE_PYTHON", "THEORYMASTER_SCHOLARLY_PYTHON",
+    "THEORYMASTER_IDENTITIES_ROOT", "THEORYMASTER_SKILLS_ROOT", "THEORYMASTER_PRICING_CACHE",
+    "THEORYMASTER_PROFILE", "THEORYMASTER_PROFILE_FILE", "THEORYMASTER_MODEL",
+    "THEORYMASTER_PROVIDER", "THEORYMASTER_MODEL_PROVIDER", "THEORYMASTER_MODEL_PROVIDER_FILE",
+    "THEORYMASTER_MODEL_PRESETS_FILE", "THEORYMASTER_ROUTE", "THEORYMASTER_JEV_MODEL",
+    "THEORYMASTER_NETWORK_CHECK", "THEORYMASTER_NATIVE_COMPACTION",
+    "THEORYMASTER_COMPACT_SCOPE", "THEORYMASTER_COMPACT_THRESHOLD_TOKENS",
+    "THEORYMASTER_TURN_WATCHDOG_SECONDS", "THEORYMASTER_SEMANTIC_BACKEND",
+})
+
+
+def _service_environment(env: dict[str, str]) -> dict[str, str]:
+    """Carry explicit workspace paths across the systemd user-manager boundary."""
+    isolated = env.get("SCIVER_ISOLATED_WORKSPACE") == "1"
+    return {key: value for key, value in env.items()
+            if key in _SERVICE_ENV or key.startswith(("THEORY_MASTER", "THEORYMASTER_WORKER"))
+            or (isolated and key in _WORKSPACE_ENV)}
+
+
+def _service_command(command: list[str], env: dict[str, str]) -> list[str]:
+    if env.get("SCIVER_ISOLATED_WORKSPACE") != "1":
+        return command
+    # A user manager may retain the legacy host's HOME, keys and data roots.
+    # Reset its inherited environment before starting the isolated process.
+    return ["/usr/bin/env", "-i", *(f"{key}={value}" for key, value in
+            _service_environment(env).items()), *command]
+
+
 def _runtime_env() -> dict[str, str]:
-    env = os.environ.copy()
-    parts = [str(_package_root()), str(_repo_root()), str(_repo_root() / "gs_study/_tool")]
+    isolated = os.environ.get("SCIVER_ISOLATED_WORKSPACE") == "1"
+    env = _service_environment(dict(os.environ)) if isolated else os.environ.copy()
+    parts = [str(_package_root())]
+    if not isolated:
+        parts.extend([str(_repo_root()), str(_repo_root() / "gs_study/_tool")])
     existing = env.get("PYTHONPATH")
-    if existing:
+    if existing and not isolated:
         parts.append(existing)
     env["PYTHONPATH"] = ":".join(parts)
     env.setdefault("THEORY_MASTER_EMAIL_TERMINAL", "1")
@@ -554,8 +596,10 @@ def launch_managed_runtime(spec: Any, *, operation: str, identifier: str, model:
         launched = False
         detail = ""
         if shutil.which("systemd-run") and shutil.which("systemctl"):
-            systemd_cmd = ["systemd-run", "--user", f"--unit={unit}", "--collect", "--property=Restart=on-failure", "--property=RestartSec=2s", "--property=StartLimitBurst=3", "--property=StartLimitIntervalSec=120s", "--property=KillMode=control-group", f"--setenv=PATH={env.get('PATH', '')}", f"--setenv=PYTHONPATH={env['PYTHONPATH']}", "--setenv=THEORY_MASTER_EMAIL_TERMINAL=1", *cmd]
-            proc = subprocess.run(systemd_cmd, cwd=_repo_root(), text=True, capture_output=True, check=False)
+            systemd_cmd = ["systemd-run", "--user", f"--unit={unit}", "--collect", "--property=Restart=on-failure", "--property=RestartSec=2s", "--property=StartLimitBurst=3", "--property=StartLimitIntervalSec=120s", "--property=KillMode=control-group"]
+            systemd_cmd.extend(f"--setenv={key}={value}" for key, value in _service_environment(env).items())
+            systemd_cmd.extend(_service_command(cmd, env))
+            proc = subprocess.run(systemd_cmd, cwd=_repo_root(), env=env, text=True, capture_output=True, check=False)
             if proc.returncode == 0:
                 launched = True
                 detail = (proc.stdout or "").strip()

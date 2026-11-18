@@ -96,7 +96,10 @@ def load_model_profile_file(path: Path) -> dict[str, RoleRoute]:
 
 def _load_model_profiles() -> dict[str, dict[str, RoleRoute]]:
     profiles: dict[str, dict[str, RoleRoute]] = {}
-    for directory in (MODEL_PROFILE_DIR, LOCAL_MODEL_PROFILE_DIR):
+    directories = (MODEL_PROFILE_DIR,) if os.environ.get("SCIVER_ISOLATED_WORKSPACE") == "1" else (
+        MODEL_PROFILE_DIR, LOCAL_MODEL_PROFILE_DIR,
+    )
+    for directory in directories:
         for path in sorted(directory.glob("*.toml")):
             profiles[path.stem] = load_model_profile_file(path)
     if not profiles:
