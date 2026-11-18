@@ -325,10 +325,12 @@ def native_goal_setup_turn(context_prompt: str, goal_objective: str = "") -> str
 
 
 def run_native_goal(thread: Any, objective: str, *,
-                    on_event: Callable[[Any], None] | None = None) -> NativeGoalResult:
+                    on_event: Callable[[Any], None] | None = None,
+                    on_turn_boundary: Callable[[Any], None] | None = None) -> NativeGoalResult:
     """Use the SDK's genuine thread-scoped Goal logical stream, never a normal Turn.
 
-    Only the native `complete` status permits the SDK to consume the authored handoff.
+    Scientific Findings require native `complete`. The separate administrative
+    input-limit hook may interrupt only at a verified physical turn boundary.
     Scientific duration has NO elapsed-time limit. Native token/usage budgets,
     explicit operator pause/cancel and genuine errors retain their own statuses.
     """
@@ -337,15 +339,55 @@ def run_native_goal(thread: Any, objective: str, *,
             f"native Goal objective exceeds Codex's {CODEX_GOAL_MAX_CHARS}-character limit: {len(objective)}"
         )
     from openai_codex._goal import _GoalNotificationStream  # installed pinned SDK 0.155.1
+    from openai_codex.generated.v2_all import (
+        TurnStartedNotification, TurnCompletedNotification, TurnStatus, ThreadGoalStatus,
+    )
     from .observability.codex_events import (
         _get, extract_agent_text, extract_final_from_turn, turn_id_of,
     )
 
     client = thread._client
     state, logical_turn_id = client.start_goal_operation(thread.id, objective)
+    active_physical_turn = None
+    boundary_cancel_requested = False
+
+    def next_notification():
+        # The official cursor intentionally hides intermediate physical turn
+        # completions. Observe only their safe boundary, preserving its logical
+        # stream and all ordinary event/Collector semantics unchanged.
+        nonlocal active_physical_turn, boundary_cancel_requested
+        event = client.next_goal_notification(state)
+        payload = _get(event, "payload")
+        method = str(getattr(event, "method", ""))
+        if (method == "turn/started" and isinstance(payload, TurnStartedNotification)
+                and payload.thread_id == thread.id):
+            active_physical_turn = payload.turn.id
+        elif (method == "turn/completed" and isinstance(payload, TurnCompletedNotification)
+                and payload.thread_id == thread.id
+                and payload.turn.id == active_physical_turn):
+            if (on_turn_boundary is not None and payload.turn.status == TurnStatus.completed
+                    and payload.turn.error is None and state.status == ThreadGoalStatus.active
+                    and not state.interrupt_requested and not state.cleared):
+                try:
+                    on_turn_boundary(event)
+                except KeyboardInterrupt:
+                    # The official stream has its own KeyboardInterrupt cancel
+                    # branch. Let it own that request and skip our outer retry.
+                    boundary_cancel_requested = True
+                    raise
+                except BaseException:
+                    # Cancel before the official cursor unregisters and clears
+                    # its current-turn routing state while unwinding the hook.
+                    client.cancel_goal_operation(state)
+                    boundary_cancel_requested = True
+                    raise
+            active_physical_turn = None
+        return event
+
     stream = _GoalNotificationStream(
         state=state,
-        next_notification=lambda: client.next_goal_notification(state),
+        next_notification=next_notification if on_turn_boundary is not None
+                          else lambda: client.next_goal_notification(state),
         unregister=lambda: client.unregister_goal_operation(state),
         cancel_goal=lambda: client.cancel_goal_operation(state),
     )
@@ -384,7 +426,8 @@ def run_native_goal(thread: Any, objective: str, *,
                 on_event(event)
     except BaseException:
         # A failed Python/SKD stream must not leave an orphaned active Goal.
-        client.cancel_goal_operation(state)
+        if not boundary_cancel_requested:
+            client.cancel_goal_operation(state)
         raise
     finally:
         stream.close()
@@ -459,7 +502,7 @@ def read_execution_limit_handoff(
     This attests the invocation, frozen text and local source bytes only. The
     scientific sufficiency of the author's recovery audit is not machine certified.
     """
-    if result.status not in {"complete", "blocked"}:
+    if result.status not in {"complete", "blocked", "execution_limited"}:
         raise NativeGoalIncomplete(result.status, result.thread_id)
     path = Path(handoff_path)
     root = Path(workspace_path)

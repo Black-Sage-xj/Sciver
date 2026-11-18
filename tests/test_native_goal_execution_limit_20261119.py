@@ -13,11 +13,18 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from openai_codex._goal import _GoalOperationState
+from openai_codex.generated.v2_all import (
+    ThreadGoal, ThreadGoalStatus, ThreadGoalUpdatedNotification, Turn,
+    TurnCompletedNotification, TurnStartedNotification, TurnStatus,
+)
+from openai_codex.models import Notification, UnknownNotification
 
 from theory_master.native_goal import (
     EXECUTION_LIMIT_PROTOCOL_MARKER, EXECUTION_LIMIT_SCHEMA,
     NativeGoalDeliveryError, NativeGoalExecutionLimit, NativeGoalIncomplete, NativeGoalResult,
-    execution_limit_setup_binding, investigator_goal, read_execution_limit_handoff,
+    NativeGoalBudgetExceeded, execution_limit_setup_binding, investigator_goal,
+    read_execution_limit_handoff, run_native_goal,
 )
 from theory_master.scientific_objective import frozen_science_digest
 from theory_master.supervisor_incident import NativeGoalRuntimeFailure
@@ -61,6 +68,42 @@ def _read(path, binding, status="blocked"):
         frozen_objective_sha256=binding["frozen_objective_sha256"],
         workspace_path=Path(binding["workspace_path"]),
     )
+
+
+def _started(thread="scientific-thread", turn="physical-1"):
+    return Notification("turn/started", TurnStartedNotification(
+        thread_id=thread, turn=Turn(id=turn, items=[], status=TurnStatus.in_progress)))
+
+
+def _completed(thread="scientific-thread", turn="physical-1", error=None):
+    return Notification("turn/completed", TurnCompletedNotification(
+        thread_id=thread, turn=Turn(id=turn, items=[], status=TurnStatus.completed, error=error)))
+
+
+def _goal_update(status):
+    return Notification("thread/goal/updated", ThreadGoalUpdatedNotification(
+        thread_id="scientific-thread", goal=ThreadGoal(
+            thread_id="scientific-thread", objective="frozen goal", status=status,
+            created_at=1, updated_at=2, time_used_seconds=0, tokens_used=0)))
+
+
+def _official_stream(thread, events):
+    """Use the installed SDK cursor/stream/state; replace only its server I/O."""
+    state = _GoalOperationState(thread.id, logical_turn_id="logical-operation", status=ThreadGoalStatus.active)
+    incoming = iter(events)
+    calls, consumed = [], []
+    def next_event(_state):
+        event = next(incoming)
+        if isinstance(event.payload, ThreadGoalUpdatedNotification):
+            state.status = event.payload.goal.status  # Normally updated by the SDK router.
+        consumed.append(event)
+        return event
+    thread._client.start_goal_operation = lambda tid, objective: (state, "logical-operation")
+    thread._client.next_goal_notification = next_event
+    thread._client.cancel_goal_operation = lambda _state: calls.append("official_cancel")
+    thread._client.unregister_goal_operation = lambda _state: calls.append("official_unregister")
+    thread.run = MagicMock()
+    return state, calls, consumed
 
 
 @pytest.mark.parametrize("status", ["complete", "blocked"])
@@ -188,7 +231,7 @@ def test_blocked_runtime_errors_do_not_take_execution_limit_exit(tmp_path, failu
         handoff.write_text(json.dumps({"execution_limit": limit}))
     if failure == "missing_handoff":
         handoff.unlink()
-    def blocked(_thread, _objective, *, on_event):
+    def blocked(_thread, _objective, *, on_event, on_turn_boundary=None):
         if failure in {"terminal_provider", "capacity"}:
             on_event(SimpleNamespace(method="error", payload=None))
         return NativeGoalResult("blocked", thread.id, 3, 5, "Input is missing; this prose grants no authority")
@@ -207,7 +250,8 @@ def test_blocked_runtime_errors_do_not_take_execution_limit_exit(tmp_path, failu
     assert "execution_limit_kind" not in backend.last_native_goal
 
 
-def test_actual_invocation_and_closure_keep_model_and_judge_unmodified(tmp_path):
+@pytest.mark.parametrize("sdk_status", ["blocked", "execution_limited"])
+def test_actual_invocation_and_closure_keep_model_and_judge_unmodified(tmp_path, sdk_status):
     class LimitBackend(quota_fixture.GoalQuotaBackend):
         def invoke_goal(self, role, *, context_prompt, handoff_path, thread_id, **kwargs):
             self.started.append(thread_id)
@@ -219,8 +263,11 @@ def test_actual_invocation_and_closure_keep_model_and_judge_unmodified(tmp_path)
                                        context["frozen_objective"])
             assert str(path) == handoff_path
             verified = _read(path, binding)
-            self.last_native_goal = {"status": "blocked", "thread_id": thread_id,
+            self.last_native_goal = {"status": sdk_status, "thread_id": thread_id,
                                      "execution_limit_kind": verified["kind"]}
+            if sdk_status == "execution_limited":
+                self.last_native_goal.update(source="sdk_turn_boundary_handoff",
+                                             native_goal_cancel_requested=True)
             raise NativeGoalExecutionLimit(thread_id, verified, path)
 
         def invoke(self, role, prompt, thread_id, model, provider):
@@ -251,6 +298,132 @@ def test_actual_invocation_and_closure_keep_model_and_judge_unmodified(tmp_path)
     attempt = state["investigation_attempts"][f"attempt-{state['investigation_attempt']:04d}"]
     result, _ = workflow._close_delivered_execution_limit(state, {}, attempt)
     assert result["verdict"] is None and state["hypothesis_lock"] == unchanged
+
+
+def test_physical_turn_boundary_consumes_limit_before_goal_auto_continues(tmp_path):
+    handoff, limit, binding = _delivery(tmp_path / "workspace")
+    backend, thread, cleared = backend_fixture()
+    events = [_started(), _goal_update(ThreadGoalStatus.active), _completed(), _started(turn="physical-2")]
+    state, calls, consumed = _official_stream(thread, events)
+    with pytest.raises(NativeGoalExecutionLimit) as caught:
+        backend.invoke_goal("investigator", goal_objective="frozen goal",
+            context_prompt=json.dumps({"sdk_execution_limit_handoff": binding}),
+            handoff_path=str(handoff), thread_id=thread.id, model="Fake", provider="Fake")
+    assert caught.value.execution_limit == limit
+    assert consumed == events[:3]  # No second physical turn or three-turn blocked audit.
+    assert calls == ["official_cancel", "official_unregister"]
+    assert state.is_finished() and state.status == ThreadGoalStatus.active
+    assert cleared == []
+    assert backend.last_native_goal["status"] == "execution_limited"
+    assert backend.last_native_goal["native_goal_status"] == "administrative_cancel_requested"
+    assert backend.last_native_goal["native_goal_cancel_requested"]
+    assert backend.last_native_goal["boundary_turn_id"] == "physical-1"
+    observed = [call.args[0]["event"] for call in backend.collector.on_codex.call_args_list]
+    assert "LLM_TURN_COMPLETED" not in observed  # Do not alter logical Collector semantics.
+
+
+def test_safe_boundary_requires_official_current_thread_and_started_physical_turn(tmp_path):
+    handoff, limit, _ = _delivery(tmp_path / "workspace")
+    _, thread, _ = backend_fixture()
+    unknown = Notification("turn/completed", UnknownNotification({
+        "threadId": thread.id, "turn": {"id": "physical-1", "status": "completed", "items": []}}))
+    events = [_completed(turn="never-started"), _started(), _goal_update(ThreadGoalStatus.active),
+              unknown, _completed(thread="foreign-thread"), _completed(turn="old-turn"), _completed()]
+    # The first official completion precedes activation and is rejected by the
+    # SDK itself, so inject it through a bound stream after active status exists.
+    events = [_goal_update(ThreadGoalStatus.active), *events]
+    state, calls, consumed = _official_stream(thread, events)
+    boundaries = []
+    def boundary(event):
+        boundaries.append(event.payload.turn.id)
+        raise NativeGoalExecutionLimit(thread.id, limit, handoff)
+    with pytest.raises(NativeGoalExecutionLimit):
+        run_native_goal(thread, "frozen goal", on_turn_boundary=boundary)
+    assert boundaries == ["physical-1"]
+    assert consumed == events
+    assert calls == ["official_cancel", "official_unregister"] and state.is_finished()
+
+
+def test_keyboard_interrupt_at_boundary_cancels_the_official_goal_once():
+    _, thread, _ = backend_fixture()
+    events = [_started(), _goal_update(ThreadGoalStatus.active), _completed()]
+    state, calls, _ = _official_stream(thread, events)
+    def interrupted(_event):
+        raise KeyboardInterrupt
+    with pytest.raises(KeyboardInterrupt):
+        run_native_goal(thread, "frozen goal", on_turn_boundary=interrupted)
+    assert calls == ["official_cancel", "official_unregister"] and state.is_finished()
+
+
+@pytest.mark.parametrize("status", [ThreadGoalStatus.usage_limited, ThreadGoalStatus.budget_limited,
+                                   ThreadGoalStatus.paused])
+def test_native_usage_and_operator_stops_precede_boundary_handoff(tmp_path, status):
+    handoff, _, binding = _delivery(tmp_path / "workspace")
+    backend, thread, _ = backend_fixture()
+    events = [_started(), _goal_update(ThreadGoalStatus.active), _goal_update(status), _completed()]
+    _, calls, consumed = _official_stream(thread, events)
+    with pytest.raises(NativeGoalIncomplete) as caught:
+        backend.invoke_goal("investigator", goal_objective="frozen goal",
+            context_prompt=json.dumps({"sdk_execution_limit_handoff": binding}),
+            handoff_path=str(handoff), thread_id=thread.id, model="Fake", provider="Fake")
+    assert caught.value.status == status.value
+    assert consumed == events and calls == ["official_unregister"]
+    assert "execution_limit_kind" not in backend.last_native_goal
+
+
+@pytest.mark.parametrize("case", ["missing", "invalid", "ordinary_findings", "provider_error", "completion_error"])
+def test_physical_boundary_never_interrupts_without_safe_valid_input_limit(tmp_path, case):
+    handoff, limit, binding = _delivery(tmp_path / "workspace")
+    if case == "missing":
+        handoff.unlink()
+    elif case == "invalid":
+        limit["invocation_id"] = "stale"
+        handoff.write_text(json.dumps({"execution_limit": limit}))
+    elif case == "ordinary_findings":
+        handoff.write_text('{"findings":[{"statement":"ordinary scientific handoff"}]}')
+    backend, thread, _ = backend_fixture()
+    events = [_started(), _goal_update(ThreadGoalStatus.active)]
+    if case == "provider_error":
+        events.append(Notification("error", UnknownNotification({"error": {"message": "terminal provider failure"}})))
+    events.extend([_completed(error={"message": "terminal provider failure"} if case == "completion_error" else None),
+                   _goal_update(ThreadGoalStatus.blocked)])
+    _, calls, consumed = _official_stream(thread, events)
+    with pytest.raises(NativeGoalRuntimeFailure):
+        backend.invoke_goal("investigator", goal_objective="frozen goal",
+            context_prompt=json.dumps({"sdk_execution_limit_handoff": binding}),
+            handoff_path=str(handoff), thread_id=thread.id, model="Fake", provider="Fake")
+    assert calls == ["official_unregister"]  # Goal reached its own terminal status.
+    assert consumed == events
+    assert backend.last_native_goal["status"] == "blocked"
+    assert "native_goal_cancel_requested" not in backend.last_native_goal
+
+
+@pytest.mark.parametrize("tokens_before", [80, 100])
+def test_token_guard_precedes_physical_boundary_limit_delivery(tmp_path, tokens_before):
+    handoff, _, binding = _delivery(tmp_path / "workspace")
+    backend, thread, _ = backend_fixture()
+    usage = Notification("thread/tokenUsage/updated", UnknownNotification({"threadId": thread.id}))
+    events = [_started(), _goal_update(ThreadGoalStatus.active)]
+    if tokens_before == 80:
+        events.append(usage)
+    events.append(_completed())
+    _, calls, _ = _official_stream(thread, events)
+    from theory_master.observability.codex_events import map_notification
+    def mapped(event, **kwargs):
+        if event.method == "thread/tokenUsage/updated":
+            return {"event": "TOKEN_USAGE", "raw_usage": {"input_tokens": 20, "output_tokens": 5},
+                    "last_request_usage": {"input_tokens": 20, "output_tokens": 5}}
+        return map_notification(event, **kwargs)
+    with patch("theory_master.observability.codex_events.map_notification", side_effect=mapped), \
+         patch("theory_master.native_goal.read_execution_limit_handoff", wraps=read_execution_limit_handoff) as read_limit:
+        with pytest.raises(NativeGoalBudgetExceeded):
+            backend.invoke_goal("investigator", goal_objective="frozen goal",
+                context_prompt=json.dumps({"sdk_execution_limit_handoff": binding}),
+                handoff_path=str(handoff), thread_id=thread.id, model="Fake", provider="Fake",
+                token_allowance=100, tokens_before_goal=tokens_before)
+    assert calls == ["official_cancel", "official_unregister"]
+    assert backend.last_native_goal["status"] == "budgetLimited"
+    read_limit.assert_not_called()
 
 
 def test_all_goal_layouts_and_setup_reference_keep_the_narrow_exit():

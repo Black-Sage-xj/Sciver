@@ -42,11 +42,13 @@ Investigator 完成有界输入核查、确认冻结来源内没有可行恢复�
 
 只有本次正式交付验证通过时，SDK 才结束该执行尝试，记录 `not_adjudicated`、空科学 verdict 和完整执行限制。该路径不生成 Findings、不调用 Judge、不修改 Scientific Model，也不把未执行检验写成 `open`。下一次 Lead 收到带来源路径的近期执行限制，以便在提议时检查缺失依赖；这些记录不进入科学 Outcome。没有合法交付的原生 blocked 继续进入运行故障诊断；Provider 错误、额度、暂停和预算守卫优先。
 
+官方 SDK 会将多个物理回合合并成一个 Goal 逻辑流。正式输入限制已写好时，TM 在同一 operation 已开始并成功结束的物理回合边界验证交付，再通过官方 cancel/close 接口结束行政移交，记录 SDK 的 `execution_limited` 状态；不等平台重复三轮 blocked 核查。这个独立边界回调不改变既有逻辑流和 Collector 的回合语义，也不在工具或模型回复执行途中消费文件。
+
 旧版 Goal 因缺少该交付合同而 blocked 时，窄范围 SDK validator 核对失败 invocation、原线程、原 Goal 哈希、公开事件与新协议可用性，允许原线程用新合同重入一次。该回执只证明交付协议已修正，不判定输入确实不可恢复，不代写交付，也不授权重复重入已采用新合同的 Goal。具体行为效果由 `TMA-20261119-0145` 保持后续轨迹观察。
 
 ### 资格耗尽的接管边界
 
-三轮资格提议耗尽会抛出 `NoQualifiedCandidate`；它与资格阶段的 `RecoveryStop` 都进入已有的一次 Supervisor 复核。只有复核明确授权后才清理被拒的工作集并请求一个新提议，拒绝历史保留，新候选仍须通过 Challenger。再次被拒、Supervisor 关闭或复核 hold 时停止；历史停止状态的恢复先复核原边界，不重新消费已被拒的候选。
+三轮资格提议耗尽会抛出 `NoQualifiedCandidate`；它与资格阶段的 `RecoveryStop` 都进入已有的一次 Supervisor 复核。只有复核明确授权后才清理被拒的工作集并请求一个新提议，拒绝历史保留，新候选仍须通过 Challenger。再次被拒时 SDK 记录确定性 Supervisor hold，不增加模型调用；Supervisor 关闭或复核 hold 时停止。历史停止状态的恢复先复核原边界，不重新消费已被拒的候选。
 
 工程候选接收与失败 invocation 绑定的紧凑公开证据，包括冻结科学、最近相关交付和已观察加载 Skill 的当前规则/哈希；当前规则不冒充历史版本证明。记录不授予修改科学状态或受保护策略的权限。普通代码候选继续通过独立差分验收；`repair_plan.json` 也可返回 `needs_dependency / needs_rule_revision / needs_configuration`、具体原因和缺失依赖，此类诊断必须无源码/测试变更，不安装文件、不授权 Resume。缺计划文件即使进程退出 0 也属于未交付；脱敏退出信息和输出片段随候选证据保留。
 

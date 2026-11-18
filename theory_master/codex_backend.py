@@ -913,18 +913,20 @@ class CodexBackend:
             thread.run(native_goal_setup_turn(context_prompt, goal_objective))
             self._new_thread_ids.discard(identifier)
         provider_usage_baseline: int | None = None
+        observed_goal_tokens = int(tokens_before_goal)
         capacity_error = ""
         terminal_provider_error = ""
         failed_capacity_turn_id = ""
         recovered_progress = False
 
         def on_event(event: Any) -> None:
-            nonlocal provider_usage_baseline, capacity_error, recovered_progress, terminal_provider_error, failed_capacity_turn_id
+            nonlocal provider_usage_baseline, observed_goal_tokens, capacity_error, recovered_progress, terminal_provider_error, failed_capacity_turn_id
             from .observability.codex_events import map_notification
             mapped = map_notification(event, role=role, thread_id=identifier)
             if not mapped:
                 return
-            if mapped.get("event") in {"LLM_FAILED", "LLM_TURN_FAILED"}:
+            if (mapped.get("event") in {"LLM_FAILED", "LLM_TURN_FAILED"}
+                    or (mapped.get("event") == "LLM_TURN_COMPLETED" and mapped.get("error"))):
                 terminal_provider_error = str(mapped.get("error") or "provider turn failed")
             if mapped.get("event") in {"LLM_FAILED", "LLM_TURN_FAILED", "LLM_TURN_COMPLETED"}:
                 if is_model_at_capacity(mapped.get("error")):
@@ -960,12 +962,43 @@ class CodexBackend:
                 )
                 provider_usage_baseline = max(0, provider_total - request_total)
             observed = int(tokens_before_goal) + max(0, provider_total - provider_usage_baseline)
+            observed_goal_tokens = max(observed_goal_tokens, observed)
             if self.collector is not None:
                 self.collector.record_native_goal_usage(
                     role, observed_tokens=observed, allowance_tokens=int(token_allowance)
                 )
             if observed >= int(token_allowance):
                 raise NativeGoalBudgetExceeded(identifier, observed, int(token_allowance))
+
+        execution_limit_boundary_turn = ""
+
+        def on_turn_boundary(event: Any) -> None:
+            """Consume only formal input limitations after a completed physical turn."""
+            nonlocal execution_limit_boundary_turn
+            from openai_codex.generated.v2_all import TurnCompletedNotification, TurnStatus
+            payload = getattr(event, "payload", None)
+            if (limit_binding is None or getattr(event, "method", "") != "turn/completed"
+                    or not isinstance(payload, TurnCompletedNotification)
+                    or payload.thread_id != identifier or payload.turn.status != TurnStatus.completed
+                    or payload.turn.error is not None):
+                return
+            # Usage/resource authority wins over an administrative handoff.
+            if token_allowance is not None and observed_goal_tokens >= int(token_allowance):
+                raise NativeGoalBudgetExceeded(identifier, observed_goal_tokens, int(token_allowance))
+            if terminal_provider_error or capacity_error:
+                return
+            try:
+                limit = read_execution_limit_handoff(
+                    NativeGoalResult("execution_limited", identifier, 0, 0), Path(handoff_path),
+                    invocation_id=limit_binding["invocation_id"],
+                    frozen_objective_sha256=limit_binding["frozen_objective_sha256"],
+                    workspace_path=Path(limit_binding["workspace_path"]),
+                )
+            except NativeGoalDeliveryError:
+                return  # An incomplete/invalid file grants no permission to interrupt.
+            if limit is not None:
+                execution_limit_boundary_turn = payload.turn.id
+                raise NativeGoalExecutionLimit(identifier, limit, Path(handoff_path))
 
         # Native Goal owns its own blocked audit. Re-entering unchanged work
         # cannot repair an external dependency or a contract conflict.
@@ -975,7 +1008,21 @@ class CodexBackend:
             failed_capacity_turn_id = ""
             recovered_progress = False
             try:
-                goal = run_native_goal(thread, goal_objective, on_event=on_event)
+                boundary = {"on_turn_boundary": on_turn_boundary} if limit_binding is not None else {}
+                goal = run_native_goal(thread, goal_objective, on_event=on_event, **boundary)
+            except NativeGoalExecutionLimit as exc:
+                # run_native_goal has already cancelled the official Goal and
+                # closed/unregistered its stream. This is an SDK execution exit,
+                # never a forged native blocked or scientific completion.
+                capacity_window.clear()
+                self.last_native_goal = {
+                    "status": "execution_limited", "source": "sdk_turn_boundary_handoff",
+                    "native_goal_status": "administrative_cancel_requested",
+                    "native_goal_cancel_requested": True,
+                    "thread_id": identifier, "boundary_turn_id": execution_limit_boundary_turn,
+                    "execution_limit_kind": exc.execution_limit["kind"],
+                }
+                raise
             except NativeGoalBudgetExceeded as exc:
                 self.last_native_goal = {
                     "status": "budgetLimited", "source": "theory_master_live_token_guard",
