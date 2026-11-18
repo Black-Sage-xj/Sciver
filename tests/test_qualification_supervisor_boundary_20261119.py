@@ -98,6 +98,18 @@ def test_repeated_rejection_stops_after_one_authorized_proposal(tmp_path):
     assert state["internal_attention_retry_count"] == 1
     assert len(state["qualification_attempts"]) == 4
     assert wf.invocation_cycle_index == 1
+    assert state["supervisor_attention_review"]["action"] == "hold"
+    assert state["supervisor_attention_review"]["session_id"]
+    assert state["internal_attention_review"] == state["supervisor_attention_review"]
+    receipts = [json.loads(path.read_text()) for path in
+                (wf.cycle_dir / "attention").glob("sdk_internal_review_*.json")]
+    assert len(receipts) == 2
+    hold = next(receipt for receipt in receipts if receipt["action"] == "hold")
+    assert hold["model"] is None and "exchange" not in hold
+    events = [json.loads(line) for line in (wf.cycle_dir / "events.jsonl").read_text().splitlines()]
+    decisions = [event["payload"] for event in events if event["type"] == "attention.sdk_review_decided"]
+    assert [decision["action"] for decision in decisions] == ["retry_qualification", "hold"]
+    assert decisions[-1]["session_id"] == state["supervisor_attention_review"]["session_id"]
 
 
 @pytest.mark.parametrize("enabled,decision,expected_reviews", [("0", "retry_qualification", 0), ("1", "hold", 1)])
@@ -152,6 +164,8 @@ def test_resume_after_used_retry_does_not_call_models_again(tmp_path):
     with patch.dict("os.environ", {KEY: "1"}):
         stopped = wf._execute_cycle()
     assert stopped["internal_attention_retry_count"] == 1
+    assert stopped["supervisor_attention_review"]["action"] == "hold"
+    assert stopped["supervisor_attention_review"]["session_id"]
     assert backend.proposals == 4 and len(backend.reviews) == 4
     resumed = Workflow(wf.spec, backend, stop_before="investigator")
     with patch.dict("os.environ", {KEY: "1"}):
@@ -161,6 +175,8 @@ def test_resume_after_used_retry_does_not_call_models_again(tmp_path):
     assert state["cycle_id"] == stopped["cycle_id"]
     assert state["internal_attention_retry_count"] == 1
     assert state["supervisor_attention_review"]["action"] == "hold"
+    assert state["supervisor_attention_review"]["session_id"]
+    assert state["internal_attention_review"] == state["supervisor_attention_review"]
     assert len(backend.supervisor_prompts) == 1
     assert backend.proposals == 4 and len(backend.reviews) == 4
     assert len(state["qualification_attempts"]) == 4

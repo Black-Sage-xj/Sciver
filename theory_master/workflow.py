@@ -759,11 +759,27 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
                     state.pop('internal_attention_review', None)
                     self._persist(state)
                     # The fresh proposal is always reviewed by Challenger under
-                    # the unchanged qualification contract. A second rejection
-                    # stops normally and cannot run another internal review.
-                    branch, finalized, active_title, active_hypothesis = self._qualify_and_lock(
-                        state, run_id, prior_cycle
-                    )
+                    # the unchanged qualification contract. At a second stop,
+                    # the exhausted retry counter makes Supervisor record a
+                    # deterministic hold without another model invocation.
+                    try:
+                        branch, finalized, active_title, active_hypothesis = self._qualify_and_lock(
+                            state, run_id, prior_cycle
+                        )
+                    except NoQualifiedCandidate:
+                        outcome = review_supervisor_attention(
+                            backend=self.backend, cycle_dir=self.cycle_dir, state=state,
+                            goal=self.spec.goal, research_contract=self.spec.contract,
+                            final_gate=self.spec.final_gate,
+                        )
+                        state['supervisor_attention_review'] = outcome
+                        state['internal_attention_review'] = outcome
+                        self._emit(state, 'attention.sdk_review_decided', {
+                            'code': code, 'action': outcome['action'], 'mode': 'sdk_internal',
+                            'authority': 'supervisor', 'session_id': outcome.get('session_id'),
+                        })
+                        self._persist(state)
+                        raise
             if self.stop_before == "investigator":
                 state.update({
                     "status": "checkpoint_reached",
