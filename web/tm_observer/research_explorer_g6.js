@@ -288,7 +288,9 @@ function structure(nodes,edges){
   const lineage=globalThis.SciverTreeLayout.projectForest(nodes,
     realEdges.filter(e=>!isResearchReference(e)).map(e=>({id:ID(e.id||e.fromNode+'->'+e.toNode),source:e.fromNode,
       target:e.toNode,data:{sourceEdge:e}}))).edges.map(e=>e.data.sourceEdge);
-  const allEdges=[...lineage,...realEdges.filter(isResearchReference)];
+  // Only the chosen predecessor belongs on the tree. Other recorded sources
+  // remain available in the reader through the unmodified index.
+  const allEdges=lineage;
   const children=new Map(nodes.map(n=>[n.id,[]])),parents=new Map(nodes.map(n=>[n.id,[]]));
   for(const e of lineage){children.get(e.fromNode).push(e.toNode);parents.get(e.toNode).push(e.fromNode)}
   for(const v of children.values())v.sort(stable);
@@ -671,8 +673,7 @@ function g6Data(layoutBase=false){
   const rawEdges=s.allEdges.filter(e=>vis.visible.has(e.fromNode)&&vis.visible.has(e.toNode)&&
     (layoutBase||!(collapsed.has(e.fromNode)&&isScientificEdge(e))));
   const folded=visibility(s);
-  // Stable ports are derived exclusively from the real visible edges, never from
-  // Canvas x/y or a guessed parent reference. Distinct targets prevent coincident arrows.
+  // Stable ports are derived exclusively from the displayed lineage edges.
   const edgeKey=e=>ID(e.id||e.fromNode+'->'+e.toNode);
   const incoming=new Map(),outgoing=new Map();
   for(const e of rawEdges){
@@ -755,7 +756,6 @@ function g6Data(layoutBase=false){
       id:key,source:e.fromNode,target:e.toNode,
       data:{sourceEdge:e,baseLineWidth,highlighted},
       style:{sourcePort:'out:'+key,targetPort:'in:'+key,
-        // Supplementary research sources are a focus overlay, independent of tree layout.
         stroke:bright,
         lineWidth:edgeWidth(baseLineWidth,highlighted),
         lineDash:isResearchReference(e)?[6,4]:[],endArrow:true,
@@ -767,7 +767,7 @@ function g6Data(layoutBase=false){
         cursor:'pointer',increasedLineWidthForHitTesting:12}
     };
   });
-  globalThis.SciverTreeLayout.treeCoordinates(nodes,edges.filter(e=>!isResearchReference(e.data.sourceEdge)));
+  globalThis.SciverTreeLayout.treeCoordinates(nodes,edges);
   return {nodes,edges};
 }
 
@@ -1318,8 +1318,7 @@ function visibleNodes(){
 function desiredVisibility(){
   const s=structure(index.nodes,index.edges),vis=visibility(s);
   const displayedEdges=new Set(s.allEdges.filter(e=>vis.visible.has(e.fromNode)&&
-    vis.visible.has(e.toNode)&&!(collapsed.has(e.fromNode)&&isScientificEdge(e))&&
-    (!isResearchReference(e)||e.toNode===linkedNodeId()||selected?.kind==='edge'&&selected.id===ID(e.id)))
+    vis.visible.has(e.toNode)&&!(collapsed.has(e.fromNode)&&isScientificEdge(e)))
     .map(e=>ID(e.id||e.fromNode+'->'+e.toNode)));
   const result=new Map();
   for(const n of graph.getNodeData())result.set(n.id,vis.visible.has(n.id)?'visible':'hidden');
@@ -1658,11 +1657,13 @@ function transitionSourcesHtml(sources){
 function researchTransitionHtml(node){
   const transition=researchTransition(node.semantic);
   const sources=transition?.sources.length?transition.sources:
-    index.edges.filter(edge=>edge.toNode===node.id&&isScientificEdge(edge))
-      .map(edge=>index.nodes.find(source=>source.id===edge.fromNode))
-      .filter(source=>source&&['Hypothesis','Decision'].includes(knownType(source)))
-      .filter((source,position,items)=>items.findIndex(item=>item.id===source.id)===position)
-      .map(source=>({hypothesis_id:source.id,title:source.semantic?.title||source.label}));
+    index.edges.filter(edge=>edge.toNode===node.id&&
+      (isScientificEdge(edge)||isResearchReference(edge)))
+      .map(edge=>({edge,source:index.nodes.find(source=>source.id===edge.fromNode)}))
+      .filter(({source})=>source&&['Hypothesis','Decision'].includes(knownType(source)))
+      .filter(({source},position,items)=>items.findIndex(item=>item.source.id===source.id)===position)
+      .map(({edge,source})=>({hypothesis_id:source.id,title:source.semantic?.title||source.label,
+        role:edge.lineage_role==='main'?'main':isResearchReference(edge)?'other':undefined}));
   // A source-free initial hypothesis has no predecessor rationale to display.
   if(!sources.length)return '';
   let content;

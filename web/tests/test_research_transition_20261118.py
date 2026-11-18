@@ -147,14 +147,16 @@ def test_reader_shows_frozen_transition_before_claim_and_source_clicks_navigate(
   latestGraph.events['node:click']({target:{id:'B'}});await tick();await tick();
   assert(!elements['ex-reader'].innerHTML.includes('ex-research-transition'));
   assert(!elements['ex-reader'].innerHTML.includes('承接理由未记录。'));
-  // Reference links, and a scientific-looking edge from an external node, do not make it a successor.
+  // A recorded supplementary H source remains visible in the reader, while
+  // external references and edges from external nodes are not H predecessors.
   nodes[4].semantic={type:'External',title:'Background reference'};
   edges.push({id:'A-ref-B',fromNode:'A',toNode:'B',edge_type:'external_reference'},
     {id:'C-source-B',fromNode:'C',toNode:'B',type:'research_source'},
     {id:'X-context-B',fromNode:'X',toNode:'B'});
   latestGraph.events['node:click']({target:{id:'B'}});await tick();await tick();
-  assert(!elements['ex-reader'].innerHTML.includes('ex-research-transition'),
-    'only scientific predecessor identities create a transition section');
+  assert(elements['ex-reader'].innerHTML.includes('data-ref="node:C"'));
+  assert(!elements['ex-reader'].innerHTML.includes('data-ref="node:A"'));
+  assert(!elements['ex-reader'].innerHTML.includes('data-ref="node:X"'));
   edges.splice(-3);
   // A legacy H keeps real predecessor links but receives no invented cause.
   delete nodes[2].semantic.research_transition;
@@ -189,29 +191,34 @@ def test_reader_shows_frozen_transition_before_claim_and_source_clicks_navigate(
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="requires Node.js")
-def test_supplementary_sources_are_focus_overlays_without_changing_main_tree():
+def test_supplementary_sources_stay_in_reader_without_graph_ports_or_edges():
     bootstrap, marker, _ = HARNESS.partition("  onReady();await tick();")
     assert marker
     script = bootstrap + r"""
   edges[0].lineage_role='main';
   edges[1].edge_type='research_source';edges[1].lineage_role='other';
+  nodes[2].semantic={type:'Hypothesis',title:'Combined hypothesis'};
   onReady();await tick();await tick();
   const line=id=>latestGraph.data.edges.find(e=>e.id===id);
-  assert(line('AC')&&line('BC'),'both recorded identities remain in the graph data');
+  assert(line('AC')&&!line('BC'),'only the main predecessor is drawn');
   assert.deepEqual([...line('AC').style.lineDash],[]);
-  assert.deepEqual([...line('BC').style.lineDash],[6,4]);
-  assert.equal(line('BC').style.visibility,'hidden','references appear when their target is focused');
+  const card=latestGraph.data.nodes.find(n=>n.id==='C');
+  assert.deepEqual(Array.from(card.style.ports.filter(p=>p.key.startsWith('in:')),p=>p.key),['in:AC']);
+  const strip=elements['ex-source-rail'].children.find(s=>s.dataset.nodeId==='C');
+  assert.equal(strip.children.length,1,'only the drawn predecessor gets a rail entry');
   const positions=JSON.stringify(latestGraph.data.nodes.map(n=>[n.id,n.style.x,n.style.y]));
   const renders=latestGraph.renders;
   latestGraph.events['node:click']({target:{id:'C'}});await tick();await tick();
-  assert.equal(line('BC').style.visibility,'visible');
-  latestGraph.events['edge:pointerover']({target:{id:'BC'}});await tick();
-  assert.equal(elements['ex-edge-menu'].hidden,true,'a reference does not control a scientific branch');
+  assert(!line('BC'),'focusing the target does not draw a supplementary edge');
+  const html=elements['ex-reader'].innerHTML;
+  assert(html.includes('data-ref="node:A"')&&html.includes('data-ref="node:B"'),
+    'legacy records retain both navigable sources in the reader');
+  assert(html.includes('主要承接')&&html.includes('补充来源'));
   assert.equal(line('AC').style.visibility,'visible');
   assert.equal(latestGraph.renders,renders,'focus does not rebuild the tree');
   assert.equal(JSON.stringify(latestGraph.data.nodes.map(n=>[n.id,n.style.x,n.style.y])),positions);
   latestGraph.events['node:click']({target:{id:'A'}});await tick();await tick();
-  assert.equal(line('BC').style.visibility,'hidden');
+  assert(!line('BC'));
   assert.equal(JSON.stringify(latestGraph.data.nodes.map(n=>[n.id,n.style.x,n.style.y])),positions);
 })().catch(e=>{console.error(e);process.exitCode=1});
 """
