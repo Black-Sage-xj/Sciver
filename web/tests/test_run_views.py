@@ -59,6 +59,19 @@ class RunListTests(unittest.TestCase):
         rows[41]['state']='OVER'
         self.assertNotIn('tm-run-live-link',run_index_body({'runs':rows}))
 
+    def test_status_labels_keep_raw_filter_values_and_unknown_states(self):
+        from bs4 import BeautifulSoup
+        rows = self.rows(2)
+        rows[0]['state'] = 'WAITING_QUOTA'
+        rows[1]['state'] = 'FUTURE_STATE'
+        page = BeautifulSoup(run_index_body({'runs': rows}, status='WAITING_QUOTA'), 'html.parser')
+        self.assertEqual(page.select_one('option[value="WAITING_QUOTA"]').get_text(), '等待额度')
+        self.assertTrue(page.select_one('option[value="WAITING_QUOTA"]').has_attr('selected'))
+        self.assertEqual(page.select_one('.tm-run-state').get_text(), '等待额度')
+        self.assertEqual(page.select_one('.tm-run-state')['title'], 'WAITING_QUOTA')
+        self.assertEqual(len(page.select('.tm-run-task-link')), 1)
+        self.assertIn('FUTURE_STATE', run_index_body({'runs': rows}, status='FUTURE_STATE'))
+
     def test_untrusted_list_data_is_escaped(self):
         entry = self.rows(1)[0]
         entry["task_name"] = '<img src=x onerror=alert(1)>'

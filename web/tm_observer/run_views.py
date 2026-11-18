@@ -70,6 +70,21 @@ def _state_class(status: Any) -> str:
     return "neutral"
 
 
+def _state_label(status: Any) -> str:
+    """Describe known observer states without changing their filter values."""
+    key = str(status or "UNKNOWN").upper()
+    return {
+        "LIVE": "运行中", "RUNNING": "运行中", "ACTIVE": "运行中",
+        "STARTING": "正在启动", "RECOVERING": "正在恢复",
+        "PAUSED": "已暂停", "INTERRUPTED": "已中断", "WAITING_QUOTA": "等待额度",
+        "NEEDS_ATTENTION": "需要处理", "FAILED": "运行失败",
+        "FAILED_RECOVERY": "恢复失败", "ORPHANED": "运行进程失联",
+        "UNRESPONSIVE": "运行无响应", "OVER": "本轮已结束",
+        "COMPLETE": "已完成", "COMPLETED": "已完成", "STOPPED": "已停止",
+        "UNKNOWN": "未知状态",
+    }.get(key, key)
+
+
 def _task_url(run: dict[str, Any]) -> str:
     # Never substitute a Master ID or a task path for this stable identifier.
     ident = str(run.get("observer_id") or "")
@@ -112,17 +127,17 @@ def run_index_body(state: dict[str, Any], *, query: str = "", status: str = "", 
     page = min(_safe_page(page), total_pages)
     visible = filtered[(page - 1) * PAGE_SIZE:page * PAGE_SIZE]
     options = '<option value="">所有状态</option>' + "".join(
-        f'<option value="{_e(item)}"{" selected" if status == item else ""}>{_e(item)}</option>'
+        f'<option value="{_e(item)}"{" selected" if status == item else ""}>{_e(_state_label(item))}</option>'
         for item in statuses
     )
     rows = "".join(
         f'<tr class="tm-run-clickable" data-task-url="{html.escape(_task_url(row), quote=True)}" tabindex="0" role="link" aria-label="打开任务：{_e(row.get("task_name"))}">'
-        f'<td><a class="tm-run-task-link" href="{_task_url(row)}">{_e(row.get("task_name"))}</a>'
+        f'<td data-label="任务"><a class="tm-run-task-link" href="{_task_url(row)}">{_e(row.get("task_name"))}</a>'
         f'<div class="tm-run-secondary">Master {_e(row.get("run_id"))}</div></td>'
-        f'<td>{_e(row.get("cycle"))}</td>'
-        f'<td><span class="tm-run-state tm-run-state-{_state_class(row.get("state"))}">{_e(row.get("state"))}</span>{supervisor_index_chip(row)}</td>'
-        f'<td>{_e(row.get("active_agent"))}</td>'
-        f'<td>{_e(_relative_time(row.get("last_activity_at")))}</td>'
+        f'<td data-label="轮次">{_e(row.get("cycle"))}</td>'
+        f'<td data-label="状态"><span class="tm-run-state tm-run-state-{_state_class(row.get("state"))}" title="{_e(row.get("state") or "UNKNOWN")}">{_e(_state_label(row.get("state")))}</span>{supervisor_index_chip(row)}</td>'
+        f'<td data-label="Agent">{_e(row.get("active_agent"))}</td>'
+        f'<td data-label="最近活动">{_e(_relative_time(row.get("last_activity_at")))}</td>'
         '</tr>'
         for row in visible
     ) or '<tr><td colspan="5" class="tm-run-empty">没有符合条件的任务。</td></tr>'

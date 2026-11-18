@@ -14,6 +14,12 @@ from tm_observer.run_views import run_index_body
 class OnboardingTests(unittest.TestCase):
     def test_shared_guide_separates_preparation_from_real_run(self):
         body = first_use_panel()
+        document = BeautifulSoup(body, 'html.parser')
+        guide = document.select_one('.tm-onboarding > details')
+        self.assertIsNotNone(guide)
+        self.assertFalse(guide.has_attr('open'))
+        self.assertIn('使用终端准备官方教学示例', guide.select_one('summary').get_text())
+        self.assertIsNotNone(document.select_one('.tm-onboarding > p > a[href="/research-chat/?new=1"]'))
         for expected in (
             'aria-label="首次使用引导"', 'Python 3.12', 'sciver smoke',
             'sciver test Test0 --root', '--prepare-only', 'Cycle 1',
