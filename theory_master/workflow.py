@@ -695,10 +695,20 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
                 self._persist(state)
             else:
                 try:
+                    if resuming and state.get('qualification_status') == 'no_qualified_candidate':
+                        # Re-enter the persisted stop at its Supervisor boundary.
+                        # Replaying qualification first would consume the same
+                        # rejected frontier and append a fictitious new attempt.
+                        state.update({
+                            'status': 'no_qualified_candidate', 'phase': 'qualification',
+                            'resumable': False, 'execution_active': False,
+                            'attention': dict(interrupted_attention),
+                        })
+                        raise NoQualifiedCandidate(state.get('qualification_rationale') or '')
                     branch, finalized, active_title, active_hypothesis = self._qualify_and_lock(
                         state, run_id, prior_cycle
                     )
-                except RecoveryStop:
+                except (RecoveryStop, NoQualifiedCandidate):
                     # Qualification Attention is handled by one SDK-internal,
                     # read-only reviewer while this Workflow owns the Cycle.
                     # No external tmux/Codex, no unbounded retry, and no
@@ -723,6 +733,12 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
                     state['internal_attention_retry_count'] = (
                         int(state.get('internal_attention_retry_count') or 0) + 1
                     )
+                    # Exhausted qualification has its own terminal exception
+                    # and status. Normalize only after Supervisor authorizes a
+                    # fresh proposal so the existing restart clears rejected
+                    # products and preserves their review history.
+                    if state.get('qualification_status') == 'no_qualified_candidate':
+                        state['qualification_status'] = 'unqualified'
                     self._restart_unqualified_qualification(state)
                     from .attention_guidance import write_attention_guidance
                     # Human guidance takes priority if one already exists.
@@ -734,7 +750,7 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
                         )
                         state['operator_guidance'] = advisory
                         state['operator_guidance_pending'] = True
-                    state.update({'status': 'active', 'execution_active': True})
+                    state.update({'status': 'active', 'resumable': True, 'execution_active': True})
                     self._emit(state, 'attention.sdk_retry_qualification', {
                         'retry_count': state['internal_attention_retry_count'],
                         'guidance_source': (state.get('operator_guidance') or {}).get('source'),
