@@ -78,6 +78,13 @@
     if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) launcherPosition=saved;
   } catch (_) {}
   const layoutLauncher=()=>{
+    const dock=mobile()&&!document.fullscreenElement?document.querySelector('.tm-topbar-actions'):null;
+    const target=dock||root;
+    if(launcher.parentElement!==target)target.appendChild(launcher);
+    if(dock){
+      for(const name of ['left','top','right','bottom'])launcher.style.removeProperty(name);
+      return;
+    }
     if (!launcherPosition) return;
     launcherPosition={
       x:Math.max(12,Math.min(launcherPosition.x,innerWidth-launcher.offsetWidth-12)),
@@ -164,7 +171,7 @@
   });
   launcher.addEventListener('dragstart',event=>event.preventDefault());
   launcher.addEventListener('pointerdown',event=>{
-    if (event.button!==0 || !event.isPrimary) return;
+    if ((mobile()&&launcher.parentElement===document.querySelector('.tm-topbar-actions')) || event.button!==0 || !event.isPrimary) return;
     suppressLauncherClick=false;
     const start=launcher.getBoundingClientRect(), x=event.clientX, y=event.clientY;
     let moved=false;

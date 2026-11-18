@@ -40,6 +40,7 @@ WIDGET_STYLE = """<style>
 .sc-chat-panel[data-maximized="true"] .sc-chat-resize{display:none}
 @keyframes sc-chat-pulse{50%{opacity:.3}}
 @media(max-width:600px){.sc-chat-launcher{right:16px;bottom:max(16px,env(safe-area-inset-bottom));width:48px;height:48px;border-radius:15px}.sc-chat-launcher img{width:39px;height:39px}.sc-chat-header{padding-left:12px;cursor:default}.sc-chat-resize{display:none}.sc-chat-launcher-label{display:none}}
+@media(max-width:600px){.tm-topbar-actions .sc-chat-launcher{position:static;width:36px;height:36px;border-radius:10px;box-shadow:none;touch-action:auto}.tm-topbar-actions .sc-chat-launcher img{width:30px;height:30px}}
 @media(prefers-reduced-motion:reduce){.sc-chat-launcher{transition:none}.sc-chat-launcher[data-busy="true"] .sc-chat-dot{animation:none}}
 </style>"""
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 def document_conversion_panel() -> str:
     """Load the public configuration through the guarded settings API."""
-    return r'''<section class="tm-task-settings-panel tm-doc-conversion" data-document-conversion
+    return r'''<section id="settings-conversion" class="tm-task-settings-panel tm-doc-conversion" data-document-conversion
       aria-labelledby="tm-doc-conversion-title">
       <h2 id="tm-doc-conversion-title">PDF 文献转换</h2>
       <p class="tm-task-settings-hint">这是当前 Sciver 服务的共享配置，适用于项目筹备与科研任务。

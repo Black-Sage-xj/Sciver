@@ -220,6 +220,7 @@ GRAPH_CSS = r"""
 @media(max-width:900px){.tm-explorer-view .tm-app{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}.tm-explorer-view .tm-sidebar{flex:none}.tm-explorer-view .tm-main{display:flex;flex:1;flex-direction:column;min-height:0}.tm-explorer-view .tm-content{height:auto;flex:1;min-height:0}}
 @media(max-width:860px){.tm-explorer-view .ex-layout{min-height:0;height:auto}.tm-explorer-view .ex-workspace{min-height:0}.ex-reader{padding:14px}.ex-menu-panel{max-height:55dvh}}
 @media(max-width:620px){.tm-explorer-view .tm-content{padding:4px 6px 6px}.tm-explorer-view .tm-topbar{padding:0 10px}.tm-explorer-view .tm-breadcrumb{gap:6px;font-size:11px}.tm-explorer-view .tm-breadcrumb-link{display:none}.tm-explorer-view .tm-breadcrumb-divider{display:none}.ex-toolbar-main{flex-wrap:wrap;gap:2px 4px}.ex-toolbar-title{margin-right:2px}.ex-search-field{flex:1;min-width:180px}.ex-toolbar-main>label:not([hidden]){max-width:150px}.ex-toolbar-main .ex-layout-controls{margin-left:auto}.ex-menu-panel{max-width:calc(100vw - 16px)}.ex-workspace>.ex-search{top:42px;left:0;width:100%}.ex-branch-content{width:430px}.ex-actions{bottom:8px;left:8px}.ex-zoom-controls{left:auto;right:8px}}
+@media(max-width:620px){.tm-explorer-view .ex-layout[data-mobile-reading="true"]{display:flex;flex-direction:column}.ex-layout[data-mobile-reading="true"] .ex-graph,.ex-layout[data-mobile-reading="true"] .ex-splitter{display:none}.ex-layout[data-mobile-reading="true"] .ex-reader{flex:1;min-height:0}}
 </style>
 """
 

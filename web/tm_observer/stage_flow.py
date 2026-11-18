@@ -1057,6 +1057,16 @@ def stage_workflow_body(
         source = stage_workflow_overview_mermaid(source, stage_metadata)
     field_notes_json = json.dumps(field_metadata, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
     stage_details_json = json.dumps(stage_metadata, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
+    mobile_roles: dict[str, list[str]] = {}
+    for item in stage_metadata:
+        role = str(item.get("role_label") or item.get("role") or "Agent")
+        stage = html.escape(str(item.get("stage") or ""))
+        objective = html.escape(str(item.get("objective") or ""))
+        mobile_roles.setdefault(role, []).append(
+            f'<details><summary>{stage}</summary><p>{objective}</p></details>')
+    mobile_stage_index = ''.join(
+        f'<details><summary>{html.escape(role)} · {len(items)} 个阶段</summary>{"".join(items)}</details>'
+        for role, items in mobile_roles.items())
     snapshots = load_workflow_snapshots()
     version_options = ['<option value="current"' + (' selected' if active_version == 'current' else '') + '>Current · live</option>']
     for item in snapshots:
@@ -1140,6 +1150,15 @@ def stage_workflow_body(
 .stage-legend {{ display:flex; gap:8px; flex-wrap:wrap; margin:14px 0; }}
 .stage-legend span {{ border:2px solid var(--c); border-radius:999px; padding:4px 9px; background:var(--bg); color:var(--fg); font-size:.86rem; }}
 .stage-canvas-shell {{ position:relative; min-height:0; }}
+.stage-mobile-index {{ display:none; }}
+@media(max-width:620px) {{
+  .stage-mobile-index {{ display:block; margin:12px 0; padding:14px; border:1px solid var(--tm-border); border-radius:10px; }}
+  .stage-mobile-index h2 {{ margin:0 0 6px; font-size:15px; }}
+  .stage-mobile-index p {{ font-size:12px; line-height:1.6; overflow-wrap:anywhere; }}
+  .stage-mobile-index details {{ padding:7px 0 7px 10px; }}
+  .stage-mobile-index summary {{ cursor:pointer; font-size:13px; }}
+  .stage-mobile-index a {{ color:var(--tm-link); font-size:12px; }}
+}}
 .stage-canvas {{ height:calc(100vh - 255px); min-height:620px; overflow:auto; border:1px solid color-mix(in srgb, currentColor 20%, transparent); border-radius:12px; background:Canvas; padding:18px; box-sizing:border-box; cursor:default; overscroll-behavior:contain; }}
 .stage-canvas.space-pan {{ cursor:grab; }}
 .stage-canvas.is-panning {{ cursor:grabbing; user-select:none; }}
@@ -1258,7 +1277,11 @@ body.stage-fullscreen-fallback .stage-canvas {{ width:100%; height:100%; min-hei
         <span style="--c:#5f6875;--bg:#eceff3;--fg:#20252b">SDK</span>
       </div>
     </details>
-    <div class="stage-canvas-shell">
+    <section class="stage-mobile-index" aria-label="按角色阅读阶段">
+      <h2>按角色阅读阶段</h2><p>展开角色和阶段查看目标；完整分支关系见流程图。</p>
+      {mobile_stage_index}<a href="#workflow-diagram">查看完整流程图</a>
+    </section>
+    <div class="stage-canvas-shell" id="workflow-diagram">
       <div class="stage-toolbar" aria-label="Diagram view controls">
         <button type="button" data-zoom-action="out" title="Zoom out" aria-label="缩小 Workflow">−</button>
         <button type="button" data-zoom-action="fit" title="将流程图适配可视宽度" aria-label="适应可视宽度">适应</button>

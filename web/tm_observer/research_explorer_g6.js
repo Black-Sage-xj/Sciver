@@ -4,6 +4,8 @@
 const $=id=>document.getElementById(id);
 const reader=$('ex-reader'), alertBox=$('ex-error'), tooltip=$('ex-tooltip');
 const workspace=$('ex-workspace'), layout=$('ex-layout'), splitter=$('ex-splitter');
+let mobileReadingRequested=false;
+function showMobileGraph(){mobileReadingRequested=false;delete layout.dataset.mobileReading}
 const palette={
   Hypothesis:{fill:'#3175b8',line:'#93c5fd',short:'H'},
   // Read-only compatibility for historical Canvas; V2 has no standalone Outcome node.
@@ -853,6 +855,7 @@ async function restoreSnapshot(snapshot,indexNext=null){
     if(selected?.kind){
       await navigate(selected.kind,selected.id,selected.anchor||'',{record:false,focus:false,reveal:false});
     }else{
+      showMobileGraph();
       reader.innerHTML='<p class="muted">选择左侧科研节点以阅读完整内容。</p>';
       await renderGraph();
     }
@@ -1475,6 +1478,7 @@ async function renderGraph(opts={}){
 function fit(){if(graph)graph.fitView()}
 function zoom(factor){if(graph)graph.zoomBy(factor)}
 async function showCompleteGraph(){
+  showMobileGraph();
   rememberBefore();collapsed.clear();closeEdgeMenu();
   await updateSelectionWithoutLayout({focus:false});
   if(graph)await graph.fitView({when:'always',direction:'both'});rememberAfter(true);
@@ -1729,6 +1733,8 @@ async function navigate(kind,id,anchor='',options={}){
   if(!index)return;
   if(kind==='node'&&!index.nodes.some(n=>n.id===id))return;
   if(kind==='edge'&&!index.edges.some(e=>ID(e.id||e.fromNode+'->'+e.toNode)===id))return;
+  if(['doc','report'].includes(kind))mobileReadingRequested=true;
+  else showMobileGraph();
   const request=++navSerial;
   if(['doc','report'].includes(kind)&&!['doc','report'].includes(selected?.kind))docOriginView=captureView();
   if(options.record!==false)rememberBefore();
@@ -1830,6 +1836,7 @@ async function navigate(kind,id,anchor='',options={}){
       positionSourceRail();pulseNode(nodeId);
     }
   }
+  if(['doc','report'].includes(kind)&&mobileReadingRequested)layout.dataset.mobileReading='true';
   reader.scrollTop=0;
   if(anchor){
     const outcomeTarget=anchor==='outcome'&&kind==='node'?
@@ -1868,6 +1875,7 @@ reader.addEventListener('click',async e=>{
     discussReading(source);return;
   }
   if(e.target.closest('[data-doc-back]')){
+    showMobileGraph();
     const origin=docOriginView;
     if(origin?.taskId===taskId&&origin.selected?.kind){
       await navigate(origin.selected.kind,origin.selected.id,origin.selected.anchor||'',{focus:false,reveal:false});
@@ -1959,7 +1967,7 @@ async function load({fresh=false}={}){
     if(fresh&&!hashValid){
       // A new direct visit or a task switch has no explicit document target.
       // Old hashless camera snapshots must not override the default landing.
-      selected=null;collapsed.clear();
+      selected=null;collapsed.clear();showMobileGraph();
       await renderGraph({fit:true});
       if(trailIndex<0)rememberAfter();
     }else if(fresh&&hashValid){
@@ -1977,7 +1985,7 @@ async function load({fresh=false}={}){
     }else if(selected?.kind==='edge'&&index.edges.some(e=>ID(e.id||e.fromNode+'->'+e.toNode)===selected.id)){
       await navigate('edge',selected.id,'',{record:false,focus:false});
     }else{
-      selected=null;
+      selected=null;showMobileGraph();
       await renderGraph({fit:!previous});
       if(trailIndex<0)rememberAfter();
     }
@@ -2109,7 +2117,7 @@ function syncFullscreen(){
 document.addEventListener?.('fullscreenchange',syncFullscreen);
 window.addEventListener('resize',()=>{syncPane();refreshRailAfterResize()});
 $('ex-task').addEventListener('change',()=>{
-  taskId=$('ex-task').value;selected=null;collapsed.clear();
+  taskId=$('ex-task').value;selected=null;collapsed.clear();showMobileGraph();
   vaultUi?.reset();reader.innerHTML='<p class="muted">选择左侧科研节点以阅读完整内容。</p>';
   searchRequestSerial++;clearTimeout(searchTimer);$('ex-results').replaceChildren();$('ex-results').hidden=true;
   $('ex-tip-panel').hidden=true;closeToolbarMenus();
@@ -2172,7 +2180,7 @@ window.addEventListener('popstate',event=>{
   if(fromUrl&&fromUrl!==taskId&&Array.from($('ex-task').options||[]).some(o=>o.value===fromUrl)){
     taskId=fromUrl;$('ex-task').value=taskId;
     vaultUi?.reset();reader.innerHTML='<p class="muted">选择左侧科研节点以阅读完整内容。</p>';
-    selected=null;collapsed.clear();
+    selected=null;collapsed.clear();showMobileGraph();
     trail.length=0;trailIndex=-1;historySerial=-1;navSerial++;historyButtons();
     if(graph){graph.destroy();graph=null}
     load();return;

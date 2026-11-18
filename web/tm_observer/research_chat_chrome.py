@@ -82,6 +82,8 @@ CHROME_STYLE = """
 .tm-chat-codex .tm-chat-entry-tools>details{font-size:12px;color:var(--chat-muted)}
 .tm-chat-codex .tm-chat-entry-tools>details>summary{list-style:none;cursor:pointer;padding:4px 3px;text-align:center;white-space:nowrap}
 .tm-chat-codex .tm-chat-entry-tools>details>summary::-webkit-details-marker{display:none}
+.tm-chat-codex .tm-chat-project-options>summary{border:1px solid var(--chat-border,#52525b);border-radius:8px;padding:7px 12px!important;color:var(--chat-text,#f4f4f5);font-weight:600}
+.tm-chat-codex .tm-chat-project-options>summary:focus-visible{outline:2px solid #93c5fd;outline-offset:2px}
 .tm-chat-codex .tm-chat-entry-tools>details>summary span{margin-left:5px;color:var(--chat-muted)}
 .tm-chat-codex .tm-chat-entry-tools>details[open]{width:100%}
 .tm-chat-codex .tm-chat-entry-tools>details[open]>summary{margin-bottom:14px}

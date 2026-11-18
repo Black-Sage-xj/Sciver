@@ -580,7 +580,14 @@ def script(ident: str) -> str:
               section=>section.dataset.stageId===requestedStage);
             (exact||timeline.querySelector('.tm-stage-section'))?.querySelector('.tm-stage-heading')?.click();
           }
-          if(!count)timeline.innerHTML='<p class="tm-stage-empty">没有匹配的 Stage。</p>';
+          if(!timeline.children.length){
+            const noStages=overview.stages.length===0;
+            const unreadable=overview.warnings.some(w=>/: (unreadable|rejected)/.test(w));
+            const message=noStages?(unreadable?'部分记录无法读取，请检查来源状态后重试。':
+              '本轮尚无可读取的 Stage 记录，记录生成后可刷新。'):
+              '没有符合当前筛选条件的 Stage，请调整搜索或 Agent 筛选。';
+            timeline.innerHTML='<p class="tm-stage-empty">'+message+'</p>';
+          }
           status.textContent=overview.cycle+" · "+count+" 个 Stage · "+overview.transitions.length+" 个 SDK 过渡 · "+
             (overview.warnings.length?overview.warnings.join("；"):"源记录已读取")+" · 按需展开对话";
         }

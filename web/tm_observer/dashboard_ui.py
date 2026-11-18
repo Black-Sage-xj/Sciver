@@ -287,6 +287,9 @@ body.stage-height-focus .tm-sidebar-edge { display:none!important; }
 .tm-run-settings-link:focus-visible { outline:2px solid #93c5fd; outline-offset:3px; }
 .tm-run-settings-link svg { display:block; width:21px; height:21px; }
 .tm-task-settings-page { max-width:940px; margin:0 auto; padding:4px 0 38px; min-width:0; }
+.tm-settings-nav { display:flex; flex-wrap:wrap; gap:8px; margin:16px 0; }
+.tm-settings-nav a { color:var(--tm-link); border:1px solid var(--tm-border); border-radius:7px; padding:7px 10px; font-size:12px; text-decoration:none; }
+.tm-settings-nav a:focus-visible { outline:2px solid #93c5fd; outline-offset:2px; }
 .tm-task-settings-head { display:flex; justify-content:space-between; gap:15px;
   align-items:center; margin:0 0 18px; flex-wrap:wrap; }
 .tm-task-settings-head h1 { margin:7px 0 5px; color:#f1f5f9; font-size:23px; }

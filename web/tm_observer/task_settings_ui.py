@@ -32,7 +32,7 @@ def _task_selector(runs: Sequence[dict[str, Any]], selected_id: str = "") -> str
 def _appearance_settings_panel() -> str:
     """Browser-local appearance applies across all workspace pages, not to a task."""
     return (
-        '<section class="tm-task-settings-panel tm-appearance-panel" aria-label="外观设置">'
+        '<section id="settings-browser" class="tm-task-settings-panel tm-appearance-panel" aria-label="外观设置">'
         '<h2>外观</h2>'
         '<p class="tm-task-settings-hint">在白色、黑色与深蓝色主题之间切换，立即应用于整个 Web UI。'
         '偏好仅保存在当前浏览器，不改变科研任务或其他用户的设置。</p>'
@@ -54,7 +54,7 @@ def access_settings_panel(settings: dict[str, Any] | None) -> str:
     checked = " checked" if enabled else ""
     disabled = " disabled" if external else ""
     external_note = '<p>登录由启动命令的认证文件管理，请修改该文件并重启服务。</p>' if external else ''
-    return f'''<section class="tm-task-settings-panel tm-access-panel" aria-label="网页登录设置">
+    return f'''<section id="settings-access" class="tm-task-settings-panel tm-access-panel" aria-label="网页登录设置">
       <h2>网页登录</h2><p>本机使用默认无需登录。启用后，访问当前 Workspace 需要用户名和密码；所有登录账号都拥有运行控制权限。</p>
       {external_note}
       <form data-access-settings data-was-enabled="{str(enabled).lower()}">
@@ -79,6 +79,14 @@ def access_settings_panel(settings: dict[str, Any] | None) -> str:
     }})();</script>'''
 
 
+def _settings_navigation() -> str:
+    return ('<nav class="tm-settings-nav" aria-label="设置分类">'
+            '<a href="#settings-browser">浏览器外观</a>'
+            '<a href="#settings-access">网页登录</a>'
+            '<a href="#settings-conversion">PDF 转换</a>'
+            '<a href="#settings-task">当前任务</a></nav>')
+
+
 def workspace_settings_body(runs: Sequence[dict[str, Any]], selected: dict[str, Any] | None, *, access: dict[str, Any] | None = None) -> str:
     """Workspace root landing without silently choosing a different task."""
     if selected is not None:
@@ -91,8 +99,8 @@ def workspace_settings_body(runs: Sequence[dict[str, Any]], selected: dict[str, 
         '<h1>Settings</h1>'
         '<p>在 Workspace 中管理设置。自动审计是任务级配置，请先选择任务。</p>'
         '</div></header>'
-        + _appearance_settings_panel() + access_settings_panel(access) + document_conversion_panel() +
-        '<section class="tm-task-settings-panel">'
+        + _settings_navigation() + _appearance_settings_panel() + access_settings_panel(access) + document_conversion_panel() +
+        '<section id="settings-task" class="tm-task-settings-panel">'
         + _task_selector(runs) +
         '</section></main>'
     )
@@ -112,11 +120,12 @@ def task_settings_body(run: dict[str, Any], *, task_selector: str = "", access: 
           <h1>Settings</h1><p>当前配置对象：{title}</p></div>
         <a class="tm-task-settings-back" href="/run/{ident}/">← 返回 Run</a>
       </header>
+      {_settings_navigation()}
       {_appearance_settings_panel()}
       {access_settings_panel(access)}
       {document_conversion_panel()}
       {task_selector}
-      <section class="tm-task-settings-panel" data-settings-task="{ident}"
+      <section id="settings-task" class="tm-task-settings-panel" data-settings-task="{ident}"
         data-cycle="{cycle}" data-status="{status}" data-launch="{launch}">
         <h2>科研后台设置</h2>
         <p class="tm-task-settings-hint">自动审计设置保存到当前任务，
