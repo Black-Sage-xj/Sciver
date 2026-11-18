@@ -575,6 +575,11 @@ def _handle_failed_state(root: Path, *, repair_enabled: bool) -> bool:
 
 def _recover_failed_state(root: Path, *, repair_enabled: bool, stop: threading.Event) -> bool:
     """Keep ownership while an unresolved operational incident waits/replans."""
+    if not repair_enabled:
+        # Disabling automatic engineering must not launch a reviewer or run
+        # another validator. An already validated, unused receipt can authorize
+        # exactly one ordinary managed recovery under the same scheduler gate.
+        return _consume_existing_repair_credit(root, stop=stop)
     from .supervisor_recovery import stop_reason, due, projection, save_job
     while repair_enabled and not stop.is_set() and _error_repair_enabled(None, root):
         cycle_name, state, _ = _latest_scientific_state(root)
@@ -602,6 +607,31 @@ def _recover_failed_state(root: Path, *, repair_enabled: bool, stop: threading.E
         # No scheduler lock held while waiting; operator controls remain live.
         stop.wait(8)
     return False
+
+
+def _consume_existing_repair_credit(root: Path, *, stop: threading.Event) -> bool:
+    from .runtime_supervisor_review import review_runtime_failure
+    from .supervisor_recovery import stop_reason
+    from .worker_store import list_workers
+    if stop.is_set():
+        return False
+    gate = root / ".theory-master" / "scheduler.lock"
+    gate.parent.mkdir(parents=True, exist_ok=True)
+    with gate.open("a+") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return False
+        cycle_name, state, _ = _latest_scientific_state(root)
+        if (not cycle_name or stop_reason(state) or stop.is_set()
+                or any(worker.get("process_alive") for worker in list_workers(root))):
+            return False
+        result = review_runtime_failure(
+            backend=None, research_root=root, cycle_dir=root / cycle_name, state=state,
+            state_path=root / cycle_name / "research_state.json", incident_id="offline-validated-repair",
+            scheduler_locked=True, existing_receipt_only=True,
+        )
+        return result["action"] == "resume"
 
 
 def _supervisor_backend(root: Path):

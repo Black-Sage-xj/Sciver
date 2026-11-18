@@ -28,16 +28,53 @@ _HISTORY_KEYS = frozenset({"goal_gate", "goal_gate_history"})
 
 
 def material_roots(spec: Any) -> tuple[Path, ...]:
-    return tuple(
-        sorted(
-            {
-                Path(spec.research_root).resolve(),
-                Path(spec.document).parent.resolve(),
-                Path(spec.branch_canvas).parent.resolve(),
-            },
-            key=str,
+    roots = {
+        Path(spec.research_root).resolve(),
+        Path(spec.document).parent.resolve(),
+        Path(spec.branch_canvas).parent.resolve(),
+    }
+    benchmark = getattr(spec, "benchmark_root", None)
+    if benchmark is not None:
+        roots.add(Path(benchmark).resolve())
+    return tuple(sorted(roots, key=str))
+
+
+def required_benchmark_references(spec: Any) -> tuple[str, ...]:
+    """Read only explicitly named files in the plan's Required Context section."""
+    context = getattr(spec, "required_context", None)
+    if context is None:
+        # Snapshot callers can bind a minimal specification without reparsing
+        # the whole Research Plan contract. Do not inspect any benchmark here.
+        text = Path(spec.document).read_text(encoding="utf-8")
+        heading = re.search(r"(?m)^# Required Context[ \t]*$", text)
+        context = text[heading.end() :] if heading else ""
+        context = re.split(r"(?m)^# ", context, maxsplit=1)[0]
+    # A warning or provenance mention is not an input registration. Accept
+    # explicit list entries beginning with a file or Markdown file link.
+    references = set()
+    fenced = False
+    for line in str(context).splitlines():
+        if re.match(r"^ {0,3}(?:`{3,}|~{3,})", line):
+            fenced = not fenced
+            continue
+        if fenced or line.startswith(("    ", "\t")):
+            continue
+        match = re.match(
+            r"^[ \t]*[-*+][ \t]+(?:\[[^]\n]+\]\()?`?<?"
+            r"(benchmark/[A-Za-z0-9._~%+/-]+)",
+            line,
         )
-    )
+        if match:
+            references.add(match[1])
+    return tuple(sorted(references))
+
+
+def _benchmark_relative(reference: str) -> Path | None:
+    path = Path(unquote(urlsplit(reference).path))
+    if path.is_absolute() or not path.parts or path.parts[0] != "benchmark":
+        return None
+    tail = path.parts[1:]
+    return Path(*tail) if tail and ".." not in tail else None
 
 
 def material_sha256(path: Path) -> str:
@@ -54,15 +91,34 @@ def resolve_material(spec: Any, reference: str) -> dict[str, str]:
     if parsed.scheme or parsed.netloc:
         return {"reference": reference, "status": "external"}
     path = Path(unquote(parsed.path))
+    benchmark = getattr(spec, "benchmark_root", None)
+    alias = path.parts and path.parts[0] == "benchmark" and not path.is_absolute()
+    relative = _benchmark_relative(reference) if alias else None
+    if alias and (relative is None or benchmark is None):
+        return {"reference": reference, "status": "invalid_benchmark_reference"}
     candidates = (
-        [path]
-        if path.is_absolute()
-        else [
-            Path(spec.branch_canvas).parent / path,
-            Path(spec.research_root) / path,
-        ]
+        [Path(benchmark) / relative]
+        if alias
+        else (
+            [path]
+            if path.is_absolute()
+            else [
+                Path(spec.branch_canvas).parent / path,
+                Path(spec.research_root) / path,
+            ]
+        )
     )
     roots = material_roots(spec)
+    benchmark_root = Path(benchmark).resolve() if benchmark is not None else None
+    benchmark_files = (
+        {
+            item
+            for ref in required_benchmark_references(spec)
+            if (item := _benchmark_relative(ref)) is not None
+        }
+        if benchmark is not None
+        else set()
+    )
     safe: dict[str, Path] = {}
     rejected = "missing"
     for candidate in candidates:
@@ -74,10 +130,22 @@ def resolve_material(spec: Any, reference: str) -> dict[str, str]:
         ):
             candidate = candidate.with_suffix(".md")
         resolved = candidate.resolve()
-        if not any(resolved.is_relative_to(base) for base in roots):
+        if (
+            benchmark_root is not None
+            and resolved.is_relative_to(benchmark_root)
+            and resolved.relative_to(benchmark_root) not in benchmark_files
+        ):
+            rejected = "benchmark_file_not_in_required_context"
+        elif not any(resolved.is_relative_to(base) for base in roots):
             rejected = "outside_registered_roots"
         elif any(part.is_symlink() for part in (candidate, *candidate.parents)):
             rejected = "symlink"
+        elif (
+            benchmark_root is not None
+            and resolved.is_relative_to(benchmark_root)
+            and not resolved.is_file()
+        ):
+            rejected = "benchmark_reference_is_not_a_file"
         elif resolved.is_file() or resolved.is_dir():
             safe[str(resolved)] = resolved
     if len(safe) != 1:
@@ -111,6 +179,7 @@ def goal_material_sources(spec: Any, values: Iterable[Any]) -> list[dict[str, st
 
     for value in values:
         visit(value)
+    references.update(required_benchmark_references(spec))
     return [resolve_material(spec, ref) for ref in sorted(references)]
 
 

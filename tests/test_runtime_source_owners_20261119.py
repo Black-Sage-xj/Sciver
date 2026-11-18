@@ -11,6 +11,8 @@ from theory_master.runtime_manager import runtime_source_provenance
     ('theory_master.worker_actions', 'worker_actions.py'),
     ('theory_master.codex_goal_transport', 'codex_goal_transport.py'),
     ('theory_master.invocation_execution', 'invocation_execution.py'),
+    ('theory_master.evidence', 'evidence.py'),
+    ('theory_master.delivery_repair', 'delivery_repair.py'),
     ('tm_observer.http_handler', 'web/tm_observer/http_handler.py'),
 ])
 def test_mixed_owner_source_is_detected_without_importing_or_executing_it(tmp_path, monkeypatch, module, key):

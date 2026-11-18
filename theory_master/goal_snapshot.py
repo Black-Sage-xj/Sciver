@@ -18,6 +18,7 @@ from .goal_materials import (
     goal_material_sources,
     material_roots,
     resolve_material,
+    required_benchmark_references,
     rewrite_markdown_navigation,
 )
 from .runtime import write_json
@@ -118,6 +119,7 @@ def materialize_goal_snapshot(
     catalog = payload.get("goal_material_sources")
     if catalog is None:  # Older persisted callers still use the same boundary.
         catalog = goal_material_sources(spec, [json.loads(seed.agent_graph), payload])
+        payload["goal_material_sources"] = catalog
     registered = {
         row["path"]: row
         for row in catalog
@@ -247,7 +249,8 @@ def materialize_goal_snapshot(
     rule = (
         "Assess only this immutable snapshot. Read its frozen Research Plan, graph and delivery files. "
         "Original paths and URLs in captured prose are provenance; do not follow live authorities or retrieve "
-        "new sources. Apply the existing Final Gate unchanged."
+        "new sources. Read benchmark/... Required Context entries through the frozen "
+        "delivery_material_access.required_context_aliases mapping. Apply the existing Final Gate unchanged."
     )
     view["snapshot_boundary"] = rule
     agent_graph = root / "agent_graph.json"
@@ -263,6 +266,16 @@ def materialize_goal_snapshot(
         "index_path": str(index_path),
         "snapshot_boundary": rule,
         "scientific_model_snapshot": str(model),
+        "required_context_aliases": {
+            ref: {
+                "path": copied.get(row.get("path", ""))
+                or inaccessible(ref, row.get("status", "missing")),
+                "status": row["status"],
+                **({"sha256": row["sha256"]} if row.get("sha256") else {}),
+            }
+            for ref in required_benchmark_references(spec)
+            for row in [by_reference.get(ref, {"status": "missing"})]
+        },
     }
     (root / "access.json").write_bytes(_canonical(access))
     files = []

@@ -16,6 +16,16 @@ from theory_master.runtime_manager import (
 )
 
 
+@pytest.mark.parametrize('state', ['FAILED', 'FAILED_RECOVERY', 'STOPPED'])
+def test_known_terminal_without_live_process_preserves_its_disposition(tmp_path, state):
+    update_registry(tmp_path, state=state)
+    health = runtime_health(tmp_path)
+    assert health['state'] == state
+    assert health['active'] is False
+    assert health['runner_alive'] is False
+    assert health['supervisor_alive'] is False
+
+
 def test_existing_cycle_claim_refuses_single_foreground(tmp_path):
     claims = CycleClaims(tmp_path)
     claim = claims.claim_cycle('worker-1')

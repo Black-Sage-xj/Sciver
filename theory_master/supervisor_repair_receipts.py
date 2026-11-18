@@ -25,6 +25,7 @@ CANDIDATE_VALIDATOR = 'differential-engine-repair/v1'
 CONFIG_VALIDATOR = 'local-route-configuration/v1'
 CONTRACT_PROJECTION_VALIDATOR = 'judge-terminal-projection/v1'
 EXECUTION_LIMIT_PROTOCOL_VALIDATOR = 'native-execution-limit-protocol/v1'
+BENCHMARK_PROVENANCE_VALIDATOR = 'benchmark-provenance-alias/v1'
 # Import-only, non-instantiating probes; expanding this map requires review.
 _ATTRIBUTE_CLASSES = {'Workflow': 'workflow'}
 RECEIPT_KEY = 'supervisor_repair_receipt'
@@ -142,7 +143,7 @@ def inspect_repair_receipt(cycle: Path, state: dict, *, engine: Path | None = No
     receipt = json.loads(path.read_text())
     if (not isinstance(receipt, dict) or _digest(receipt) != ref.get('sha256')
             or receipt.get('schema') != SCHEMA
-            or receipt.get('validator') not in {CANVAS_VALIDATOR, ATTRIBUTE_VALIDATOR, CANDIDATE_VALIDATOR, CONFIG_VALIDATOR, CONTRACT_PROJECTION_VALIDATOR, EXECUTION_LIMIT_PROTOCOL_VALIDATOR}
+            or receipt.get('validator') not in {CANVAS_VALIDATOR, ATTRIBUTE_VALIDATOR, CANDIDATE_VALIDATOR, CONFIG_VALIDATOR, CONTRACT_PROJECTION_VALIDATOR, EXECUTION_LIMIT_PROTOCOL_VALIDATOR, BENCHMARK_PROVENANCE_VALIDATOR}
             or receipt.get('phase') != 'repair_validated'
             or receipt.get('failure_binding') != failure_binding(cycle, state)
             or receipt.get('source_root') != str(engine.resolve())
@@ -155,6 +156,10 @@ def inspect_repair_receipt(cycle: Path, state: dict, *, engine: Path | None = No
         path = Path(name)
         if not path.is_absolute() or _file_hash(path) != expected:
             raise ValueError('Repair validation inputs changed')
+    if receipt['validator'] == BENCHMARK_PROVENANCE_VALIDATOR:
+        from .supervisor_benchmark_recovery import recheck_receipt_inputs
+        recheck_receipt_inputs(receipt)
+        return receipt
     if receipt['validator'] in {CANDIDATE_VALIDATOR, CONFIG_VALIDATOR, CONTRACT_PROJECTION_VALIDATOR, EXECUTION_LIMIT_PROTOCOL_VALIDATOR}:
         return receipt
     from .supervisor_runtime_repair import _SAFE_MODULES
@@ -163,6 +168,11 @@ def inspect_repair_receipt(cycle: Path, state: dict, *, engine: Path | None = No
     if receipt.get('module') not in modules:
         raise ValueError('Unsupported repair module')
     return receipt
+
+
+def validate_existing_benchmark_provenance(cycle: Path, state: dict, *, engine: Path) -> dict | None:
+    from .supervisor_benchmark_recovery import validate_existing_benchmark_provenance as validate
+    return validate(cycle, state, engine=engine)
 
 
 def validate_existing_execution_limit_protocol(cycle: Path, state: dict, *, engine: Path) -> dict | None:

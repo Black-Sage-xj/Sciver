@@ -866,6 +866,7 @@ class WorkflowStateMixin:
             repo_root=Path(anchors["repo_root"]) if anchors.get("repo_root") else None,
             research_root=self.spec.research_root,
             legacy_research_root=self.spec.legacy_research_root,
+            benchmark_root=self.spec.benchmark_root,
         )
 
     def _register_evidence(self, state: dict[str, Any], role: str, output: dict[str, Any], *,

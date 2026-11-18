@@ -183,12 +183,28 @@ def review_runtime_failure(
     state_path: Path, incident_id: str, log_path: Path | None = None,
     readonly_provider_probe_only: bool = False,
     scheduler_locked: bool = False,
+    existing_receipt_only: bool = False,
 ) -> dict[str, str]:
     from .budget_reconciliation import LEGACY_ERROR, reconcile_legacy_failure
     reconciliation_error = None
     reconciled = None
     validated_repair = None
-    if not readonly_provider_probe_only:
+    if existing_receipt_only:
+        if not scheduler_locked:
+            return {"action": "hold", "reason": "Existing repair credit requires the exclusive scheduler gate.",
+                    "diagnosis": "", "repair_suggestion": ""}
+        from .supervisor_repair_receipts import inspect_repair_receipt, unused_repair_credit
+        try:
+            validated_repair = inspect_repair_receipt(cycle_dir, state)
+            blocker = resume_blocker(state, runtime_revalidated=True,
+                                     contract_projection_repair=validated_repair)
+            if not unused_repair_credit(state):
+                blocker = "The existing repair receipt's resume credit was already consumed."
+        except (OSError, ValueError, TypeError, KeyError):
+            blocker = "No current, independently validated repair receipt exists."
+        if blocker:
+            return {"action": "hold", "reason": blocker, "diagnosis": "", "repair_suggestion": ""}
+    if not readonly_provider_probe_only and not existing_receipt_only:
         from .supervisor_repair_receipts import (inspect_repair_receipt, validate_existing_method,
             validate_existing_judge_projection, validate_existing_execution_limit_protocol)
         try:
@@ -216,6 +232,16 @@ def review_runtime_failure(
         if validated_repair is None:
             import subprocess
             try:
+                from .supervisor_repair_receipts import validate_existing_benchmark_provenance
+                validated_repair = validate_existing_benchmark_provenance(
+                    cycle_dir, state, engine=Path(__file__).resolve().parent)
+                if validated_repair:
+                    write_json(state_path, state)
+            except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired):
+                pass
+        if validated_repair is None:
+            import subprocess
+            try:
                 validated_repair = validate_existing_method(
                     cycle_dir, state, engine=Path(__file__).resolve().parent,
                     log=_log_tail(research_root, log_path=log_path))
@@ -223,7 +249,7 @@ def review_runtime_failure(
                     write_json(state_path, state)
             except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired):
                 pass
-    if validated_repair is None and not readonly_provider_probe_only:
+    if validated_repair is None and not readonly_provider_probe_only and not existing_receipt_only:
         from .supervisor_configuration_repair import configuration_failure, validate_configuration
         if configuration_failure(state):
             try:
@@ -240,7 +266,7 @@ def review_runtime_failure(
             or (state.get("recovery") or {}).get("category") == "budget_validation")
             and (state.get("recovery") or {}).get("message") == LEGACY_ERROR
             and not state.get("budget_failure_reconciliation")
-            and not readonly_provider_probe_only):
+            and not readonly_provider_probe_only and not existing_receipt_only):
         try:
             reconciled = reconcile_legacy_failure(
                 cycle_dir, state=state, scheduler_locked=scheduler_locked)
@@ -269,7 +295,7 @@ def review_runtime_failure(
     repair_safe = resume_blocker({**state, "protocol_health": "valid"}, for_repair=True) is None
     target = (repair_target(_log_for_repair(research_root, log_path=log_path), state,
                             Path(__file__).resolve().parent)
-              if repair_safe else None)
+              if repair_safe and not existing_receipt_only else None)
     if reconciliation_error is not None:
         result = {"action": "hold", "reason": "Budget migration revalidation failed: " + reconciliation_error,
                   "diagnosis": "Budget migration evidence remains incomplete or unsafe.",

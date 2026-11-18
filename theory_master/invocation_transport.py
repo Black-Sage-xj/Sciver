@@ -202,6 +202,10 @@ class InvocationTransport:
                 self.session.prompt,
                 "continuation" if self.session.continuation else "task",
             )
+            if self.session.use_native_goal:
+                from .native_delivery_journal import record_native_delivery
+
+                record_native_delivery(self.session)
             if self.session.skill_binding:
                 self.session.skill_versions[self.session.identifier] = (
                     self.session.skill_binding["catalogue_version"]

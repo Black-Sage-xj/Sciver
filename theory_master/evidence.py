@@ -148,9 +148,11 @@ class EvidenceRegistry:
 
     def __init__(self, cycle_dir: Path, workspace: Path, *, task_local_root: Path | None = None,
                  repo_root: Path | None = None, research_root: Path | None = None,
-                 legacy_research_root: Path | None = None):
+                 legacy_research_root: Path | None = None,
+                 benchmark_root: Path | None = None):
         self.cycle_dir = cycle_dir
         self.workspace = workspace
+        self.benchmark_root = Path(benchmark_root).expanduser().absolute() if benchmark_root is not None else None
         self.evidence_dir = cycle_dir / "evidence"
         self.records_path = self.evidence_dir / "registry.jsonl"
         self.registration_batches_path = self.evidence_dir / "registration_batches.jsonl"
@@ -286,10 +288,40 @@ class EvidenceRegistry:
         normalized.pop("hypothesis_id", None)
         return normalized
 
+    def _benchmark_ref_matches(self, source: Path) -> list[str]:
+        """Resolve the benchmark/ alias only inside its explicitly bound root.
+
+        Task v2 stores benchmark inputs beside research, rather than below the
+        human notebook or Cycle. Never infer that sibling through a parent/repo
+        search, nor recover a rejected alias by a workspace basename.
+        """
+        root = self.benchmark_root
+        relative = source.parts[1:]
+        if root is None or not relative or ".." in relative:
+            return []
+        try:
+            if any(part.is_symlink() for part in (root, *root.parents)):
+                return []
+            root = root.resolve(strict=True)
+            if not root.is_dir():
+                return []
+            candidate = root.joinpath(*relative)
+            if any(root.joinpath(*relative[:i]).is_symlink()
+                   for i in range(1, len(relative) + 1)):
+                return []
+            resolved = candidate.resolve(strict=True)
+            if not resolved.is_relative_to(root) or not resolved.is_file():
+                return []
+            return [str(resolved)]
+        except (OSError, RuntimeError, ValueError):
+            return []
+
     def _provenance_declaration_matches(self, ref: str) -> list[str]:
         source = Path(str(ref or "")).expanduser()
         if not str(ref or "").strip():
             return []
+        if not source.is_absolute() and source.parts and source.parts[0] == "benchmark":
+            return self._benchmark_ref_matches(source)
         if source.is_absolute():
             try:
                 resolved = source.resolve()
@@ -326,7 +358,13 @@ class EvidenceRegistry:
                 source = Path(pointer).expanduser()
                 matches: list[Path] = []
                 attempted: list[str] = []
-                if source.is_absolute():
+                benchmark_alias = (not source.is_absolute() and bool(source.parts)
+                                   and source.parts[0] == "benchmark")
+                if benchmark_alias:
+                    attempted.append(str(self.benchmark_root.joinpath(*source.parts[1:]))
+                                     if self.benchmark_root is not None else "benchmark_root is not bound")
+                    matches = [Path(path) for path in self._benchmark_ref_matches(source)]
+                elif source.is_absolute():
                     resolved = source.resolve()
                     attempted.append(str(resolved))
                     if resolved.exists():
@@ -347,7 +385,7 @@ class EvidenceRegistry:
                     # Recover only a malformed relative path whose basename names
                     # exactly one file inside this Cycle's workspace.
                     recovered: list[Path] = []
-                    if not source.is_absolute() and source.name:
+                    if not benchmark_alias and not source.is_absolute() and source.name:
                         try:
                             recovered = [path.resolve() for path in self.workspace.rglob(source.name)
                                          if path.is_file()]

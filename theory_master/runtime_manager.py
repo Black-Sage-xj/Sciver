@@ -46,6 +46,11 @@ _RUNTIME_SOURCE_MODULES = {
     "goal_gate.py": "theory_master.goal_gate",
     "goal_snapshot.py": "theory_master.goal_snapshot",
     "goal_materials.py": "theory_master.goal_materials",
+    "delivery_repair.py": "theory_master.delivery_repair",
+    "evidence.py": "theory_master.evidence",
+    "native_delivery_journal.py": "theory_master.native_delivery_journal",
+    "native_delivery_reprocessing.py": "theory_master.native_delivery_reprocessing",
+    "supervisor_benchmark_recovery.py": "theory_master.supervisor_benchmark_recovery",
     "invocation_execution.py": "theory_master.invocation_execution",
     "invocation_preparation.py": "theory_master.invocation_preparation",
     "invocation_context.py": "theory_master.invocation_context",
@@ -368,7 +373,7 @@ def runtime_health(research_root: Path, *, stale_after_s: float = HEARTBEAT_STAL
         return {"state": health, "active": True, "supervisor_alive": False, "runner_alive": True, "heartbeat_age_s": heartbeat_age, "registry": payload}
     if state == "LAUNCHING" and launch_age is not None and launch_age <= LAUNCH_GRACE_S:
         return {"state": "LAUNCHING", "active": True, "supervisor_alive": False, "runner_alive": False, "heartbeat_age_s": heartbeat_age, "registry": payload}
-    terminal = state in {"OVER", "COMPLETE", "COMPLETED", "STOPPED", "NEEDS_ATTENTION", "CANCELLED", "FAILED_RECOVERY"}
+    terminal = state in {"OVER", "COMPLETE", "COMPLETED", "STOPPED", "NEEDS_ATTENTION", "CANCELLED", "FAILED", "FAILED_RECOVERY"}
     return {"state": state if terminal else "ORPHANED", "active": False, "supervisor_alive": False, "runner_alive": False, "heartbeat_age_s": heartbeat_age, "registry": payload}
 
 

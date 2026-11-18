@@ -60,7 +60,8 @@ class EvidenceRegistryTest(unittest.TestCase):
             repo_source.parent.mkdir(parents=True)
             task_source.write_text("source\n", encoding="utf-8")
             repo_source.write_text("note\n", encoding="utf-8")
-            registry = EvidenceRegistry(cycle, workspace, task_local_root=task_local, repo_root=repo)
+            registry = EvidenceRegistry(cycle, workspace, task_local_root=task_local, repo_root=repo,
+                                        benchmark_root=task_source.parent)
 
             registry.register_role_output(
                 "investigator",

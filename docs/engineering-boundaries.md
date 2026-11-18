@@ -43,6 +43,15 @@ Tests inject dependencies or patch the module that owns the operation.
 - Invocation repair, semantic closure, Evidence registration and persistence
   share one cleanup boundary. Typed quota/control exits remain typed. Completed
   semantic closures remain reusable after a checkpoint failure.
+- Native deliveries receive an immutable SDK return journal before semantic
+  registration. A stopped invocation with a validated repair receipt can finish
+  its original contract and Evidence registration without another model call;
+  recovery preserves the authored files and failed invocation audit.
+- The `benchmark/` namespace binds only to the task's configured benchmark root.
+  Goal snapshots include individually named Required Context files, hash them
+  into the delivery revision and expose their frozen aliases to Judge. Missing
+  bindings, traversal, symlinks and unregistered benchmark files cannot widen
+  that input boundary.
 - Goal review captures plan, graph, Scientific Model and delivery authorities.
   The Judge reads independent frozen copies without holding the science writer
   lock. A short exclusive commit compares current authority and source hashes;
