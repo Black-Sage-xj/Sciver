@@ -31,7 +31,33 @@ class ResearchPlanError(ValueError):
         self.status = status
 
 
-def _file(search_root: Path, run: dict[str, Any]) -> Path:
+def _binding(root: Path) -> dict[str, Any]:
+    path = root / ".theory-master" / "task.json"
+    if (not path.is_file() or path.is_symlink() or path.parent.is_symlink()
+            or path.stat().st_size > 512 * 1024 or not path.resolve().is_relative_to(root)):
+        raise ResearchPlanError("任务绑定文件无效", 404)
+    try:
+        marker = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(marker, dict):
+            raise ValueError("invalid task binding")
+        return marker
+    except (UnicodeError, OSError, ValueError) as exc:
+        raise ResearchPlanError("任务绑定文件无效", 404) from exc
+
+
+def _scoped_path(raw: Any, repo: Path) -> Path:
+    from .workspace_scope import WorkspaceScopeError, workspace_path
+
+    try:
+        path = workspace_path(raw, repo)
+        if raw != str(path):
+            raise WorkspaceScopeError("noncanonical path")
+        return path
+    except WorkspaceScopeError as exc:
+        raise ResearchPlanError("Research Plan 的任务路径不安全或超出当前工作区", 403) from exc
+
+
+def _location(search_root: Path, run: dict[str, Any]) -> tuple[Path, Path | None]:
     repo = search_root.resolve()
     observer = str(run.get("observer_id") or "")
     if not IDENT.fullmatch(observer):
@@ -44,27 +70,30 @@ def _file(search_root: Path, run: dict[str, Any]) -> Path:
     if (not root.is_relative_to(repo) or root_path != root
             or hashlib.sha256(str(research).encode("utf-8")).hexdigest()[:16] != observer):
         raise ResearchPlanError("任务来源校验失败", 403)
-    # The human plan stays inside the selected search scope. A separately
-    # stored runtime is an identity only, authorized by the SDK's exact local
-    # binding/config pair; no runtime path is followed for Plan file access.
+    # Plan and config may live in a separate notebook inside this search scope.
+    # Only exact reciprocal SDK bindings authorize that layout; aliases and
+    # runtime paths never become alternate Plan file access roots.
     requires_canonical_binding = root == repo or not research.is_relative_to(repo)
-    binding = root / ".theory-master" / "task.json"
-    if (not binding.is_file() or binding.is_symlink() or binding.parent.is_symlink()
-            or binding.stat().st_size > 512 * 1024 or not binding.resolve().is_relative_to(root)):
-        raise ResearchPlanError("任务绑定文件无效", 404)
-    config = root / "theory-master.config.json"
+    marker = _binding(root)
+    config = (_scoped_path(marker["config_path"], repo) if "config_path" in marker
+              else root / "theory-master.config.json")
+    requires_canonical_binding = requires_canonical_binding or config.parent != root
     path = root / "research_plan.md"
     if config.exists() or config.is_symlink():
         if config.is_symlink() or not config.is_file() or config.stat().st_size > 512 * 1024:
             raise ResearchPlanError("任务配置文件不安全", 403)
+        _scoped_path(str(config), repo)
         try:
             doc = json.loads(config.read_text(encoding="utf-8"))
             configured = doc.get("research_root") if isinstance(doc, dict) else None
             if configured and (root / str(configured)).resolve() != research:
                 raise ResearchPlanError("Research Plan 的任务绑定已发生变化", 409)
+            configured_plan = doc.get("plan_path") if isinstance(doc, dict) else None
+            if configured_plan and configured_plan != str(path):
+                path = _scoped_path(configured_plan, repo)
+                requires_canonical_binding = True
             if requires_canonical_binding:
-                marker = json.loads(binding.read_text(encoding="utf-8"))
-                if (not isinstance(marker, dict) or marker.get("schema") != "theory-master/task/v2"
+                if (marker.get("schema") != "theory-master/task/v2"
                         or marker.get("config_path") != str(config)
                         or not isinstance(doc, dict) or doc.get("schema") != "theory-master/system/v1"
                         or doc.get("path_model") != "theory-master/task-path/v2"):
@@ -72,15 +101,26 @@ def _file(search_root: Path, run: dict[str, Any]) -> Path:
                 if (doc.get("task_home") != str(root) or doc.get("plan_path") != str(path)
                         or doc.get("research_root") != str(research)):
                     raise ResearchPlanError("Research Plan 的任务绑定已发生变化", 409)
+                if path.parent != root:
+                    plan_marker = _binding(path.parent)
+                    if (plan_marker.get("schema") != "theory-master/task/v2"
+                            or plan_marker.get("config_path") != str(config)):
+                        raise ResearchPlanError("Research Plan 的任务绑定已发生变化", 409)
         except (UnicodeError, OSError, ValueError, TypeError) as exc:
             if isinstance(exc, ResearchPlanError):
                 raise
             raise ResearchPlanError("任务配置文件无效", 409) from exc
-    elif requires_canonical_binding:
+    elif requires_canonical_binding or "config_path" in marker:
         raise ResearchPlanError("任务来源校验失败：缺少当前任务配置", 403)
-    if path.is_symlink() or not path.is_file() or path.resolve().parent != root:
+    else:
+        config = None
+    if path.is_symlink() or not path.is_file() or path != path.resolve():
         raise ResearchPlanError("未找到安全的 research_plan.md", 404)
-    return path
+    return path, config
+
+
+def _file(search_root: Path, run: dict[str, Any]) -> Path:
+    return _location(search_root, run)[0]
 
 
 def _read(path: Path) -> str:
@@ -186,13 +226,12 @@ def _write_updated(path: Path, before: os.stat_result, updated: str, *, before_r
 
 
 @contextmanager
-def _edit_guard(path: Path, run: dict, *, model_edit: bool):
+def _edit_guard(path: Path, run: dict, *, model_edit: bool, config_path: Path | None):
     """Real task bindings must use runtime CAS metadata; bare Markdown may edit alone."""
     from theory_master.goal_terminal import assert_goal_open, science_commit_barrier
     from theory_master.scientific_model import model_commit_lock, _authoritative_plan
 
-    config_path = path.parent / "theory-master.config.json"
-    if not config_path.exists():
+    if config_path is None:
         # The standalone Markdown viewer has no SDK runtime or scientific model.
         marker = json.loads((path.parent / ".theory-master" / "task.json").read_text(encoding="utf-8"))
         if Path(run["research_root"]).resolve() != path.parent or marker.get("schema") == "theory-master/task/v2":
@@ -257,10 +296,11 @@ def save_section(search_root: Path, run: dict[str, Any], payload: Any) -> dict[s
         if (name not in SECTIONS or not isinstance(value, str) or "\x00" in value
                 or len(value) > MAX_SECTION_CHARS):
             raise ResearchPlanError("字段名称或长度无效")
-    path = _file(search_root, run)
+    path, config_path = _location(search_root, run)
     model_edit = (scope == "model") if restore else name == "Scientific Model"
-    with _edit_guard(path, run, model_edit=model_edit) as model_binding, plan_lock(path):
-        path = _file(search_root, run)
+    with _edit_guard(path, run, model_edit=model_edit, config_path=config_path) as model_binding, plan_lock(path):
+        if _location(search_root, run) != (path, config_path):
+            raise ResearchPlanError("Research Plan 的任务绑定已发生变化", 409)
         before = path.stat()
         raw = _read(path)
         parsed = _parse(raw)

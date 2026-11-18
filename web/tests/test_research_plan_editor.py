@@ -7,9 +7,11 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
+from unittest.mock import patch
 
 from tm_observer.research_plan_editor import ResearchPlanError, read_plan, save_section, history_plan
 from tm_observer.research_plan_history import project
@@ -98,7 +100,7 @@ class ResearchPlanEditorTests(unittest.TestCase):
             ({}, {"schema": "invalid"}, 403),
             ({}, {"path_model": "invalid"}, 403),
             ({}, {"task_home": str(self.repo)}, 409),
-            ({}, {"plan_path": str(research / "research_plan.md")}, 409),
+            ({}, {"plan_path": str(research / "research_plan.md")}, 403),
             ({}, {"research_root": str(research / "changed")}, 409),
         )
         for marker_delta, config_delta, status in cases:
@@ -157,6 +159,132 @@ class ResearchPlanEditorTests(unittest.TestCase):
     def test_external_runtime_http_read_write_and_conflict(self):
         self.bind_external_runtime()
         self._assert_http_read_write_and_conflict()
+
+    def bind_notebook_plan(self, *, config_in_notebook=False, alias=False):
+        research, config = self.bind_external_runtime()
+        original = self.path
+        notebook = self.repo / "笔记区" / "单独的任务笔记"
+        (notebook / ".theory-master").mkdir(parents=True)
+        self.path = notebook / "research_plan.md"
+        original.rename(self.path)
+        if alias:
+            original.symlink_to(self.path)
+        if config_in_notebook:
+            relocated = notebook / config.name
+            config.rename(relocated)
+            config = relocated
+        doc = json.loads(config.read_text())
+        doc["plan_path"] = str(self.path)
+        config.write_text(json.dumps(doc), encoding="utf-8")
+        for home in (self.task, notebook, research):
+            (home / ".theory-master" / "task.json").write_text(json.dumps({
+                "schema": "theory-master/task/v2", "config_path": str(config),
+            }), encoding="utf-8")
+        return research, config
+
+    def test_notebook_plan_with_task_home_config_http_read_save_history_and_conflict(self):
+        self.bind_notebook_plan(alias=True)
+        self._assert_http_read_write_and_conflict()
+
+    def test_notebook_plan_with_notebook_config_http_read_save_history_and_conflict(self):
+        self.bind_notebook_plan(config_in_notebook=True)
+        self._assert_http_read_write_and_conflict()
+
+    def test_notebook_model_edit_and_restore_use_bound_runtime_metadata(self):
+        research, config = self.bind_notebook_plan()
+        initial = read_plan(self.repo, self.run)
+        saved = save_section(self.repo, self.run, {
+            "section": "Scientific Model", "text": "\nHuman model correction\n",
+            "expected_revision": initial["sections"][-1]["revision"],
+            "change_reason": "Correct model in separate notebook",
+        })
+        self.assertEqual(saved["scientific_model_version"], 1)
+        self.assertEqual(saved["scientific_model_source"], "human")
+        self.assertEqual(saved["sections"][:-1], initial["sections"][:-1])
+        restored = save_section(self.repo, self.run, {
+            "operation": "restore", "scope": "model", "version": 1,
+            "expected_revision": saved["scope_revisions"]["model"],
+            "change_reason": "Restore original model summary",
+        })
+        self.assertEqual(restored["scientific_model_version"], 2)
+        self.assertEqual(self.path.read_text(), PLAN)
+        metadata = json.loads((research / "scientific_model_state.json").read_text())
+        self.assertEqual(metadata["version"], 2)
+
+    def test_notebook_plan_requires_scoped_canonical_config_and_reciprocal_binding(self):
+        research, config = self.bind_notebook_plan(config_in_notebook=True)
+        initial = read_plan(self.repo, self.run)
+        payload = {"section": "Goal", "text": "\nMust not be saved\n",
+                   "expected_revision": initial["sections"][0]["revision"],
+                   "change_reason": "Reject a changed binding"}
+        marker = self.path.parent / ".theory-master" / "task.json"
+        original_marker = marker.read_bytes()
+        for replacement in ({"schema": "invalid", "config_path": str(config)},
+                            {"schema": "theory-master/task/v2", "config_path": str(config.with_name("other.json"))}):
+            with self.subTest(marker=replacement):
+                marker.write_text(json.dumps(replacement))
+                for operation in (lambda: read_plan(self.repo, self.run),
+                                  lambda: history_plan(self.repo, self.run),
+                                  lambda: save_section(self.repo, self.run, payload)):
+                    with self.assertRaises(ResearchPlanError):
+                        operation()
+                self.assertEqual(self.path.read_text(), PLAN)
+        marker.write_bytes(original_marker)
+        doc = json.loads(config.read_text())
+        for replacement in (str(research / "research_plan.md"), "relative/research_plan.md",
+                            str(self.repo / ".." / "outside" / "research_plan.md")):
+            with self.subTest(plan_path=replacement):
+                config.write_text(json.dumps({**doc, "plan_path": replacement}))
+                with self.assertRaises(ResearchPlanError) as caught:
+                    read_plan(self.repo, self.run)
+                self.assertEqual(caught.exception.status, 403)
+                self.assertEqual(self.path.read_text(), PLAN)
+        config.write_text(json.dumps(doc))
+        # A search scope restricted to Task Home cannot reach a sibling notebook.
+        with self.assertRaises(ResearchPlanError) as caught:
+            read_plan(self.task, self.run)
+        self.assertEqual(caught.exception.status, 403)
+
+    def test_notebook_plan_rejects_symlinked_plan_config_and_metadata(self):
+        self.bind_notebook_plan(config_in_notebook=True)
+        for path in (self.path, self.path.parent / "theory-master.config.json",
+                     self.path.parent / ".theory-master"):
+            with self.subTest(path=path):
+                moved = path.with_name(path.name + ".moved")
+                path.rename(moved)
+                path.symlink_to(moved, target_is_directory=moved.is_dir())
+                with self.assertRaises(ResearchPlanError):
+                    read_plan(self.repo, self.run)
+                path.unlink()
+                moved.rename(path)
+
+    def test_notebook_plan_rebound_while_waiting_for_lock_is_not_saved(self):
+        research, config = self.bind_notebook_plan()
+        initial = read_plan(self.repo, self.run)
+        other = self.repo / "another-notebook"
+        (other / ".theory-master").mkdir(parents=True)
+        replacement = other / "research_plan.md"
+        replacement.write_text(PLAN)
+        (other / ".theory-master" / "task.json").write_text(json.dumps({
+            "schema": "theory-master/task/v2", "config_path": str(config),
+        }))
+
+        @contextmanager
+        def rebind_before_lock(path):
+            doc = json.loads(config.read_text())
+            config.write_text(json.dumps({**doc, "plan_path": str(replacement)}))
+            yield
+
+        with patch("tm_observer.research_plan_editor.plan_lock", rebind_before_lock):
+            with self.assertRaises(ResearchPlanError) as caught:
+                save_section(self.repo, self.run, {
+                    "section": "Goal", "text": "\nMust not be saved\n",
+                    "expected_revision": initial["sections"][0]["revision"],
+                    "change_reason": "Reject path change while acquiring lock",
+                })
+        self.assertEqual(caught.exception.status, 409)
+        self.assertEqual(self.path.read_text(), PLAN)
+        self.assertEqual(replacement.read_text(), PLAN)
 
     def test_read_and_isolated_section_update(self):
         before = read_plan(self.repo, self.run)
