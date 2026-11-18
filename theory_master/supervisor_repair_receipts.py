@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -22,6 +23,7 @@ CANVAS_VALIDATOR = 'canvas-offline/v1'
 ATTRIBUTE_VALIDATOR = 'python-method-availability/v1'
 CANDIDATE_VALIDATOR = 'differential-engine-repair/v1'
 CONFIG_VALIDATOR = 'local-route-configuration/v1'
+CONTRACT_PROJECTION_VALIDATOR = 'judge-terminal-projection/v1'
 # Import-only, non-instantiating probes; expanding this map requires review.
 _ATTRIBUTE_CLASSES = {'Workflow': 'workflow'}
 RECEIPT_KEY = 'supervisor_repair_receipt'
@@ -139,7 +141,7 @@ def inspect_repair_receipt(cycle: Path, state: dict, *, engine: Path | None = No
     receipt = json.loads(path.read_text())
     if (not isinstance(receipt, dict) or _digest(receipt) != ref.get('sha256')
             or receipt.get('schema') != SCHEMA
-            or receipt.get('validator') not in {CANVAS_VALIDATOR, ATTRIBUTE_VALIDATOR, CANDIDATE_VALIDATOR, CONFIG_VALIDATOR}
+            or receipt.get('validator') not in {CANVAS_VALIDATOR, ATTRIBUTE_VALIDATOR, CANDIDATE_VALIDATOR, CONFIG_VALIDATOR, CONTRACT_PROJECTION_VALIDATOR}
             or receipt.get('phase') != 'repair_validated'
             or receipt.get('failure_binding') != failure_binding(cycle, state)
             or receipt.get('source_root') != str(engine.resolve())
@@ -152,7 +154,7 @@ def inspect_repair_receipt(cycle: Path, state: dict, *, engine: Path | None = No
         path = Path(name)
         if not path.is_absolute() or _file_hash(path) != expected:
             raise ValueError('Repair validation inputs changed')
-    if receipt['validator'] in {CANDIDATE_VALIDATOR, CONFIG_VALIDATOR}:
+    if receipt['validator'] in {CANDIDATE_VALIDATOR, CONFIG_VALIDATOR, CONTRACT_PROJECTION_VALIDATOR}:
         return receipt
     from .supervisor_runtime_repair import _SAFE_MODULES
     modules = (_SAFE_MODULES if receipt['validator'] == CANVAS_VALIDATOR else
@@ -160,6 +162,131 @@ def inspect_repair_receipt(cycle: Path, state: dict, *, engine: Path | None = No
     if receipt.get('module') not in modules:
         raise ValueError('Unsupported repair module')
     return receipt
+
+
+def validate_existing_judge_projection(cycle: Path, state: dict, *, engine: Path) -> dict | None:
+    """Recognize only the v8 explanatory-text-as-enum delivery defect.
+
+    This certifies a fresh invocation's preparation, never any saved Judge
+    answer. The failed output and historical protocol violation stay intact.
+    """
+    recovery = state.get('recovery') or {}
+    if (state.get('status') != 'needs_attention' or state.get('execution_active')
+            or state.get('protocol_health') != 'violation'
+            or state.get('phase') != 'judge:terminal_assessment:contract_repair_failed'
+            or (state.get('attention') or {}).get('code') != 'contract_repair_failed'
+            or recovery.get('action') != 'contract_repair_failed'
+            or recovery.get('role') != 'judge' or recovery.get('stage') != 'terminal_assessment'
+            or state.get('scientific_verdict') is not None):
+        return None
+    from .runtime_supervisor_review import resume_blocker
+    if resume_blocker({**state, 'protocol_health': 'valid'}, for_repair=True) is not None:
+        return None
+    invocation = str(recovery.get('invocation_id') or '')
+    if not invocation or Path(invocation).name != invocation:
+        return None
+    artifact = cycle / 'contract_repairs' / (invocation + '.json')
+    ledger, events = cycle / 'invocations.jsonl', cycle / 'runtime_events.jsonl'
+    if str(artifact) != recovery.get('artifact'):
+        return None
+    paths = (artifact, ledger, events)
+    if any(p.is_symlink() or not p.is_file() or p.stat().st_size > 16_000_000 for p in paths):
+        return None
+    if (cycle / 'contract_repairs').is_symlink():
+        return None
+    manifest = source_manifest(engine)
+    binding = failure_binding(cycle, state)
+    inputs = {str(p.resolve()): _file_hash(p) for p in paths}
+    saved = json.loads(artifact.read_text())
+    if any(saved.get(key) != recovery.get(key) for key in
+           ('invocation_id', 'role', 'stage', 'thread_id', 'repair_prompt', 'at')):
+        return None
+    errors = saved.get('validation_errors')
+    ref = 'theory-master/role/judge/terminal-assessment/v8'
+    if errors != [{'path': '/', 'code': 'contract_violation', 'expected': ref,
+                   'actual': 'object', 'message': 'judge verdict is invalid'}]:
+        return None
+    raw_outputs = saved.get('raw_outputs')
+    aliases = {'open for terminal', 'open_for_terminal'}
+    if not isinstance(raw_outputs, list) or not raw_outputs or len(raw_outputs) > 4:
+        return None
+    for raw in raw_outputs:
+        answer = json.loads(raw)
+        if (not isinstance(answer, dict) or set(answer) != {'verdict', 'rationale'} or answer.get('verdict') not in aliases
+                or not isinstance(answer.get('rationale'), str) or not answer['rationale'].strip()):
+            return None
+    from .invocations import InvocationLedger, stable_hash
+    failed = InvocationLedger(ledger).snapshot(invocation) or {}
+    if (failed.get('state') != 'failed' or failed.get('error_type') != 'ContractRepairFailed'
+            or failed.get('role') != 'judge' or failed.get('stage') != 'terminal_assessment'
+            or failed.get('thread_id') != recovery.get('thread_id')
+            or failed.get('commit_state') != 'not_committed'):
+        return None
+    # Import current contracts in a fresh, credential-free interpreter. A
+    # long-lived Supervisor can itself still hold the old module objects.
+    script = '''import json, sys
+def offline(event, args):
+    if event in {'socket.connect', 'socket.getaddrinfo', 'subprocess.Popen', 'os.system', 'os.posix_spawn', 'ctypes.dlopen'} or event.startswith('os.exec'):
+        raise RuntimeError('Judge projection validation forbids network/process execution')
+sys.addaudithook(offline)
+sys.path.insert(0, sys.argv[1])
+from theory_master.contracts import role_contract
+c = role_contract('judge', phase='terminal_assessment')
+for v in ('supported', 'rejected', 'milestone_advanced', 'open'):
+    c.validate({'verdict': v, 'rationale': 'Offline contract probe.'}, {})
+c.validate({'verdict': None, 'rationale': 'Offline contract probe.', 'objection': {
+    'requested_resolution': 'One bounded scientific result.', 'needs_external_scholarship': False}}, {})
+for v in ('open for terminal', 'open_for_terminal', 'unknown'):
+    try:
+        c.validate({'verdict': v, 'rationale': 'Offline contract probe.'}, {})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('Invalid terminal enum accepted')
+print(json.dumps({'descriptor': c.descriptor(), 'schema': c.prompt_schema,
+                  'projection': c.prompt_projection({})}))
+'''
+    with tempfile.TemporaryDirectory(prefix='tm-judge-projection-') as td:
+        proc = subprocess.run([sys.executable, '-I', '-B', '-c', script, str(engine.parent)],
+                              cwd=td, env={'PATH': os.defpath, 'HOME': td, 'LANG': 'C.UTF-8'},
+                              capture_output=True, text=True, timeout=30, check=False)
+    if proc.returncode:
+        return None
+    current = json.loads(proc.stdout)
+    schema = current.get('schema') or {}
+    descriptor = current.get('descriptor') or {}
+    if (descriptor.get('contract_id') != ref.rsplit('/v', 1)[0]
+            or descriptor.get('contract_version') != 8
+            or schema.get('verdict') != 'supported|rejected|milestone_advanced|open|null'
+            or 'open for terminal' in current.get('projection', '')):
+        return None
+    old_schema = {**schema, 'verdict': 'supported|rejected|milestone_advanced|open for terminal; null only when requesting one bounded rework'}
+    old_descriptor = {**descriptor, 'schema_hash': stable_hash(old_schema)}
+    if failed.get('contract_ref') != old_descriptor:
+        return None
+    old_projection = json.dumps(old_schema, ensure_ascii=False, separators=(',', ':'))
+    if 'Required stage contract: ' + old_projection not in saved['repair_prompt']:
+        return None
+    event_rows = [json.loads(line) for line in events.read_text().splitlines() if line.strip()]
+    if not any(row.get('event') == 'AGENT_INPUT' and row.get('role') == 'judge'
+               and row.get('stage') == 'terminal_assessment' and row.get('input_kind') == 'task'
+               and 'exact stage contract: ' + old_projection in str(row.get('content') or '')
+               for row in event_rows):
+        return None
+    delivered = [row.get('content') for row in event_rows
+                 if row.get('event') == 'LLM_MESSAGE' and row.get('role') == 'judge'
+                 and row.get('message_role') == 'assistant'
+                 and row.get('thread_id') == recovery.get('thread_id')]
+    if delivered != raw_outputs:
+        return None
+    if (source_manifest(engine) != manifest or failure_binding(cycle, state) != binding
+            or any(_file_hash(Path(p)) != digest for p, digest in inputs.items())):
+        raise ValueError('Judge projection validation inputs changed')
+    return _record_validation(cycle, state, engine, validator=CONTRACT_PROJECTION_VALIDATOR,
+        module='contract_stages.py', change_id='existing-source:' + _digest(manifest),
+        tests=json.dumps({'old_contract': old_descriptor, 'current_contract': descriptor,
+                          'fresh_contract_probe': 'passed', 'resume_preparation': 'current_contract'}),
+        manifest=manifest, disposition='already_fixed', extra_inputs=inputs)
 
 
 def validate_existing_method(cycle: Path, state: dict, *, engine: Path,

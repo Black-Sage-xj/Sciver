@@ -62,7 +62,8 @@ def _parse(raw: str) -> dict[str, str]:
 
 def resume_blocker(state: dict[str, Any], *, for_repair: bool = False,
                    budget_revalidated: bool = False,
-                   runtime_revalidated: bool = False) -> str | None:
+                   runtime_revalidated: bool = False,
+                   contract_projection_repair: dict | None = None) -> str | None:
     """Deterministic gate; None means a managed resume is structurally allowed."""
     if state.get("abandoned_cycle") or str(state.get("phase") or "") == "abandon_requested":
         return "Cycle was abandoned; resume is forbidden."
@@ -73,7 +74,18 @@ def resume_blocker(state: dict[str, Any], *, for_repair: bool = False,
     if recovery.get("action") in {"pause", "interrupt"}:
         return "Operator pause or interruption remains in force; repair does not authorize resume."
     if state.get("protocol_health") == "violation":
-        return "Protocol/contract violation requires a verified repair; no plain managed resume."
+        # Ordinary engine receipts and runtime_revalidated=True do not waive
+        # protocol authority. Re-read the narrow delivery-preparation receipt.
+        from .supervisor_repair_receipts import CONTRACT_PROJECTION_VALIDATOR, inspect_repair_receipt
+        try:
+            projection_valid = bool(isinstance(contract_projection_repair, dict)
+                and contract_projection_repair.get('validator') == CONTRACT_PROJECTION_VALIDATOR
+                and inspect_repair_receipt(Path(contract_projection_repair['cycle']), state)
+                    == contract_projection_repair)
+        except (OSError, ValueError, TypeError, KeyError):
+            projection_valid = False
+        if not projection_valid:
+            return "Protocol/contract violation requires a verified repair; no plain managed resume."
     if ((recovery.get("category") == "budget_validation" and not budget_revalidated)
             or (recovery.get("category") == "runtime_validation"
                 and not (for_repair or runtime_revalidated))):
@@ -169,11 +181,20 @@ def review_runtime_failure(
     reconciled = None
     validated_repair = None
     if not readonly_provider_probe_only:
-        from .supervisor_repair_receipts import inspect_repair_receipt, validate_existing_method
+        from .supervisor_repair_receipts import inspect_repair_receipt, validate_existing_method, validate_existing_judge_projection
         try:
             validated_repair = inspect_repair_receipt(cycle_dir, state)
         except (OSError, ValueError, TypeError, KeyError):
             pass
+        if validated_repair is None:
+            import subprocess
+            try:
+                validated_repair = validate_existing_judge_projection(
+                    cycle_dir, state, engine=Path(__file__).resolve().parent)
+                if validated_repair:
+                    write_json(state_path, state)
+            except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired):
+                pass
         if validated_repair is None:
             import subprocess
             try:
@@ -221,7 +242,8 @@ def review_runtime_failure(
     model_invoked = False
     tool_reads: list[str] = []
     blocker = resume_blocker(state, budget_revalidated=reconciled is not None,
-                             runtime_revalidated=validated_repair is not None)
+                             runtime_revalidated=validated_repair is not None,
+                             contract_projection_repair=validated_repair)
     # Engine faults with an attributable allowlisted traceback go to isolated
     # repair instead of the resume-only reviewer, regardless of whether the
     # generic ValueError mapper already marked protocol_health=violation.
@@ -378,7 +400,8 @@ def review_runtime_failure(
         except (OSError, ValueError, TypeError, KeyError):
             validated_repair = None
         final_blocker = resume_blocker(state, budget_revalidated=reconciled is not None,
-                                      runtime_revalidated=validated_repair is not None)
+                                      runtime_revalidated=validated_repair is not None,
+                                      contract_projection_repair=validated_repair)
         if final_blocker:
             result = {"action": "hold", "reason": final_blocker,
                       "diagnosis": result.get("diagnosis", ""), "repair_suggestion": ""}
