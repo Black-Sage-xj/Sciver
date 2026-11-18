@@ -66,13 +66,28 @@ def incident_context(cycle_dir: Path, state: dict[str, Any], *, role: str = "") 
     # retained Investigator thread.
     start_at = ""
     invocation_id = ""
-    for item in _tail(cycle_dir / "events.jsonl"):
+    selected_index = None
+    history = _tail(cycle_dir / "events.jsonl")
+    bound_invocation = str(recovery.get("invocation_id") or state.get("active_invocation_id") or "")
+    for index, item in enumerate(history):
         if item.get("type") != "role.started":
             continue
         payload = item.get("payload") or {}
+        if bound_invocation and payload.get("invocation_id") != bound_invocation:
+            continue
         if payload.get("role") == focus_role and item.get("at"):
             start_at = str(item["at"])
             invocation_id = str(payload.get("invocation_id") or "")
+            selected_index = index
+    end_at = ""
+    failure_at = ""
+    for item in history[selected_index + 1:] if selected_index is not None else []:
+        if item.get("type") == "role.started":
+            end_at = str(item.get("at") or "")
+            break
+        if item.get("type") == "run.failed":
+            failure_at = str(item.get("at") or "")
+            break
     records = _tail(cycle_dir / "runtime_events.jsonl")
     if thread_id:
         records = [e for e in records if str(e.get("thread_id") or "") == thread_id]
@@ -80,6 +95,12 @@ def incident_context(cycle_dir: Path, state: dict[str, Any], *, role: str = "") 
         records = [e for e in records if str(e.get("role") or e.get("agent") or "") == focus_role]
     if start_at:
         records = [e for e in records if str(e.get("ts") or e.get("at") or "") >= start_at]
+    elif bound_invocation:
+        records = []  # An absent exact binding cannot borrow another invocation's events.
+    if end_at:
+        records = [e for e in records if str(e.get("ts") or e.get("at") or "") < end_at]
+    if failure_at:
+        records = [e for e in records if str(e.get("ts") or e.get("at") or "") <= failure_at]
     events = []
     errors = []
     reconnects = 0
@@ -166,11 +187,44 @@ def engineering_evidence(cycle_dir: Path, state: dict[str, Any]) -> dict[str, An
     # Exclude later invocations when inspecting an older failure occurrence.
     index = next((i for i, row in enumerate(rows) if row.get("type") == "role.started"
                   and (row.get("payload") or {}).get("invocation_id") == focus["invocation_id"]), None)
+    report = _safe((state.get("native_goal") or {}).get("reported_block_reason"), 1800)
+    report_source = {"source": "native_goal.reported_block_reason"} if report else {}
     if index is None:
         rows = []  # Missing invocation binding is not permission to mix unrelated outputs.
     else:
         end = next((i for i in range(index + 1, len(rows))
                     if rows[i].get("type") == "role.started"), len(rows))
+        started = rows[index]
+        bound_thread = str((started.get("payload") or {}).get("thread_id") or "")
+        end_at = str(rows[end].get("at") or "") if end < len(rows) else ""
+        failure_at = next((str(row.get("at") or "") for row in rows[index + 1:end]
+                           if row.get("type") == "run.failed"), "")
+        # Historical native Goal adapters did not retain final_response. Use
+        # only the failed invocation's public report, with explicit provenance;
+        # this remains diagnostic prose, never a structured scientific verdict.
+        if (not report and (state.get("native_goal") or {}).get("status") == "blocked"
+                and focus["thread_id"] and focus["invocation_started_at"]
+                and (not bound_thread or bound_thread == focus["thread_id"])):
+            for event in _tail(cycle_dir / "runtime_events.jsonl"):
+                at = str(event.get("ts") or event.get("at") or "")
+                if (event.get("event") != "LLM_MESSAGE"
+                        or event.get("message_role") not in {"assistant", "agent"}
+                        or event.get("thread_id") != focus["thread_id"]
+                        or str(event.get("role") or event.get("agent") or "") != focus["role"]
+                        or (event.get("invocation_id") and event["invocation_id"] != focus["invocation_id"])
+                        or not at or at < focus["invocation_started_at"]
+                        or (end_at and at >= end_at) or (failure_at and at > failure_at)):
+                    continue
+                text = _safe(event.get("content"), 1800)
+                if text:
+                    report = text
+                    report_source = {
+                        "source": "runtime_events.jsonl/LLM_MESSAGE",
+                        "kind": "public_assistant_report",
+                        "invocation_id": focus["invocation_id"],
+                        "thread_id": focus["thread_id"],
+                        "turn_id": _safe(event.get("turn_id"), 160), "at": _safe(at, 48),
+                    }
         rows = rows[:end]
     outputs = {}
     for row in rows:
@@ -198,7 +252,8 @@ def engineering_evidence(cycle_dir: Path, state: dict[str, Any]) -> dict[str, An
             "frozen_science_sha256": hashlib.sha256(
                 json.dumps(frozen, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
             "latest_bound_outputs": outputs, "observed_skills_current_rules": rules,
-            "reported_native_block": _safe((state.get("native_goal") or {}).get("reported_block_reason"), 1800),
+            "reported_native_block": report,
+            "reported_native_block_source": report_source,
             "boundary": "Public records for diagnosis only; clipped text and current rules do not certify historical science or authorize changing it."}
 
 

@@ -313,9 +313,12 @@ def run_native_goal(thread: Any, objective: str, *,
             f"native Goal objective exceeds Codex's {CODEX_GOAL_MAX_CHARS}-character limit: {len(objective)}"
         )
     from openai_codex._goal import _GoalNotificationStream  # installed pinned SDK 0.155.1
+    from .observability.codex_events import (
+        _get, extract_agent_text, extract_final_from_turn, turn_id_of,
+    )
 
     client = thread._client
-    state, _logical_turn_id = client.start_goal_operation(thread.id, objective)
+    state, logical_turn_id = client.start_goal_operation(thread.id, objective)
     stream = _GoalNotificationStream(
         state=state,
         next_notification=lambda: client.next_goal_notification(state),
@@ -324,9 +327,27 @@ def run_native_goal(thread: Any, objective: str, *,
     )
     turns = 0
     tools = 0
+    final_response = None
     try:
         for event in stream:
             method = str(getattr(event, "method", ""))
+            payload = _get(event, "payload")
+            scoped_payload = _get(payload, "params") or payload
+            event_thread = _get(scoped_payload, "thread_id", "threadId")
+            event_turn = turn_id_of(scoped_payload)
+            # The SDK coalesces physical turns under this operation's logical
+            # ID. Never recover text from another Goal or from thread history.
+            if ((not event_thread or event_thread == thread.id)
+                    and (not event_turn or event_turn == logical_turn_id)):
+                text = None
+                if method == "item/completed":
+                    text = extract_agent_text(payload)
+                elif method == "turn/completed":
+                    text = extract_final_from_turn(scoped_payload)
+                if text:
+                    # Completed assistant items are public reports; tool output
+                    # and private reasoning are excluded by these extractors.
+                    final_response = text
             if method == "turn/started":
                 turns += 1
             if method == "item/started":
@@ -345,7 +366,8 @@ def run_native_goal(thread: Any, objective: str, *,
         stream.close()
     status = state.status.value if state.status is not None else "unknown"
     return NativeGoalResult(status=status, thread_id=thread.id,
-                            physical_turns=turns, tools_started=tools)
+                            physical_turns=turns, tools_started=tools,
+                            final_response=final_response)
 
 
 def read_goal_findings(result: NativeGoalResult, handoff_path: Path) -> str:
