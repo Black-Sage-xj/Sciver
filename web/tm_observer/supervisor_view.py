@@ -75,6 +75,13 @@ MAX_CONTENT = 120_000
 PREVIEW = 1200
 STOP_STATUSES = {"NEEDS_ATTENTION", "FAILED", "FAILED_RECOVERY"}
 LIVE_STATUSES = {"RUNNING", "ACTIVE", "STARTING", "RECOVERING", "LIVE"}
+# Mirror the SDK's supervisor_recovery.failure_details attention allowlist;
+# Observer remains a read-only consumer and does not import the SDK.
+OPERATIONAL_ATTENTION = frozenset({
+    'runtime_failure', 'supervisor_unrecoverable', 'provider_model_capacity_timeout',
+    'investigator_native_goal_unexpected_blocked', 'runtime_retry_exhausted',
+    'runtime_no_recoverable_checkpoint', 'lead_literature_unavailable', 'contract_repair_failed',
+})
 PROFILE_LABEL = {"runtime": "Runtime · 运行故障", "attention": "Attention · NEEDS_ATTENTION"}
 PHASE_LABEL = {"active": "Supervisor 接管中", "hold": "Supervisor 已停下",
                "returned": "Supervisor 已交回", "stopped": "已停下 · 未接管"}
@@ -413,10 +420,22 @@ def _engineering_recovery_banner(run: dict[str, Any]) -> str:
             '</div></section>')
 
 
-def _durable_recovery_banner(run: dict[str, Any], folder: Path, scientific: dict[str, Any]) -> str:
-    """Show the current failure's recovery owner in both single-task and Worker runs."""
+def _durable_recovery_status(run: dict[str, Any], folder: Path,
+                             scientific: dict[str, Any]) -> dict[str, Any] | None:
+    """One current-failure projection for the detail banner and task-list chip."""
+    wid = str(scientific.get('worker_id') or '')
+    if re.fullmatch(r'worker-[1-9][0-9]*', wid):
+        worker = _read_small_json(folder.parent / '.theory-master/workers' / wid / 'runtime.json', 64_000)
+        if (worker and str(worker.get('current_cycle') or '') == folder.name
+                and str(worker.get('status') or '').upper() in LIVE_STATUSES):
+            return None
     job = _read_small_json(folder / 'supervisor/recovery.json', 128_000)
-    failure = scientific.get('recovery') or {}
+    failure = dict(scientific.get('recovery') or {})
+    attention = scientific.get('attention') or {}
+    if (isinstance(attention, dict) and attention.get('code') in OPERATIONAL_ATTENTION
+            and not failure.get('message')):
+        failure.update(kind=failure.get('kind') or 'RuntimeError',
+                       message=attention.get('reason') or attention['code'], category='runtime')
     recorded = job.get('failure') if job else None
     if (not job or job.get('schema') != 'theory-master/supervisor-recovery/v1'
             or str(job.get('cycle') or '') != folder.name
@@ -424,13 +443,13 @@ def _durable_recovery_banner(run: dict[str, Any], folder: Path, scientific: dict
             or not isinstance(recorded, dict) or not isinstance(failure, dict)
             or not failure.get('message')
             or any(recorded.get(key) != failure.get(key) for key in ('kind', 'message', 'at', 'category'))):
-        return ''
+        return None
     status = job.get('status')
     labels = {'pending': 'Supervisor 等待诊断', 'working': 'Supervisor 等待调度核查',
               'waiting': 'Supervisor 等待下一次检查', 'resume_authorized': 'Supervisor 等待受控恢复',
               'activity_verified': 'Supervisor 已验证恢复活动', 'stopped': 'Supervisor 已停止'}
     if status not in labels:
-        return ''
+        return None
     label = labels[status]
     if not supervisor_enabled_for(run, scientific):
         label = 'Supervisor 调度已关闭'
@@ -450,11 +469,19 @@ def _durable_recovery_banner(run: dict[str, Any], folder: Path, scientific: dict
     if job.get('dependency_wait'):
         detail += ' · 定期检查依赖；条件未变时不重复模型修复。'
     progress = _clean(job.get('last_verified_progress') or '尚无已验证恢复活动', 500)[0]
+    return {'status': status, 'label': label, 'detail': detail, 'progress': progress}
+
+
+def _durable_recovery_banner(run: dict[str, Any], folder: Path, scientific: dict[str, Any]) -> str:
+    """Show the current failure's recovery owner in both single-task and Worker runs."""
+    recovery = _durable_recovery_status(run, folder, scientific)
+    if recovery is None:
+        return ''
     href = _banner_target(run, '')
     return ('<section class="tm-supervisor-pane" data-tui-pane="supervisor">'
             '<div class="tm-quota-wait-banner" role="status" data-recovery-owner="true">'
-            f'<strong>{_e(label)}</strong><span>{_e(detail)}</span>'
-            f'<small>最后验证进展：{_e(progress)} · <a href="{_e(href)}">查看恢复记录 →</a></small>'
+            f'<strong>{_e(recovery["label"])}</strong><span>{_e(recovery["detail"])}</span>'
+            f'<small>最后验证进展：{_e(recovery["progress"])} · <a href="{_e(href)}">查看恢复记录 →</a></small>'
             '</div></section>')
 
 
@@ -495,6 +522,12 @@ def banner_html(run: dict[str, Any], state: dict[str, Any] | None = None) -> str
 def index_chip(run: dict[str, Any]) -> str:
     if _verified_budget_denial(run):
         return '<span class="tm-supervisor-chip tm-budget-denial-chip">预算审核拒绝 · 待保全</span>'
+    folder = _cycle_dir(run)
+    scientific = _read_small_json(folder / 'research_state.json') if folder else None
+    recovery = _durable_recovery_status(run, folder, scientific) if folder and scientific else None
+    if recovery is not None:
+        return ('<span class="tm-supervisor-chip" data-recovery-owner="true" '
+                f'data-recovery-status="{_e(recovery["status"])}">{_e(recovery["label"])}</span>')
     info = home_status(run, {"status": run.get("raw_status") or run.get("state")})
     if info is None:
         return ""

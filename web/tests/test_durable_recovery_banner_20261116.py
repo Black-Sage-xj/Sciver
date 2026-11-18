@@ -2,10 +2,11 @@
 import copy
 import json
 import time
+from unittest.mock import patch
 
 import pytest
 
-from tm_observer.supervisor_view import banner_html
+from tm_observer.supervisor_view import banner_html, index_chip
 
 
 @pytest.fixture
@@ -79,3 +80,70 @@ def test_live_recovering_worker_takes_precedence_over_frozen_failure(stopped_run
     workers.mkdir(parents=True)
     (workers / 'runtime.json').write_text(json.dumps({'current_cycle': '1', 'status': 'RECOVERING'}))
     assert 'data-recovery-owner="true"' not in banner_html(run, state)
+    assert index_chip({**run, 'state': 'RECOVERING'}) == ''
+
+
+def test_index_recovery_wait_uses_current_dependency_instead_of_historical_hold(stopped_run):
+    _, _, _, run = stopped_run
+    chip = index_chip({**run, 'state': 'RECOVERY_WAIT', 'raw_status': 'FAILED'})
+    assert 'data-recovery-owner="true"' in chip
+    assert 'data-recovery-status="waiting"' in chip
+    assert 'Supervisor 等待依赖变化' in chip
+    assert 'Supervisor 已停下' not in chip
+
+
+@pytest.mark.parametrize(('status', 'label'), [
+    ('pending', 'Supervisor 等待诊断'),
+    ('working', 'Supervisor 等待调度核查'),
+    ('waiting', 'Supervisor 等待下一次检查'),
+    ('resume_authorized', 'Supervisor 等待受控恢复'),
+    ('activity_verified', 'Supervisor 已验证恢复活动'),
+    ('stopped', 'Supervisor 已停止'),
+])
+def test_index_and_banner_share_recovery_status_labels(stopped_run, status, label):
+    cycle, state, job, run = stopped_run
+    job.update(status=status, dependency_wait=False, owner_pid=999999999, owner_start_ticks=1)
+    (cycle / 'supervisor/recovery.json').write_text(json.dumps(job))
+    assert label in index_chip(run)
+    assert f'<strong>{label}</strong>' in banner_html(run, state)
+
+
+def test_index_working_requires_verified_live_owner(stopped_run):
+    cycle, state, job, run = stopped_run
+    job.update(status='working', owner_pid=123, owner_start_ticks=456)
+    (cycle / 'supervisor/recovery.json').write_text(json.dumps(job))
+    with patch('tm_observer.collector._pid_alive', return_value=True) as alive:
+        assert 'Supervisor 诊断与修复中' in index_chip(run)
+        assert 'Supervisor 诊断与修复中' in banner_html(run, state)
+    alive.assert_called_with(123, 456)
+
+
+def test_index_stale_recovery_keeps_legacy_hold(stopped_run):
+    cycle, state, _, run = stopped_run
+    state['recovery']['at'] = '2026-11-16T18:00:00+08:00'
+    (cycle / 'research_state.json').write_text(json.dumps(state))
+    chip = index_chip(run)
+    assert 'data-recovery-owner="true"' not in chip
+    assert 'Supervisor 已停下' in chip
+
+
+def test_contract_delivery_attention_matches_sdk_failure_details(stopped_run):
+    cycle, state, job, run = stopped_run
+    state.update(status='needs_attention', phase='judge:terminal_assessment:contract_repair_failed',
+                 recovery={'action': 'contract_repair_failed', 'at': '2026-11-16T16:01:48+08:00',
+                           'role': 'judge', 'stage': 'terminal_assessment'},
+                 attention={'code': 'contract_repair_failed',
+                            'reason': 'The judge output still violated its contract.'})
+    job['failure'] = {**state['recovery'], 'kind': 'RuntimeError', 'category': 'runtime',
+                      'message': state['attention']['reason']}
+    (cycle / 'research_state.json').write_text(json.dumps(state))
+    (cycle / 'supervisor/recovery.json').write_text(json.dumps(job))
+    run.update(state='RECOVERY_WAIT', raw_status='NEEDS_ATTENTION')
+    assert 'Supervisor 等待依赖变化' in index_chip(run)
+    assert 'data-recovery-owner="true"' in banner_html(run, state)
+    state['attention']['reason'] = 'A different contract failure.'
+    (cycle / 'research_state.json').write_text(json.dumps(state))
+    assert 'data-recovery-owner="true"' not in index_chip(run)
+    state['attention'].update(code='qualification_failed', reason=job['failure']['message'])
+    (cycle / 'research_state.json').write_text(json.dumps(state))
+    assert 'data-recovery-owner="true"' not in index_chip(run)
