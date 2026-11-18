@@ -23,7 +23,7 @@ STAGE_CONTEXT_FIELDS: dict[tuple[str, str], tuple[str, ...]] = {
     ("research_lead", "frontier_proposal"): (
         "goal", "research_contract", "final_gate", "scientific_model_summary",
         "agent_graph", "agent_graph_reuse", "science_graph_tools", "running_hypotheses",
-        "operator_guidance", "recent_execution_limits",
+        "operator_guidance", "recent_execution_limits", "recent_qualification_stops",
         "qualification_feedback", "lead_literature_result", "workspace_access",
     ),
     ("research_lead", "hypothesis_display"): ("frozen_hypothesis", "frozen_reasoning"),
@@ -42,10 +42,12 @@ STAGE_CONTEXT_FIELDS: dict[tuple[str, str], tuple[str, ...]] = {
     ),
     ("challenger", "candidate_review"): (
         "goal", "research_contract", "final_gate", "candidate",
+        "recent_execution_limits", "recent_qualification_stops",
         "agent_graph", "agent_graph_reuse", "science_graph_tools", "workspace_access",
     ),
     ("challenger", "repair_verification"): (
         "goal", "research_contract", "final_gate", "original_candidate", "repaired_candidate",
+        "recent_execution_limits", "recent_qualification_stops",
         "original_blockers", "agent_graph", "agent_graph_reuse", "science_graph_tools", "workspace_access",
     ),
     ("investigator", "preserve_research"): (
@@ -574,6 +576,7 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
             "science_graph_tools": context.get("science_graph_tools"),
             "running_hypotheses": context.get("running_hypotheses"),
             "recent_execution_limits": context.get("recent_execution_limits"),
+            "recent_qualification_stops": context.get("recent_qualification_stops"),
             "operator_guidance": context.get("operator_guidance"),
             "qualification_feedback": feedback,
             "lead_literature_result": _literature_digest(context.get("lead_literature_result")),
@@ -642,6 +645,8 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
                                        context.get("candidate") or [])
                 if isinstance(source, Mapping)
             ],
+            "recent_execution_limits": context.get("recent_execution_limits"),
+            "recent_qualification_stops": context.get("recent_qualification_stops"),
             **graph_access,
             "science_graph_tools": context.get("science_graph_tools"),
             "workspace_access": _workspace_access(context),
@@ -659,6 +664,8 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
             "original_candidate": _repair_candidate_view(original),
             "repaired_candidate": _repair_candidate_view(repaired),
             "original_blockers": list(review.get("blocking_issues") or []),
+            "recent_execution_limits": context.get("recent_execution_limits"),
+            "recent_qualification_stops": context.get("recent_qualification_stops"),
             **graph_access,
             "science_graph_tools": context.get("science_graph_tools"),
             "workspace_access": _workspace_access(context),

@@ -825,12 +825,33 @@ def _pending_retry_direction(root: Path, worker_id: str) -> dict[str, Any] | Non
     return request if request.get("status") == "pending" else None
 
 
+def _waiting_local_replan_reason(root: Path, worker: dict[str, Any]) -> str | None:
+    """Read a historical waiting attempt without reopening or editing its Cycle."""
+    cycle = str(worker.get("current_cycle") or "")
+    if (worker.get("claim_id") or worker.get("epoch") is not None
+            or not cycle.isascii() or not cycle.isdecimal() or int(cycle) < 1):
+        return None
+    directory, path = root / cycle, root / cycle / "research_state.json"
+    try:
+        if (directory.is_symlink() or path.is_symlink() or not path.is_file()
+                or path.stat().st_size > 1_048_576):
+            return None
+        state = _read_json(path)
+    except (OSError, ValueError):
+        return None
+    if (state.get("worker_id") != worker.get("worker_id")
+            or str(state.get("cycle_id") or "") != cycle):
+        return None
+    from .task_progression import local_replan_reason
+    return local_replan_reason(state)
+
+
 def _partition_waiting_workers(spec: Any, workers: list[dict[str, Any]]
                                ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
-    """Split WAITING Workers into woken (signal changed / retry requested) and dormant.
+    """Wake waiting Workers for a new direction, explicit retry or verified local replan.
 
-    A stored or current fingerprint that cannot be evaluated never wakes a
-    Worker: an unknown signal must not turn into a busy loop of model calls.
+    An unknown fingerprint supplies no wake signal. A canonical completed local
+    failure may independently return to Lead under the daemon's remaining quota.
     """
     root = Path(spec.research_root).resolve()
     waiting = [w for w in workers if w.get("status") == WAITING_RESEARCH_DIRECTION
@@ -844,12 +865,14 @@ def _partition_waiting_workers(spec: Any, workers: list[dict[str, Any]]
     woken, dormant = [], []
     for worker in waiting:
         retry = _pending_retry_direction(root, worker["worker_id"])
+        local_replan = _waiting_local_replan_reason(root, worker)
         stored = _direction_values(worker.get("wake_fingerprint"))
         changed = (current is not None and stored is not None
                    and stored != _direction_values(current))
-        if retry or changed:
+        if retry or changed or local_replan:
             woken.append({**worker, "wake_reason": "retry_direction" if retry
-                          else "direction_fingerprint_changed"})
+                          else "direction_fingerprint_changed" if changed
+                          else "local_replan:" + local_replan})
         else:
             dormant.append(worker)
     return woken, dormant, current
@@ -1226,6 +1249,29 @@ def run_once(spec: Any, worker_id: str, claim_id: str, epoch: int, *,
         cycle_name = workflow.cycle_dir.name if workflow.cycle_dir else None
         if status == STOPPED_GOAL_COMPLETED:
             return stop_for_goal(str(result.get("reason") or result.get("detail") or ""))
+        from .task_progression import local_replan_reason
+        replan_reason = local_replan_reason(result)
+        if replan_reason is not None:
+            # This process owns exactly one Cycle allocation. Archive that
+            # attempt before the daemon uses its ordinary remaining quota to
+            # claim another Cycle; never resume this Cycle or retain its H.
+            finish_owned_claim(claims, worker_id=worker_id, claim_id=claim_id,
+                               epoch=epoch, current_pid=os.getpid())
+            save_worker(root, worker_id, status="OVER", error_kind=None,
+                        claim_id=None, epoch=None, last_claim_id=claim_id, last_claim_epoch=epoch,
+                        target_h_id=None, entry_node_id=None, current_cycle=cycle_name,
+                        wake_fingerprint=None, waiting_since=None,
+                        last_local_replan={"reason": replan_reason, "cycle_id": cycle_name,
+                                           "at": utcnow().isoformat()})
+            return 0
+        if status in {"OVER", "COMPLETED"} and result.get("operational_only_closure"):
+            # A terminal-looking execution record does not waive a pause,
+            # resource guard or unknown operational failure for the next claim.
+            claims.update(worker_id, claim_id, epoch, action="pause")
+            save_worker(root, worker_id, status="NEEDS_ATTENTION", current_cycle=cycle_name,
+                        local_replan_blocked={"cycle_id": cycle_name,
+                                              "at": utcnow().isoformat()})
+            return 2
         if status == "NO_QUALIFIED_CANDIDATE":
             fingerprint = _wake_fingerprint_for(spec, result)
             claims.update(worker_id, claim_id, epoch, action="wait_direction")

@@ -529,6 +529,12 @@ class QualificationMixin:
             return self._qualify_under_proposal_gate(state, run_id, prior_cycle)
         from .scientific_model import load as load_scientific_model
         model = load_scientific_model(self.spec.research_root, goal_id=self.spec.goal_id)
+        from .execution_limit_history import recent_execution_limits
+        from .qualification_stop_history import recent_qualification_stops
+        preparation_feedback = {
+            "recent_execution_limits": recent_execution_limits(self.spec.research_root, current_cycle=str(run_id)),
+            "recent_qualification_stops": recent_qualification_stops(self.spec.research_root, current_cycle=str(run_id)),
+        }
 
         # Previous-Cycle Frontier State must never become Lead science.
         prior_frontier: dict[str, Any] = {}
@@ -721,15 +727,12 @@ class QualificationMixin:
                         and state.get("qualification_resume_history") else None
                     ),
                     "prior_cycle": prior_cycle, "state": state,
+                    **preparation_feedback,
                 }
             prior_literature = (state.get("lead_literature_results") or {}).get("frontier_proposal")
             if isinstance(prior_literature, dict):
                 lead_context["lead_literature_result"] = prior_literature
             lead_context["running_hypotheses"] = self._running_hypotheses_for_lead()
-            from .execution_limit_history import recent_execution_limits
-            lead_context["recent_execution_limits"] = recent_execution_limits(
-                self.spec.research_root, current_cycle=str(run_id),
-            )
             guidance = state.get("operator_guidance") if state.get("operator_guidance_pending") else None
             from .operator_direction import claim_conjecture, qualification_guidance
             try:
@@ -1010,7 +1013,11 @@ class QualificationMixin:
                 "attention": {
                     "code": "no_qualified_candidate",
                     "reason": reason,
-                    "requested_action": "Waiting for a research-state change or an explicit retry_direction.",
+                    "requested_action": (
+                        "This local qualification attempt is exhausted. The Task/Worker may hand back "
+                        "to a fresh Research Lead within the remaining Cycle budget; explicit operator "
+                        "stops and resource/runtime guards still apply."
+                    ),
                 },
             })
             state["frontier_review"] = {
@@ -1034,6 +1041,30 @@ class QualificationMixin:
                 "rounds": 3, "reason": reason, "attempts": state.get("qualification_attempts"),
             })
             raise NoQualifiedCandidate(reason)
+
+        from .qualification_stop_history import previous_qualification_stop
+        duplicates = []
+        for candidate_id in list(pending_ids):
+            if candidate_id in reviews_by_id:
+                continue
+            previous = previous_qualification_stop(
+                frontier_by_id[candidate_id], preparation_feedback["recent_qualification_stops"],
+            )
+            if previous is None:
+                continue
+            duplicate = {"candidate_id": candidate_id, "source_cycle": previous["cycle_id"],
+                         "source_candidate_id": previous["candidate_id"],
+                         "frozen_objective_sha256": previous["frozen_objective_sha256"],
+                         "source_paths": previous["source_paths"]}
+            state.setdefault("qualification_operational_duplicates", []).append(duplicate)
+            self._emit(state, "qualification.operational_duplicate", duplicate)
+            pending_ids.remove(candidate_id)
+            duplicates.append(candidate_id)
+        if duplicates and not pending_ids:
+            stop_unqualified(
+                "Unchanged candidate science repeats an exhausted qualification; address the recorded "
+                "prerequisites or propose a distinct in-contract test before another scientific review.", duplicates,
+            )
 
         challenger_audited = bool(reviews_by_id)
         while True:
@@ -1082,6 +1113,7 @@ class QualificationMixin:
                 if repair_verification.get("status") != "repair_verification_pending":
                     raise RecoveryStop("repair verification checkpoint is inconsistent with pending review")
                 result = self._call(state, "challenger", {
+                    **preparation_feedback,
                     "mode": "repair_verification",
                     "candidates": [candidate],  # invocation identity only; omitted from prompt
                     "original_candidate": parent,
@@ -1141,6 +1173,7 @@ class QualificationMixin:
                 # they do not reopen adversarial review or allow moving goalposts.
                 review_candidates = [frontier_by_id[item] for item in review_ids]
                 review_output = self._call(state, "challenger", {
+                    **preparation_feedback,
                     # Keep the full candidate list in runtime memory for deterministic
                     # validation/closure. stage_context exposes only the scientific
                     # candidate seed plus Canvas/workspace navigation access.

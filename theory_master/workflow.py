@@ -199,13 +199,18 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
         goal_completion = state.get("goal_completion") if isinstance(state.get("goal_completion"), dict) else {}
         if str(goal_completion.get("verdict") or "") == "passed":
             return False
+        from .task_progression import local_replan_reason
+        if local_replan_reason(state):
+            # The old attempt stays terminal. A new Lead can change a proposal
+            # before Lock, using source-grounded failure feedback and the same
+            # remaining invocation budget; it cannot rewrite the previous H.
+            return not require_next_frontier
         # Read-only compatibility: historical Cycle artifacts may still spell
         # the already-closed Cycle as `completed`; current writes use only `over`.
         if str(state.get("status") or "").lower() not in {"over", "completed"}:
             return False
-        # Operational-only closure commits no Scientific Model or Frontier
-        # change. Starting another Cycle in the same invocation would therefore
-        # repeat work from the same scientific state until max_cycles is spent.
+        # Undelivered/engineering closures still require their owning recovery
+        # path. Only the validated local input-limit case above can replan.
         if state.get("operational_only_closure"):
             return False
         if require_next_frontier and not state.get("next_start_node_id"):
@@ -1337,9 +1342,12 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
         The resumed Cycle consumes the first slot of this invocation's
         ``max_cycles`` budget. Subsequent slots create new Cycle IDs just as
         ``run()`` does; the resumed Cycle itself is never duplicated.
+        Task-level Resume after a closed local failure instead starts a fresh
+        Cycle; an explicitly selected exhausted qualification Cycle stays bounded.
         """
         task_selector = str(identifier).strip()
-        if self.spec.task_mode and task_selector in {str(self.spec.master_id), "0"}:
+        task_resume = self.spec.task_mode and task_selector in {str(self.spec.master_id), "0"}
+        if task_resume:
             cycle = latest_cycle_dir(self.spec.research_root, task_mode=self.spec.task_mode)
             if cycle is None:
                 return self.run()
@@ -1354,6 +1362,11 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
             if latest_status in {"over", "completed", "cancelled"}:
                 # A terminal Cycle is never reopened. `completed` is accepted here
                 # only as the historical spelling of Cycle-over.
+                return self.run()
+            from .task_progression import local_replan_reason
+            if local_replan_reason(latest_state) == "no_qualified_candidate":
+                # Task Resume selects a fresh research direction; it must not
+                # reopen an exhausted qualification attempt or reset its retry.
                 return self.run()
         else:
             cycle = find_cycle(self.spec.research_root, identifier, task_mode=self.spec.task_mode)
@@ -1429,7 +1442,9 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
                       "owner_pid": os.getpid(), "execution_active": True})
         self._persist(state)
         state = self._run_cycle(state)
-        if not self._can_continue_cycle_budget(state):
+        from .task_progression import local_replan_reason
+        explicit_exhausted_cycle = not task_resume and local_replan_reason(state) == "no_qualified_candidate"
+        if explicit_exhausted_cycle or not self._can_continue_cycle_budget(state):
             # Resume can terminate on the old Cycle (e.g. NEEDS_ATTENTION)
             # before entering the multi-Cycle loop. Collector must still close
             # its final projection, including the terminal alert decision.

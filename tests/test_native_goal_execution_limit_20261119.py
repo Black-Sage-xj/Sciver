@@ -275,6 +275,9 @@ def test_actual_invocation_and_closure_keep_model_and_judge_unmodified(tmp_path,
             return super().invoke(role, prompt, thread_id, model, provider)
 
     spec = replace(quota_fixture.NativeGoalQuotaTests().make_spec(tmp_path), max_cycles=1)
+    config = json.loads(spec.config_path.read_text())
+    config["max_cycles"] = 1
+    spec.config_path.write_text(json.dumps(config))
     backend = LimitBackend("blocked")
     workflow = Workflow(spec, backend)
     state = workflow.run()

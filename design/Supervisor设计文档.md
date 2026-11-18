@@ -40,7 +40,7 @@ Worker FAILED / 白名单工程依赖 NEEDS_ATTENTION
 
 Investigator 完成有界输入核查、确认冻结来源内没有可行恢复路径后，可以提交 `execution_limit`，种类限于 `input_support_unavailable`。交付须绑定本次 invocation、冻结科学对象摘要和工作区普通证据文件的 SHA-256，并说明已检查的替代路径、未执行的检验与所需依赖。方法失败、计算困难或成本高本身不满足该出口。SDK 只验证交付身份和文件一致性；“输入不足”的科学说明仍是 Investigator 声明。
 
-只有本次正式交付验证通过时，SDK 才结束该执行尝试，记录 `not_adjudicated`、空科学 verdict 和完整执行限制。该路径不生成 Findings、不调用 Judge、不修改 Scientific Model，也不把未执行检验写成 `open`。下一次 Lead 收到带来源路径的近期执行限制，以便在提议时检查缺失依赖；这些记录不进入科学 Outcome。没有合法交付的原生 blocked 继续进入运行故障诊断；Provider 错误、额度、暂停和预算守卫优先。
+只有本次正式交付验证通过时，SDK 才结束该执行尝试，记录 `not_adjudicated`、空科学 verdict 和完整执行限制。该路径不生成 Findings、不调用 Judge、不修改 Scientific Model，也不把未执行检验写成 `open`。Goal 未完成且本次调用尚有 Cycle 额度时，自动创建下一 Cycle，Lead 与 Challenger 收到带来源路径的近期执行限制，在新提议锁定前检查缺失依赖；这些记录不进入科学 Outcome。没有合法交付的原生 blocked 继续进入运行故障诊断；Provider 错误、额度、暂停和预算守卫优先。
 
 官方 SDK 会将多个物理回合合并成一个 Goal 逻辑流。正式输入限制已写好时，TM 在同一 operation 已开始并成功结束的物理回合边界验证交付，再通过官方 cancel/close 接口结束行政移交，记录 SDK 的 `execution_limited` 状态；不等平台重复三轮 blocked 核查。这个独立边界回调不改变既有逻辑流和 Collector 的回合语义，也不在工具或模型回复执行途中消费文件。
 
@@ -48,7 +48,11 @@ Investigator 完成有界输入核查、确认冻结来源内没有可行恢复�
 
 ### 资格耗尽的接管边界
 
-三轮资格提议耗尽会抛出 `NoQualifiedCandidate`；它与资格阶段的 `RecoveryStop` 都进入已有的一次 Supervisor 复核。只有复核明确授权后才清理被拒的工作集并请求一个新提议，拒绝历史保留，新候选仍须通过 Challenger。再次被拒时 SDK 记录确定性 Supervisor hold，不增加模型调用；Supervisor 关闭或复核 hold 时停止。历史停止状态的恢复先复核原边界，不重新消费已被拒的候选。
+三轮资格提议耗尽会抛出 `NoQualifiedCandidate`；它与资格阶段的 `RecoveryStop` 都进入已有的一次 Supervisor 复核。只有复核明确授权后才清理被拒的工作集并请求一个新提议，拒绝历史保留，新候选仍须通过 Challenger。再次被拒时 SDK 记录确定性 Supervisor hold，不增加该 Cycle 的模型调用；Supervisor 关闭或复核 hold 时结束该 Cycle 的资格尝试。显式恢复旧 Cycle 仍保留该边界，不重置资格次数。
+
+资格耗尽只证明本轮未提出合格候选，冻结输入限制只约束该次未执行的检验；二者都不能代替任务 Goal Completion。规范状态的这两类局部失败，在 Goal 尚未完成且本次调用有剩余额度时交回新的 Lead；任务级 Resume 同样创建新 Cycle，不重开旧记录。Worker 释放旧 claim，再通过正常分配建立下一 Cycle，计入既有每 Worker 调用额度。其他 Attention、运行/合同错误、未验证的行政关闭、人工停止、资源预算与 Goal 完成均保留原停止路径。
+
+新 Lead 与 Challenger 获得有界、绑定已提交 invocation 的资格失败历史与原科学三元组。SDK 拦截与失败候选科学三元组完全相同的重提，记录行政去重并使用本轮既有的有界重提额度，不伪造 Challenger 拒绝或科学结论。语义等价性与新候选是否确实解决旧阻断仍由 Lead、Challenger 判断；SDK 不代选模型、阈值、校准或科研方向，不放宽原 Research Contract。跨 Cycle 的选路质量继续由 `TMA-20261119-0146` 观察。
 
 工程候选接收与失败 invocation 绑定的紧凑公开证据，包括冻结科学、最近相关交付和已观察加载 Skill 的当前规则/哈希；当前规则不冒充历史版本证明。记录不授予修改科学状态或受保护策略的权限。普通代码候选继续通过独立差分验收；`repair_plan.json` 也可返回 `needs_dependency / needs_rule_revision / needs_configuration`、具体原因和缺失依赖，此类诊断必须无源码/测试变更，不安装文件、不授权 Resume。缺计划文件即使进程退出 0 也属于未交付；脱敏退出信息和输出片段随候选证据保留。
 
