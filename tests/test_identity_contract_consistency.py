@@ -83,7 +83,9 @@ class IdentityContractConsistencyTest(unittest.TestCase):
         identity = (identities_root() / "challenger.md").read_text(encoding="utf-8")
         self.assertEqual(
             STAGE_CONTEXT_FIELDS[("challenger", "candidate_review")],
-            ("goal", "research_contract", "final_gate", "candidate", "agent_graph", "agent_graph_reuse", "science_graph_tools", "workspace_access"),
+            ("goal", "research_contract", "final_gate", "candidate",
+             "recent_execution_limits", "recent_qualification_stops",
+             "agent_graph", "agent_graph_reuse", "science_graph_tools", "workspace_access"),
         )
         self.assertIn("当前 Stage", identity)
         self.assertIn("不选择 winner", identity)
