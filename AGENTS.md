@@ -36,11 +36,14 @@ independently verifiable task should finish with **one scoped local Git
 Commit by default**, not merely an edited worktree:
 
 1. Before editing, inspect the current branch/HEAD, `git status --short
-   --untracked-files=all`, staged diff and concurrent work. Read the
-   applicable `tm-change` Skill at `../.codex/skills/tm-change/SKILL.md`.
-   Register the appropriate TMC/TMA **before** modifying TM code, tests,
-   prompts, or design documents; preserve its source, evidence and required
-   review boundaries.
+   --untracked-files=all`, staged diff and concurrent work. Apply
+   `../.codex/skills/tm-change/SKILL.md` only when a concrete Agent/workflow
+   behavior or quality effect needs post-change real execution traces to
+   judge and cannot be accepted through immediate deterministic checks.
+   Register TMA before those behavior changes and preserve the observation
+   scope. Ordinary UI, deterministic fixes, documentation and directly
+   verifiable prompt edits need no TMC/TMA or runtime-review document;
+   mixed changes register only the behavior requiring later observation.
 2. Implement one logical change, read its exact diff, and run relevant
    deterministic tests, compilation/format checks and sensitive-file checks.
    Do not interpret a failed test as passing or skip necessary tests silently.
@@ -52,8 +55,9 @@ Commit by default**, not merely an edited worktree:
    `git diff --cached --check`. Never use `git add -A`,
    `git commit -a`, indiscriminate resets or mass stashes in a shared
    Agent worktree.
-4. Commit the reviewed task atomically with a meaningful message and the
-   actual TMC/TMA IDs using the `tm-change` Commit body convention. If
+4. Commit the reviewed task atomically with a meaningful message. Changes
+   meeting the `tm-change` trigger use its Commit body convention and actual
+   TMA IDs; ordinary changes need no registration ID. If
    unrelated changes are already staged, isolate the intended Commit
    (e.g., a dedicated worktree/index or carefully scoped `git commit
    --only -- <paths>`) **without altering another Agent's index**. If
