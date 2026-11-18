@@ -20,7 +20,7 @@ class ScientificQualification20261022(unittest.TestCase):
         # Stage owns scientific criteria; Contract owns the two named output fields.
         for phrase in (
             "consequential unmet Goal", "Final Gate", "linked supported Outcomes",
-            "credible alternatives", "inconclusive results",
+            "closest live alternative", "inconclusive results",
             "Scientific Model", "Indispensable premises need a credible in-scope route",
         ):
             with self.subTest(phrase=phrase):
@@ -103,8 +103,10 @@ class ScientificQualification20261022(unittest.TestCase):
                 self.assertIn("closest prior claim and relevant simpler explanations or existing methods", prompt)
         self.assertIn("Do not reopen qualification", stage_card_text("research_lead", "candidate_selection"))
         self.assertIn("all original blockers are closed", stage_card_text("challenger", "repair_verification"))
-        self.assertLess(len(self.lead), 8500)
-        self.assertLess(len(self.challenger), 6500)
+        # Delivery budgets include the current source/Goal review and input
+        # boundary rules; they do not test a model's scientific judgment.
+        self.assertLess(len(self.lead), 10000)
+        self.assertLess(len(self.challenger), 8000)
 
     def test_synthetic_candidate_science_is_preserved_in_review_context(self):
         examples = (
