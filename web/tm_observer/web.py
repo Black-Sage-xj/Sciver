@@ -1035,6 +1035,7 @@ def make_handler(
     quota_history = QuotaHistory(notes_state_dir / 'codex-quota-last-good.json')
     access = AccessSettings(notes_state_dir, cache.search_root, auth)
     auth = access.current
+    workspace_id = hashlib.sha256(str(cache.search_root.resolve()).encode()).hexdigest()[:16]
 
     def quota_snapshot(*, request_update: bool = False) -> dict | None:
         return None if isolated_workspace else quota_history.snapshot(request_update=request_update)
@@ -1047,8 +1048,13 @@ def make_handler(
                   cache_control: str = "no-store", etag: str | None = None,
                   retry_after: int | None = None, download_name: str | None = None) -> None:
             if content_type.startswith("text/html"):
-                workspace_id = hashlib.sha256(str(cache.search_root.resolve()).encode()).hexdigest()[:16]
-                marker = f'<meta name="sciver-workspace" content="{workspace_id}">'.encode()
+                marker = (f'<meta name="sciver-workspace" content="{workspace_id}">'
+                          '<script>(()=>{const scope=document.querySelector(\'meta[name="sciver-workspace"]\').content;'
+                          'const original=window.fetch;if(!original)return;window.fetch=function(input,init){'
+                          'const url=new URL(typeof input==="string"||input instanceof URL?String(input):input.url,location.href);'
+                          'if(url.origin===location.origin){'
+                          'const headers=new Headers(init?.headers||input?.headers);headers.set("X-Sciver-Workspace",scope);'
+                          'return original.call(this,input,{...init,headers});}return original.call(this,input,init);};})();</script>').encode()
                 if b"<head>" in payload:
                     payload = payload.replace(b"<head>", b"<head>" + marker, 1)
                 elif b"<head " in payload:
@@ -1137,6 +1143,11 @@ def make_handler(
                     self.send_header("Cache-Control", "no-store")
                     self.send_header("Content-Length", "0")
                     self.end_headers()
+                return
+            scope = self.headers.get("X-Sciver-Workspace")
+            if scope is not None and scope != workspace_id:
+                self._send('{"error":"工作区已切换，请刷新页面后重试"}'.encode(),
+                           "application/json; charset=utf-8", HTTPStatus.CONFLICT)
                 return
             if not self._workspace_route_allowed(path):
                 return
@@ -2112,6 +2123,13 @@ def make_handler(
         def do_POST(self) -> None:
             nonlocal auth
             path = self.path.split("?", 1)[0]
+            # Another tab may have changed this origin's login cookie. Bind
+            # browser writes to the workspace that rendered the current page.
+            scope = self.headers.get("X-Sciver-Workspace")
+            if path != "/login" and scope is not None and scope != workspace_id and self._authorized():
+                self._send('{"error":"工作区已切换，请刷新页面后重试"}'.encode(),
+                           "application/json; charset=utf-8", HTTPStatus.CONFLICT)
+                return
             if not self._workspace_route_allowed(path):
                 return
             if path == "/api/settings/access":

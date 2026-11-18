@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import threading
 import time
@@ -80,19 +81,30 @@ def test_backend_processes_keep_chats_tasks_and_sdk_data_independent(tmp_path):
         thread.start()
         base = f"http://127.0.0.1:{server.server_port}"
 
-        def request(account, path, payload=None):
+        def request(account, path, payload=None, *, workspace_scope=None):
             token = base64.b64encode(f"{account.username}:{account.password}".encode()).decode()
             headers = {"Authorization": "Basic " + token, "Origin": base, "X-TM-Operator-Intent": "1"}
             if payload is not None:
                 headers["Content-Type"] = "application/json"
+            if workspace_scope is not None:
+                headers["X-Sciver-Workspace"] = workspace_scope
             with urlopen(Request(base + path, data=json.dumps(payload).encode() if payload is not None else None,
                                  headers=headers), timeout=15) as response:
                 return json.loads(response.read())
 
         for account in accounts:
             assert request(account, "/observer_state.json")["runs"] == []
+        scope_a = hashlib.sha256(str(layouts[0].search_root.resolve()).encode()).hexdigest()[:16]
+        with pytest.raises(HTTPError) as stale_read:
+            request(accounts[1], "/observer_state.json", workspace_scope=scope_a)
+        assert stale_read.value.code == 409
+        with pytest.raises(HTTPError) as stale_tab:
+            request(accounts[1], "/api/research-chat/session",
+                    {"mode": "preparation", "entry": "clear"}, workspace_scope=scope_a)
+        assert stale_tab.value.code == 409
         session = request(accounts[0], "/api/research-chat/session",
-                          {"mode": "preparation", "entry": "clear", "title": "Alice-only task"})["session_id"]
+                          {"mode": "preparation", "entry": "clear", "title": "Alice-only task"},
+                          workspace_scope=scope_a)["session_id"]
         initial = request(accounts[0], f"/api/research-chat/{session}/preparation")
         plan = ("# Goal\n\nIdentify the measured scaling.\n\n# Research Contract\n\nCompare the specified mechanisms.\n\n"
                 "# Final Gate\n\nResolve the signed prediction.\n\n# Required Context\n\nUse the supplied definitions.\n")
