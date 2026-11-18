@@ -47,6 +47,8 @@ class Harness(GoalCompletionMixin):
         self.branch_canvas = canvas
         self.cycle_dir = root / "1"
         self.cycle_dir.mkdir()
+        (self.cycle_dir / "research_state.json").write_text(
+            json.dumps({"status": "over"}), encoding="utf-8")
         (self.cycle_dir / ".theory-master-cycle").write_text("theory-master/v2\ntest\n", encoding="utf-8")
         self.verdict = verdict
         self.calls: list[dict] = []
@@ -62,6 +64,9 @@ class Harness(GoalCompletionMixin):
 
     def _graph_database_path(self) -> Path:
         return self.spec.branch_canvas.with_name("science_graph.sqlite3")
+
+    def _persist(self, state):
+        (self.cycle_dir / "research_state.json").write_text(json.dumps(state), encoding="utf-8")
 
     def _emit(self, state, kind, payload):
         self.events.append(kind)
@@ -102,7 +107,10 @@ class GoalCompletionPathTest(unittest.TestCase):
         self.assertEqual(terminal["source"], "sqlite")
         self.assertEqual(terminal["source_cycle"], "1")
         self.assertEqual(terminal["goal_id"], "goal-1")
-        self.assertEqual(terminal["judge_receipt_ref"], "1/goal_completion_out.json")
+        self.assertEqual(terminal["judge_receipt_ref"],
+                         "1/goal_assessments/" + state["goal_completion"]["delivery_revision"] + ".json")
+        frozen_receipt = self.root / terminal["judge_receipt_ref"]
+        self.assertEqual(json.loads(frozen_receipt.read_text())["verdict"], "passed")
         with ScienceGraphStore(harness._graph_database_path(), readonly=True) as store:
             reasons = {r["hypothesis_id"]: r["reason"] for r in
                        store.db.execute("SELECT * FROM frontier_branches WHERE status='closed'")}

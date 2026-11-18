@@ -81,6 +81,7 @@ MINIMAL_FRONTIER_PROPOSAL_SCHEMA = {
         "transition": {
             "prior_gap": "source unresolved gap or root Goal unknown; nonempty, maximum 400 characters",
             "current_change": "what this H changes or tests in response; nonempty, maximum 400 characters",
+            "source_contributions": "object: exactly main/other H IDs as keys; each value explains the result, definition, method or comparison used here (1..400 characters); {} for root",
         },
         "decisive_test": "test definition for this hypothesis within its stated scope",
         "lineage_main_node_id": "one existing SQLite H ID; determines the branch connection",
@@ -101,7 +102,7 @@ MINIMAL_FRONTIER_PROPOSAL_VALIDATION_SCHEMA = {
     }],
 }
 
-FRONTIER_PROPOSAL_PROMPT_NOTE = """Use evolution_operator only from: refine | specialize | generalize | alternative | combine | derive | counter_hypothesis. For a root H, omit all lineage fields. For a derived H, choose one main and up to two distinct other sources. If revisiting a parked source, include that H in main or other sources. Anchors are directly relevant lineage references, not evidence. The SDK owns H identity and lineage edges. Closed/rejected H may source a distinct new H but is not reopened. Every new Candidate requires transition.prior_gap/current_change, each nonempty and at most 400 characters; the SDK freezes and displays these authored sentences verbatim. Do not return canvas_title, canvas_summary, canvas_claim, or canvas_conditions; post-lock hypothesis_display owns display output."""
+FRONTIER_PROPOSAL_PROMPT_NOTE = """Use evolution_operator only from: refine | specialize | generalize | alternative | combine | derive | counter_hypothesis. For a root H, omit all lineage fields. Choose one main and up to two other sources; if revisiting parked H, include that H in main or other sources. Closed/rejected H may source a distinct H, not reopen. Anchors are directly relevant lineage references, not evidence. The SDK owns H identity and lineage edges. Repair preserves valid IDs, roles and contributions. The SDK freezes transition verbatim. Do not return canvas_title, canvas_summary, canvas_claim, or canvas_conditions; post-lock hypothesis_display owns display output."""
 
 MINIMAL_HYPOTHESIS_DISPLAY_SCHEMA = {
     "canvas_title": f"faithful scientific title, maximum {TITLE_LIMIT} characters",
@@ -464,6 +465,11 @@ def _minimal_frontier_structure(output: dict[str, Any], context: Mapping[str, An
                 raise ValueError("lineage anchors must identify existing SQLite H nodes: " + ", ".join(unknown))
         elif lineage_anchors is not None or lineage_anchor not in (None, ""):
             raise ValueError(f"candidates[{index}] lineage anchors require evolution_operator")
+        from .research_transition import validate_source_contributions
+        validate_source_contributions(
+            candidate, list(lineage_anchors or ([lineage_anchor] if lineage_anchor else [])),
+            required=bool(context.get("_require_explicit_lineage")),
+        )
         reconsideration_trigger = candidate.get("reconsideration_trigger")
         if "reconsideration_trigger" in candidate:
             if not isinstance(reconsideration_trigger, str) or not reconsideration_trigger.strip():
@@ -977,7 +983,7 @@ def _lead_selection_structure(output: dict[str, Any], context: Mapping[str, Any]
 
 PHASE_CONTRACTS: dict[tuple[str, str], RoleContract] = {
     ("research_lead", "frontier_proposal"): RoleContract(
-        "theory-master/role/research-lead/frontier-proposal", 13,
+        "theory-master/role/research-lead/frontier-proposal", 14,
         MINIMAL_FRONTIER_PROPOSAL_SCHEMA, _minimal_frontier_structure, _noop,
         FRONTIER_PROPOSAL_PROMPT_NOTE,
         validation_schema=MINIMAL_FRONTIER_PROPOSAL_VALIDATION_SCHEMA,

@@ -14,7 +14,7 @@ from .observability.incident_registry import LOG_NAME as INCIDENT_LOG_NAME, regi
 from .invocation_artifacts import InvocationArtifactTracker
 from .invocations import InvocationLedger, stable_hash
 from .output_normalization import NormalizationResult, OutputNormalizationError, normalize_agent_output
-from .output_validation import validate_agent_output
+from .output_validation import ValidationError, ValidationResult, validate_agent_output
 from .prompt_stages import (
     build_continuation_prompt,
     build_contract_repair_prompt,
@@ -960,6 +960,17 @@ class InvocationMixin:
                     "classification": exc.classification, "error": str(exc),
                 })
                 raise
+            if role == "research_lead" and stage == "frontier_proposal":
+                from .hypothesis_lineage import normalize_singleton_references
+                normalized, source_repairs = normalize_singleton_references(
+                    result.value, set(validation_context.get("_known_hypothesis_ids") or []),
+                )
+                if source_repairs:
+                    result = NormalizationResult(
+                        value=normalized, canonical_json=json.dumps(normalized, ensure_ascii=False),
+                        classification="lineage_type_normalization",
+                        repairs=tuple(result.repairs) + tuple(source_repairs), original_error=result.original_error,
+                    )
             if role == "investigator" and stage == "investigate":
                 normalized, compatibility_repairs = _normalize_legacy_investigator_artifact_fields(result.value)
                 if compatibility_repairs:
@@ -1252,6 +1263,9 @@ class InvocationMixin:
                     repair_prompt=repair_prompt, invocation_ledger=invocation_ledger,
                     artifact_tracker=artifact_tracker,
                 )
+        from .hypothesis_lineage import lineage_repair_snapshot, assert_repair_lineage_preserved
+        protected_lineage = (lineage_repair_snapshot(output, set(validation_context.get("_known_hypothesis_ids") or []))
+                             if role == "research_lead" and stage == "frontier_proposal" else [])
         validation = validate_agent_output(role, stage, output, state, validation_context, contract)
         if not validation.valid:
             errors = [item.as_dict() for item in validation.errors]
@@ -1267,6 +1281,10 @@ class InvocationMixin:
                     stage, errors, contract.prompt_projection(validation_context), validation_context,
                     repair_attempt=repair_attempt, repair_limit=CONTRACT_REPAIR_LIMIT,
                 )
+                if protected_lineage:
+                    repair_prompt += ("\nProtected source decisions from the original parsed proposal; preserve these IDs, "
+                                      "main/other roles and valid contributions without reordering candidates:\n"
+                                      + json.dumps(protected_lineage, ensure_ascii=False))
                 self._record_cycle_anomaly(
                     state, kind="contract_repair_retry", role=role, stage=stage,
                     invocation_id=invocation_id, thread_id=identifier,
@@ -1314,6 +1332,13 @@ class InvocationMixin:
                             artifact_tracker=artifact_tracker,
                         )
                 repaired_validation = validate_agent_output(role, stage, repaired_output, state, validation_context, contract)
+                try:
+                    assert_repair_lineage_preserved(protected_lineage, repaired_output)
+                except ValueError as exc:
+                    repaired_validation = ValidationResult(False, repaired_validation.errors + (
+                        ValidationError("/candidates", "lineage_content_loss", "preserved source decisions",
+                                        "changed lineage", str(exc)),
+                    ))
                 if repaired_validation.valid:
                     output = repaired_output
                     break

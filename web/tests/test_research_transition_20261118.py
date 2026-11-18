@@ -17,7 +17,9 @@ from tm_observer.graph_semantics import project_node
 def _candidate():
     return {
         "transition": {"prior_gap": "The supported model leaves the long-time limit open.",
-                       "current_change": "Vary the observation interval instead of adding trajectories."},
+                       "current_change": "Vary the observation interval instead of adding trajectories.",
+                       "source_contributions": {"H-0001": "Carries the response and sampled population.",
+                                                "H-0002": "Provides the unresolved alternative explanation."}},
         "why_now": "The previous comparison isolated interval dependence.",
         "goal_advance": "Determine which observation scales identify the mechanism.",
     }
@@ -46,6 +48,9 @@ def test_sqlite_transition_is_projected_without_changing_the_frozen_sources(tmp_
     assert indexed["H-0003"]["research_transition"] == expected
     assert indexed["H-0001"]["research_transition"] is None
     sources = {source["role"]: source for source in expected["sources"]}
+    assert sources["main"]["contribution"] == "Carries the response and sampled population."
+    assert sources["other"]["contribution"] == "Provides the unresolved alternative explanation."
+    assert {edge["lineage_role"]: edge["edge_type"] for edge in load_canvas(tmp_path)["edges"]} == {"main": "hypothesis_evolution", "other": "research_source"}
     assert sources["main"]["title"] == "Supported bounded model"
     assert sources["main"]["scientific_status"] == "supported"
     assert sources["main"]["outcome_refs"][0]["cycle_id"] == "1"
@@ -88,7 +93,8 @@ def test_reader_shows_frozen_transition_before_claim_and_source_clicks_navigate(
   nodes[2].semantic={type:'Hypothesis',title:nodes[2].label,
     hypothesis_summary:'主张：Interval identifies the mechanism；条件：Independent trajectories；状态：待检验。',
     research_transition:transition([
-      {hypothesis_id:'B',role:'other',title:'Frozen unresolved comparison',scientific_status:'open',outcome_refs:[]},
+      {hypothesis_id:'B',role:'other',title:'Frozen unresolved comparison',scientific_status:'open',
+        contribution:'This alternative explains the same observation < differently',outcome_refs:[]},
       {hypothesis_id:'A',role:'main',title:'Frozen supported model',scientific_status:'supported',
         outcome_refs:[{id:'cycle-1',cycle_id:'1',verdict:'supported',report_ref:'notes/outcomes/1.md'}]}
     ])};
@@ -106,6 +112,7 @@ def test_reader_shows_frozen_transition_before_claim_and_source_clicks_navigate(
   for(const label of ['前序留下的问题','这一步改变什么','为什么现在研究','推进目标'])assert(transitionSection.includes(label));
   assert(transitionSection.includes('Vary observation interval &lt; 2 seconds'),'original text is safely rendered');
   assert(transitionSection.includes('主要承接')&&transitionSection.includes('补充来源'));
+  assert(transitionSection.includes('This alternative explains the same observation &lt; differently'));
   assert(transitionSection.indexOf('Frozen supported model')<transitionSection.indexOf('Frozen unresolved comparison'));
   assert(transitionSection.includes('整体猜想：支持')&&transitionSection.includes('整体猜想：尚无法判定'));
   assert(!transitionSection.includes('Edited source'),'snapshot titles and states do not follow later source edits');
@@ -174,6 +181,38 @@ def test_reader_shows_frozen_transition_before_claim_and_source_clicks_navigate(
   const historical=elements['ex-reader'].innerHTML;
   assert(historical.includes('Cycle 8 · 历史裁决：milestone_advanced'));
   assert(!historical.includes('Cycle 8 · 尚无法判定'),'historical milestone must not become Judge Open');
+})().catch(e=>{console.error(e);process.exitCode=1});
+"""
+    result = subprocess.run(["node", "-e", script, str(SCRIPT)], capture_output=True,
+                            text=True, timeout=15, check=False)
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="requires Node.js")
+def test_supplementary_sources_are_focus_overlays_without_changing_main_tree():
+    bootstrap, marker, _ = HARNESS.partition("  onReady();await tick();")
+    assert marker
+    script = bootstrap + r"""
+  edges[0].lineage_role='main';
+  edges[1].edge_type='research_source';edges[1].lineage_role='other';
+  onReady();await tick();await tick();
+  const line=id=>latestGraph.data.edges.find(e=>e.id===id);
+  assert(line('AC')&&line('BC'),'both recorded identities remain in the graph data');
+  assert.deepEqual([...line('AC').style.lineDash],[]);
+  assert.deepEqual([...line('BC').style.lineDash],[6,4]);
+  assert.equal(line('BC').style.visibility,'hidden','references appear when their target is focused');
+  const positions=JSON.stringify(latestGraph.data.nodes.map(n=>[n.id,n.style.x,n.style.y]));
+  const renders=latestGraph.renders;
+  latestGraph.events['node:click']({target:{id:'C'}});await tick();await tick();
+  assert.equal(line('BC').style.visibility,'visible');
+  latestGraph.events['edge:pointerover']({target:{id:'BC'}});await tick();
+  assert.equal(elements['ex-edge-menu'].hidden,true,'a reference does not control a scientific branch');
+  assert.equal(line('AC').style.visibility,'visible');
+  assert.equal(latestGraph.renders,renders,'focus does not rebuild the tree');
+  assert.equal(JSON.stringify(latestGraph.data.nodes.map(n=>[n.id,n.style.x,n.style.y])),positions);
+  latestGraph.events['node:click']({target:{id:'A'}});await tick();await tick();
+  assert.equal(line('BC').style.visibility,'hidden');
+  assert.equal(JSON.stringify(latestGraph.data.nodes.map(n=>[n.id,n.style.x,n.style.y])),positions);
 })().catch(e=>{console.error(e);process.exitCode=1});
 """
     result = subprocess.run(["node", "-e", script, str(SCRIPT)], capture_output=True,

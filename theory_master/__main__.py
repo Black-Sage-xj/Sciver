@@ -288,6 +288,10 @@ def main() -> int:
         item = sub.add_parser(name); item.add_argument("master_id", nargs="?", default=None)
         if name == "cancel": item.add_argument("--reason", required=True)
     cycle_p = sub.add_parser("cycle", help="inspect verified Cycle checkpoints and isolated replay attempts")
+    repair_p = sub.add_parser("repair-delivery", help="rebuild delivery identity in an existing supported Cycle")
+    repair_p.add_argument("master_id")
+    repair_p.add_argument("--cycle", type=int)
+    repair_p.add_argument("--reassess", action="store_true", help="explicitly invoke Goal Judge; no new scientific Cycle")
     cycle_sub = cycle_p.add_subparsers(dest="cycle_action", required=True)
     for action in ("checkpoints", "attempts"):
         cp = cycle_sub.add_parser(action)
@@ -550,6 +554,16 @@ def main() -> int:
         return 0
     if args.command == "status": return print_status(spec)
     if args.command == "inspect": return print_inspect(spec)
+    if args.command == "repair-delivery":
+        from .delivery_repair import repair_delivery
+        from .goal_terminal import GoalSealedError
+        backend = CodexBackend(spec.research_root, routes=routes) if args.reassess else FakeBackend()
+        try:
+            result = repair_delivery(Workflow(spec, backend, routes), cycle=args.cycle, reassess=args.reassess)
+        except (OSError, ValueError, GoalSealedError) as exc:
+            parser.error(str(exc))
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
     if args.command == "initialize":
         Workflow(spec, CodexBackend(spec.research_root, routes=routes), routes).initialize(); print("initialized"); return 0
     if args.command == "project": return project_control(spec)

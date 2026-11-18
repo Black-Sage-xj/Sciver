@@ -43,6 +43,12 @@ def _fake_sqlite_lineage(context: dict[str, Any]) -> dict[str, Any]:
     return {}
 
 
+def _fake_source_contributions(context: dict[str, Any]) -> dict[str, str]:
+    from .hypothesis_lineage import lineage_sources
+    return {source: "Provides the prior claim refined by this deterministic offline fixture."
+            for source in lineage_sources(_fake_sqlite_lineage(context))}
+
+
 class FakeBackend:
     """Deterministic backend used by tests and the offline smoke."""
     def __init__(self, reworks: int = 1):
@@ -114,7 +120,8 @@ class FakeBackend:
                                           "scope": "deterministic offline smoke scope",
                                           "why_now": "deterministic fixture is immediately executable",
                                           "transition": {"prior_gap": "The offline Goal still needs its bounded smoke claim checked.",
-                                                         "current_change": "This H tests the bounded deterministic smoke claim."},
+                                                         "current_change": "This H tests the bounded deterministic smoke claim.",
+                                                         "source_contributions": _fake_source_contributions(context)},
                                           "goal_advance": "advance the deterministic fixture Goal from definition to registered evidence",
                                           "decisive_test": "register deterministic smoke evidence",
                                           **_fake_sqlite_lineage(context)}]}
@@ -225,7 +232,8 @@ class CanonicalFakeBackend(FakeBackend):
                         "scope": "deterministic canonical smoke scope",
                         "why_now": "the deterministic canonical fixture is immediately executable",
                         "transition": {"prior_gap": "The canonical fixture Goal still needs a bounded claim checked.",
-                                       "current_change": "This H tests the bounded canonical smoke claim."},
+                                       "current_change": "This H tests the bounded canonical smoke claim.",
+                                       "source_contributions": _fake_source_contributions(context)},
                         "goal_advance": "advance the canonical fixture Goal from definition to registered evidence",
                         "decisive_test": "register deterministic canonical smoke evidence",
                         **_fake_sqlite_lineage(context),

@@ -443,12 +443,20 @@ class EvidenceRegistry:
                              known_criterion_ids: list[str] | None = None,
                              default_issue_ids: list[str] | None = None,
                              default_scope: str = "",
-                             source_transport: dict[str, Any] | None = None) -> list[str]:
+                             source_transport: dict[str, Any] | None = None,
+                             invocation_artifact_manifest: Path | str | None = None) -> list[str]:
         self.last_registration_audit = []
         invocation_role = str(producer_invocation.get("role") or "").strip()
         if invocation_role and invocation_role != role:
             raise ValueError("producer_invocation.role must match the registering role")
         producer_invocation = {**producer_invocation, "role": role}
+        execution_binding = None
+        if invocation_artifact_manifest is not None:
+            from .delivery_materials import bind_invocation_materials
+            execution_binding = bind_invocation_materials(
+                invocation_artifact_manifest, cycle_dir=self.cycle_dir,
+                workspace=self.workspace, producer_invocation=producer_invocation,
+            )
         existing = {str(record.get("evidence_id")) for record in self._committed_evidence_records()}
         if known_criterion_ids:
             catalog: dict[str, Any] = {"criterion_ids": []}
@@ -576,7 +584,7 @@ class EvidenceRegistry:
                 }
                 integrity = {
                     "artifact_paths_exist": not rejected_artifact_pointers,
-                    "artifact_hashes_recorded": len(artifact_hashes) == len(local_artifacts),
+                    "artifact_hashes_recorded": bool(local_artifacts) and len(artifact_hashes) == len(local_artifacts),
                     "artifact_roles_valid": True,
                 }
                 record = {
@@ -610,6 +618,10 @@ class EvidenceRegistry:
                 }
                 if artifact_hashes:
                     record["integrity"]["artifact_hashes"] = artifact_hashes
+                if execution_binding is not None:
+                    # The batch and producer identify same-execution materials;
+                    # these are not per-Finding scientific support references.
+                    record["execution_materials"] = execution_binding
                 if role == "literature":
                     source_access = str(item.get("source_access") or "unavailable").strip()
                     if source_access not in {"metadata", "abstract", "full_text", "unavailable"}:
@@ -808,14 +820,14 @@ class EvidenceRegistry:
                     checked[declaration_ref] = digest
                     if digest != declaration_sha:
                         changed.append(declaration_ref)
-        status = "verified" if not missing and not changed else "drifted"
+        status = "drifted" if missing or changed else "verified" if checked else "none_registered"
         return {"status": status, "checked_hashes": checked, "missing_paths": missing, "changed_paths": changed}
 
     @staticmethod
     def _is_adjudicable(record: dict[str, Any]) -> bool:
         if record.get("lifecycle_status") != "active":
             return False
-        if (record.get("integrity_current") or {}).get("status") != "verified":
+        if (record.get("integrity_current") or {}).get("status") not in {"verified", "none_registered"}:
             return False
         producer = scientific_evidence_producer(record)
         if producer is None:
@@ -889,7 +901,7 @@ class EvidenceRegistry:
             if not evidence_id or status.get(evidence_id) != "active":
                 continue
             integrity = self._current_integrity(record)
-            if integrity["status"] == "verified":
+            if integrity["status"] != "drifted":
                 continue
             reason = "local artifact integrity drift: " + json.dumps(
                 {"missing": integrity["missing_paths"], "changed": integrity["changed_paths"]}, sort_keys=True,
@@ -928,7 +940,7 @@ class EvidenceRegistry:
                 row["producer_invocation"] = {**invocation, "role": str(row["producer_role"])}
             if evidence_id in latest_assessments:
                 row["judge_assessment"] = latest_assessments[evidence_id]
-                if current_integrity["status"] != "verified":
+                if current_integrity["status"] == "drifted":
                     row["judge_assessment_stale"] = True
             row["adjudicable"] = self._is_adjudicable(row)
             projected.append(row)

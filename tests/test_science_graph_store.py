@@ -277,7 +277,7 @@ def test_agent_view_is_compact_and_keeps_status_lineage_and_detail_refs(tmp_path
         assert by_id["H-0002"]["frontier_states"] == ["unmarked"]
         assert by_id["H-0003"]["whole_h_status"] == "none"
         assert by_id["H-0001"]["cycle_result_pattern"] == "rejected"
-        assert view["lineage"] == [["H-0001", "H-0002", "derive", "10-outcome"]]
+        assert view["lineage"] == [["H-0001", "H-0002", "derive", "10-outcome", "unknown"]]
         external = dict(zip(view["external_source_columns"], view["external_sources"][0]))
         assert external["detail_ref"] == "notes/external/E-DETAIL-1.md"
         assert "content" not in external

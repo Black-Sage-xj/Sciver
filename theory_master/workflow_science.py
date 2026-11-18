@@ -163,7 +163,7 @@ class WorkflowScienceMixin:
             state["scientific_model_update_status"] = "pending"
             # Qualification and long-term synthesis are distinct epistemic
             # episodes. Runtime keeps the full model/manifest for validation, while
-            # stage_context exposes only minimal science plus stable file anchors.
+            # stage_context includes the full previous Model and stable file anchors.
             lead = self._call(state, "research_lead", {
                 "mode": "cycle_end",
                 "scientific_model": input_model,

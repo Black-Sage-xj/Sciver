@@ -15,6 +15,16 @@ from typing import Any
 from .runtime import now, write_json
 
 MANIFEST_SCHEMA = "theory-master/invocation-artifacts/v1"
+_SDK_DIRS = frozenset({".tm-handoff", ".git", "__pycache__", ".pytest_cache"})
+_SDK_FILES = frozenset({"evidence_manifest.json", "coverage_matrix.json", "judge_packet.json"})
+
+
+def is_delivery_file(relative: Path) -> bool:
+    """Exclude SDK bookkeeping, while retaining ignored scientific outputs."""
+    return bool(relative.parts and not relative.is_absolute() and ".." not in relative.parts
+                and not any(part in _SDK_DIRS for part in relative.parts)
+                and not (len(relative.parts) == 1 and relative.name in _SDK_FILES)
+                and relative.suffix not in {".pyc", ".lock", ".tmp"})
 
 
 def _sha256(path: Path) -> str:
@@ -38,10 +48,11 @@ def _snapshot(root: Path) -> dict[str, tuple[int, int]]:
         return rows
     for path in root.rglob("*"):
         try:
-            if not path.is_file() or path.is_symlink():
+            relative = path.relative_to(root)
+            if not is_delivery_file(relative) or not path.is_file() or path.is_symlink():
                 continue
             stat = path.stat()
-            rows[path.relative_to(root).as_posix()] = (int(stat.st_size), int(stat.st_mtime_ns))
+            rows[relative.as_posix()] = (int(stat.st_size), int(stat.st_mtime_ns))
         except (OSError, ValueError):
             continue
     return rows

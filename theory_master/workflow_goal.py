@@ -117,7 +117,8 @@ class GoalCompletionMixin:
             if isinstance(state.get("goal_completion"), dict) else completion
         return state
 
-    def _run_goal_completion(self, state: dict[str, Any], judge: dict[str, Any]) -> dict[str, Any] | None:
+    def _run_goal_completion(self, state: dict[str, Any], judge: dict[str, Any], *,
+                             delivery_repair: bool = False) -> dict[str, Any] | None:
         """Run the fresh task-level Gate after a supported H and closed Cycle.
 
         N=1 and N>=2 share this path. The exclusive science barrier covers
@@ -147,40 +148,76 @@ class GoalCompletionMixin:
             raw_cycle_status = str(state.get("status") or "over").lower()
             if raw_cycle_status not in {"over", "completed"}:
                 raise ValueError("goal_completion requires a closed Cycle")
-            existing = state.setdefault("role_outputs", {}).get("goal_completion")
+            from .delivery_repair import freeze_delivery_revision, current_delivery_payload, _canonical, _write_immutable
+            from .science_graph_store import ScienceGraphStore
+            access = freeze_delivery_revision(self.spec, graph_path, self.cycle_dir,
+                                              require_unchanged_science=delivery_repair)
+            revision = access["delivery_revision"]
+            assessment_id = f"goal:{self.cycle_dir.name}:{revision}"
+            with ScienceGraphStore(graph_path, readonly=True) as store:
+                existing = store.goal_gate_assessment(str(self.cycle_dir.name), delivery_revision=revision)
             if isinstance(existing, dict):
-                result = existing
+                result = {"verdict": existing["verdict"], "rationale": existing["rationale"]}
             else:
+                # _call checkpoints execution as active. Preserve proof that the
+                # science was already closed if the process stops before commit.
+                state["goal_delivery_pending"] = {"cycle_id": self.cycle_dir.name,
+                                                   "delivery_revision": revision,
+                                                   "closed_status": raw_cycle_status}
+                self._persist(state)
                 result = self._call(
                     state,
                     "judge",
                     {
                         "mode": "goal_completion",
                         "research_plan_path": str(plan_path),
+                        "delivery_material_access": access,
                     },
                     fresh_thread=True,
-                    output_key="goal_completion",
+                    output_key=f"goal_completion_{revision}",
                 )
+            current = current_delivery_payload(self.spec, graph_path, self.cycle_dir)
+            if current["science_digest"] != access["science_digest"]:
+                raise ValueError("scientific authority changed during Goal assessment")
+            if hashlib.sha256(_canonical(current)).hexdigest() != revision:
+                raise ValueError("delivery materials changed during Goal assessment; rebuild and reassess the new revision")
             receipt = self.cycle_dir / "goal_completion_out.json"
-            write_json(receipt, {
+            # Preserve the original receipt before updating the compatibility view.
+            if receipt.is_file():
+                old = json.loads(receipt.read_text(encoding="utf-8"))
+                old_id = hashlib.sha256(json.dumps(old, sort_keys=True).encode()).hexdigest()
+                _write_immutable(self.cycle_dir / "goal_assessments" / f"legacy-{old_id}.json", old)
+            receipt_payload = {
                 "verdict": result.get("verdict"),
                 "rationale": result.get("rationale"),
-            })
+                "assessment_id": assessment_id, **access,
+            }
+            frozen_receipt = self.cycle_dir / "goal_assessments" / f"{revision}.json"
+            _write_immutable(frozen_receipt, receipt_payload)
+            write_json(receipt, receipt_payload)
             verdict = str(result.get("verdict") or "")
             rationale = str(result.get("rationale") or "").strip()
+            metadata = {"assessment_id": assessment_id, "delivery_revision": revision,
+                        "science_digest": access["science_digest"], "receipt_path": str(frozen_receipt)}
             seal: dict[str, Any] | None = None
             if verdict == "passed":
-                seal = self._seal_goal_in_sqlite(plan_path, graph_path, receipt, rationale)
+                seal = self._seal_goal_in_sqlite(plan_path, graph_path, frozen_receipt, rationale,
+                                                 assessment_metadata=metadata)
             elif verdict == "not_passed":
                 from .science_graph_store import ScienceGraphStore
                 with ScienceGraphStore(graph_path) as store:
                     store.record_goal_gate_not_passed(
                         cycle_id=str(self.cycle_dir.name), rationale=rationale,
+                        **metadata,
                     )
-        return self._apply_goal_completion(state, result, verdict, rationale, seal)
+        applied = self._apply_goal_completion(state, result, verdict, rationale, seal)
+        state.pop("goal_delivery_pending", None)
+        state["goal_completion"].update(metadata)
+        state.setdefault("role_outputs", {})["goal_completion"] = result
+        return applied
 
     def _seal_goal_in_sqlite(self, plan_path: Path, graph_path: Path, receipt: Path,
-                             rationale: str) -> dict[str, Any]:
+                             rationale: str, *, assessment_metadata: dict[str, str] | None = None) -> dict[str, Any]:
         """Caller holds the exclusive science barrier; take canvas lock, then SQLite."""
         from .multi_worker import canvas_write_lock
         from .science_graph_store import ScienceGraphStore
@@ -203,6 +240,7 @@ class GoalCompletionMixin:
                     research_plan_sha256=hashlib.sha256(plan_path.read_bytes()).hexdigest(),
                     judge_receipt_ref=receipt_ref,
                     detail=detail,
+                    **(assessment_metadata or {}),
                 )
         if getattr(self, "_canvas_write_locked", False):
             return seal()

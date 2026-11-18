@@ -241,6 +241,20 @@ class ScienceGraphStore:
                 rationale TEXT NOT NULL,
                 recorded_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS goal_gate_assessment_revisions(
+                revision_index INTEGER PRIMARY KEY AUTOINCREMENT,
+                assessment_id TEXT NOT NULL UNIQUE,
+                cycle_id TEXT NOT NULL,
+                outcome_id TEXT NOT NULL REFERENCES cycle_evaluations(id),
+                delivery_revision TEXT NOT NULL,
+                science_digest TEXT NOT NULL,
+                receipt_path TEXT NOT NULL,
+                verdict TEXT NOT NULL CHECK(verdict IN ('passed','not_passed')),
+                rationale TEXT NOT NULL,
+                supersedes TEXT,
+                recorded_at TEXT NOT NULL,
+                UNIQUE(cycle_id, delivery_revision)
+            );
             CREATE TABLE IF NOT EXISTS cycle_preservations(
                 cycle_id TEXT PRIMARY KEY,
                 hypothesis_id TEXT NOT NULL REFERENCES hypotheses(id),
@@ -438,6 +452,8 @@ class ScienceGraphStore:
         return row
 
     def _record_goal_gate_assessment(self, cycle_id: str, verdict: str, rationale: str) -> None:
+        if self._goal_terminal_row() is not None and not self._sealing:
+            raise GoalSealedError("Goal is sealed; assessments are immutable")
         if verdict not in {"passed", "not_passed"} or not rationale.strip():
             raise ValueError("Goal Gate assessment requires verdict and rationale")
         outcome = self._goal_gate_outcome(cycle_id)
@@ -451,6 +467,8 @@ class ScienceGraphStore:
             ):
                 raise ValueError("Goal Gate assessment replay conflicts")
             return
+        if self.goal_gate_history(cycle_id):
+            raise ValueError("Goal Gate revisions require explicit assessment metadata")
         self.db.execute(
             "INSERT INTO goal_gate_assessments(cycle_id,outcome_id,verdict,rationale,recorded_at) "
             "VALUES (?,?,?,?,?)",
@@ -458,13 +476,112 @@ class ScienceGraphStore:
         )
         self._event("goal.assessed", cycle_id, {"verdict": verdict, "outcome_id": outcome["id"]})
 
-    def record_goal_gate_not_passed(self, *, cycle_id: str, rationale: str) -> None:
+    @staticmethod
+    def _goal_assessment_metadata(
+        assessment_id: str, delivery_revision: str, science_digest: str, receipt_path: str,
+    ) -> dict[str, str] | None:
+        values = {"assessment_id": assessment_id, "delivery_revision": delivery_revision,
+                  "science_digest": science_digest, "receipt_path": receipt_path}
+        if all(value == "" for value in values.values()):
+            return None
+        if any(not isinstance(value, str) or not value.strip() or value.strip() != value
+               for value in values.values()):
+            raise ValueError("Goal assessment metadata requires all four nonempty canonical fields")
+        if not all(re.fullmatch(r"[a-f0-9]{64}", values[key])
+                   for key in ("delivery_revision", "science_digest")):
+            raise ValueError("Goal delivery_revision and science_digest must be sha256 values")
+        return values
+
+    def _goal_gate_history_rows(self, cycle_id: str | None = None) -> list[dict[str, Any]]:
+        """Read old V2 graphs without creating revision tables or rewriting old rows."""
+        tables = {row["name"] for row in self.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name IN ('goal_gate_assessments','goal_gate_assessment_revisions')"
+        )}
+        where, args = (" WHERE cycle_id=?", (cycle_id,)) if cycle_id is not None else ("", ())
+        records: list[dict[str, Any]] = []
+        if "goal_gate_assessments" in tables:
+            records += [{**dict(row), "assessment_id": "legacy:" + str(row["cycle_id"]),
+                         "delivery_revision": "", "science_digest": "", "receipt_path": "",
+                         "supersedes": None, "legacy": True}
+                        for row in self.db.execute("SELECT * FROM goal_gate_assessments" + where, args)]
+        if "goal_gate_assessment_revisions" in tables:
+            records += [{key: row[key] for key in row.keys() if key != "revision_index"}
+                        for row in self.db.execute(
+                            "SELECT * FROM goal_gate_assessment_revisions" + where + " ORDER BY revision_index", args)]
+        return records
+
+    def goal_gate_history(self, cycle_id: str) -> list[dict[str, Any]]:
+        """Append order, including any untouched legacy assessment first."""
+        return self._goal_gate_history_rows(str(cycle_id))
+
+    def goal_gate_assessment(
+        self, cycle_id: str, *, assessment_id: str = "", delivery_revision: str = "",
+    ) -> dict[str, Any] | None:
+        """Exact revision lookup for crash replay; no selector returns the latest."""
+        rows = self.goal_gate_history(str(cycle_id))
+        matches = [row for row in rows if (not assessment_id or row["assessment_id"] == assessment_id)
+                   and (not delivery_revision or row["delivery_revision"] == delivery_revision)]
+        return matches[-1] if matches else None
+
+    @staticmethod
+    def _goal_gate_display(record: dict[str, Any]) -> dict[str, Any]:
+        # Keep the exact old reader/API shape for historical single assessments.
+        return ({key: record[key] for key in ("verdict", "rationale")}
+                if record.get("legacy") else dict(record))
+
+    def _record_goal_gate_revision(
+        self, cycle_id: str, verdict: str, rationale: str, metadata: dict[str, str],
+    ) -> None:
+        if verdict not in {"passed", "not_passed"} or not isinstance(rationale, str) or not rationale.strip():
+            raise ValueError("Goal Gate assessment requires verdict and rationale")
+        if self._goal_terminal_row() is not None and not self._sealing:
+            raise GoalSealedError("Goal is sealed; assessment revisions are immutable")
+        outcome = self._goal_gate_outcome(cycle_id)
+        expected = {**metadata, "cycle_id": cycle_id, "outcome_id": outcome["id"],
+                    "verdict": verdict, "rationale": rationale}
+        existing = self.db.execute(
+            "SELECT * FROM goal_gate_assessment_revisions WHERE assessment_id=?", (metadata["assessment_id"],)
+        ).fetchone()
+        if existing is not None:
+            if any(existing[key] != value for key, value in expected.items()):
+                raise ValueError("Goal assessment revision replay conflicts")
+            return
+        if self._goal_terminal_row() is not None:
+            raise GoalSealedError("Goal is sealed; new assessment rejected")
+        if self.goal_gate_assessment(cycle_id, delivery_revision=metadata["delivery_revision"]) is not None:
+            raise ValueError("Goal delivery revision already has a different assessment ID")
+        history = self.goal_gate_history(cycle_id)
+        if any(row.get("science_digest") and row["science_digest"] != metadata["science_digest"] for row in history):
+            raise ValueError("Delivery-only reassessment cannot change the science_digest")
+        previous_id = history[-1]["assessment_id"] if history else None
+        self.db.execute(
+            "INSERT INTO goal_gate_assessment_revisions(assessment_id,cycle_id,outcome_id,delivery_revision,"
+            "science_digest,receipt_path,verdict,rationale,supersedes,recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (metadata["assessment_id"], cycle_id, outcome["id"], metadata["delivery_revision"],
+             metadata["science_digest"], metadata["receipt_path"], verdict, rationale, previous_id, _timestamp()),
+        )
+        self._event("goal.assessment_revised", metadata["assessment_id"], {
+            "cycle_id": cycle_id, "outcome_id": outcome["id"], "verdict": verdict,
+            "delivery_revision": metadata["delivery_revision"], "science_digest": metadata["science_digest"],
+            "supersedes": previous_id,
+        })
+
+    def record_goal_gate_not_passed(
+        self, *, cycle_id: str, rationale: str, assessment_id: str = "", delivery_revision: str = "",
+        science_digest: str = "", receipt_path: str = "",
+    ) -> None:
         """Attach a failed task-level Gate to its immutable supported Cycle Outcome."""
         with self.transaction():
-            self._record_goal_gate_assessment(str(cycle_id), "not_passed", rationale)
+            metadata = self._goal_assessment_metadata(assessment_id, delivery_revision, science_digest, receipt_path)
+            if metadata is None:
+                self._record_goal_gate_assessment(str(cycle_id), "not_passed", rationale)
+            else:
+                self._record_goal_gate_revision(str(cycle_id), "not_passed", rationale, metadata)
 
     def seal_goal(self, *, goal_id: str, source_cycle: str, research_plan_sha256: str,
-                  judge_receipt_ref: str | None, detail: dict[str, Any]) -> dict[str, Any]:
+                  judge_receipt_ref: str | None, detail: dict[str, Any], assessment_id: str = "",
+                  delivery_revision: str = "", science_digest: str = "", receipt_path: str = "") -> dict[str, Any]:
         """Persist Goal PASS once and close every open frontier in the same transaction.
 
         Idempotent: an existing seal is returned unchanged (``newly_sealed`` False).
@@ -479,10 +596,19 @@ class ScienceGraphStore:
             raise ValueError("Goal seal requires the research_plan.md sha256")
         if not isinstance(detail, dict):
             raise ValueError("Goal seal detail must be an object")
+        metadata = self._goal_assessment_metadata(assessment_id, delivery_revision, science_digest, receipt_path)
+        if metadata is not None:
+            detail = {**detail, **metadata}
         self._sealing = True
         try:
             with self.transaction():
                 if self._goal_terminal_row() is not None:
+                    if metadata is not None:
+                        self._record_goal_gate_revision(source_cycle, "passed", str(detail.get("rationale") or ""), metadata)
+                        terminal = self.goal_terminal()
+                        if (terminal["goal_id"] != goal_id or terminal["research_plan_sha256"] != research_plan_sha256
+                                or terminal["judge_receipt_ref"] != judge_receipt_ref):
+                            raise ValueError("Goal seal revision replay conflicts")
                     return {**self.goal_terminal(), "newly_sealed": False,
                             "closed_frontier_ids": [], "goal_completed_stop_ids": []}
                 records = list(self.db.execute(
@@ -506,13 +632,17 @@ class ScienceGraphStore:
                         preferred=False,
                     )
                 closed = [str(entry["hypothesis_id"]) for entry in records]
+                # Both writes belong to this transaction. Write the new
+                # assessment before the terminal makes further appends illegal.
+                if metadata is not None:
+                    self._record_goal_gate_revision(source_cycle, "passed", str(detail.get("rationale") or ""), metadata)
                 self.db.execute(
                     "INSERT INTO task_goal_terminal(goal_id,verdict,source_cycle,sealed_at,"
                     "research_plan_sha256,judge_receipt_ref,detail_json) VALUES (?,?,?,?,?,?,?)",
                     (goal_id, "passed", source_cycle, _timestamp(), research_plan_sha256,
                      judge_receipt_ref, _json(detail)),
                 )
-                if self.db.execute(
+                if metadata is None and self.db.execute(
                     "SELECT 1 FROM cycle_evaluations WHERE cycle_id=?", (source_cycle,)
                 ).fetchone():
                     self._record_goal_gate_assessment(
@@ -1125,16 +1255,9 @@ class ScienceGraphStore:
         ).fetchone():
             reading_contexts = {row["hypothesis_id"]: json.loads(row["source_json"])
                                 for row in self.db.execute("SELECT hypothesis_id,source_json FROM hypothesis_reading_context")}
-        goal_gate_by_outcome = {}
-        if self.db.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_gate_assessments'"
-        ).fetchone():
-            goal_gate_by_outcome = {
-                row["outcome_id"]: {"verdict": row["verdict"], "rationale": row["rationale"]}
-                for row in self.db.execute(
-                    "SELECT outcome_id,verdict,rationale FROM goal_gate_assessments"
-                )
-            }
+        goal_gate_by_outcome: dict[str, list[dict[str, Any]]] = {}
+        for assessment in self._goal_gate_history_rows():
+            goal_gate_by_outcome.setdefault(assessment["outcome_id"], []).append(assessment)
         hypotheses = []
         for h in self.db.execute("SELECT * FROM hypotheses ORDER BY id"):
             item = dict(h)
@@ -1162,9 +1285,10 @@ class ScienceGraphStore:
             )]
             item["cycle_outcomes"] = self.cycle_outcomes(h["id"])
             for cycle_outcome in item["cycle_outcomes"]:
-                assessment = goal_gate_by_outcome.get(cycle_outcome.get("id"))
-                if assessment is not None:
-                    cycle_outcome["goal_gate"] = assessment
+                assessments = goal_gate_by_outcome.get(cycle_outcome.get("id"))
+                if assessments:
+                    cycle_outcome["goal_gate"] = self._goal_gate_display(assessments[-1])
+                    cycle_outcome["goal_gate_history"] = assessments
             item["cycle_count"] = len(item["cycle_outcomes"])
             for cycle_outcome in item["cycle_outcomes"]:
                 cycle_id = str(cycle_outcome["cycle_id"])
@@ -1468,6 +1592,7 @@ class ScienceGraphStore:
             str(edge["source_hypothesis"]), str(edge["target_hypothesis"]),
             str(edge.get("evolution_operator") or "unknown"),
             str(edge.get("originating_outcome") or ""),
+            str(json.loads(edge.get("provenance_json") or "{}").get("lineage_role") or "unknown"),
         ] for edge in sorted(edges, key=lambda row: (
             str(row["source_hypothesis"]), str(row["target_hypothesis"]),
             str(row.get("evolution_operator") or "unknown"),
@@ -1489,7 +1614,7 @@ class ScienceGraphStore:
           or str(edge["target_external"]) in relevant_external_ids]
         return {
             "schema": "theorymaster/agent-science-graph/v1",
-            "projection_version": "compact-frontier-v3",
+            "projection_version": "compact-frontier-v4",
             "entry_hypothesis_id": entry if entry in known_h else None,
             "semantics": {
                 "frontier_states": "unmarked=no stored label; never infer closed from topology",
@@ -1507,7 +1632,7 @@ class ScienceGraphStore:
             "goal_gate_attention": goal_gate_attention,
             "current_frontiers": current_frontiers,
             "focus_details": focus_details,
-            "lineage_columns": ["from", "to", "operator", "outcome_ref"],
+            "lineage_columns": ["from", "to", "operator", "outcome_ref", "role"],
             "lineage": lineage,
             "lineage_omitted_count": len(edges) - len(lineage),
             "external_source_columns": external_columns,
@@ -1558,6 +1683,7 @@ class ScienceGraphStore:
             str(edge["source_hypothesis"]), str(edge["target_hypothesis"]),
             str(edge.get("evolution_operator") or "unknown"),
             str(edge.get("originating_outcome") or ""),
+            str(json.loads(edge.get("provenance_json") or "{}").get("lineage_role") or "unknown"),
         ] for edge in sorted(graph["edges"], key=lambda row: (
             str(row["source_hypothesis"]), str(row["target_hypothesis"]),
         )) if str(edge["source_hypothesis"]) in relevant_ids
@@ -1569,7 +1695,7 @@ class ScienceGraphStore:
             "source_hypotheses": details,
             "goal_gate_attention_columns": ["hypothesis_id", "cycle", "verdict", "rationale"],
             "goal_gate_attention": goal_gate_attention,
-            "lineage_columns": ["from", "to", "operator", "outcome_ref"],
+            "lineage_columns": ["from", "to", "operator", "outcome_ref", "role"],
             "lineage": lineage,
         }
 
@@ -1642,6 +1768,7 @@ class ScienceGraphStore:
             str(edge["source_hypothesis"]), str(edge["target_hypothesis"]),
             str(edge.get("evolution_operator") or "unknown"),
             str(edge.get("originating_outcome") or ""),
+            str(json.loads(edge.get("provenance_json") or "{}").get("lineage_role") or "unknown"),
         ] for edge in sorted(graph["edges"], key=lambda row: (
             str(row["source_hypothesis"]), str(row["target_hypothesis"]),
         ))]
@@ -1653,11 +1780,12 @@ class ScienceGraphStore:
         } for node in graph["nodes"] if node.get("type") == "External"]
         return {
             "schema": "theorymaster/agent-goal-completion-graph/v1",
-            "semantics": "SQLite-authoritative H trajectory, whole-H assessments, recent Cycle-local outcomes, explicit frontier labels, typed lineage, and External references. Read detail_ref only when needed to decide the existing Final Gate; no Canvas parsing.",
+            "semantics": "SQLite-authoritative H trajectory, whole-H assessments, recent Cycle-local outcomes, explicit frontier labels, typed lineage, External references, and task-wide Goal assessment history. Recheck prior Goal gaps against the current delivery revision. Read detail_ref only when needed to decide the existing Final Gate; no Canvas parsing.",
             "hypotheses": h_rows,
-            "lineage_columns": ["from", "to", "operator", "outcome_ref"],
+            "lineage_columns": ["from", "to", "operator", "outcome_ref", "role"],
             "lineage": lineage,
             "external_sources": external,
+            "goal_gate_history": self._goal_gate_history_rows(),
         }
 
     def agent_hypothesis_detail(
@@ -1702,12 +1830,13 @@ class ScienceGraphStore:
             "summary", "decisive_test", "judge_rationale", "findings",
             "open_questions", "boundary", "evidence_refs", "report_ref",
             "document_ref", "graph_summary",
-            "goal_gate",
+            "goal_gate", "goal_gate_history",
         )
         lineage = [[
             str(edge["source_hypothesis"]), str(edge["target_hypothesis"]),
             str(edge.get("evolution_operator") or "unknown"),
             str(edge.get("originating_outcome") or ""),
+            str(json.loads(edge.get("provenance_json") or "{}").get("lineage_role") or "unknown"),
         ] for edge in graph["edges"] if node_id in {
             str(edge["source_hypothesis"]), str(edge["target_hypothesis"]),
         }]
@@ -1747,7 +1876,7 @@ class ScienceGraphStore:
                 "priority": str(row.get("priority") or ""),
                 "anchor_outcome": str(row.get("anchor_outcome") or ""),
             } for row in node.get("frontiers") or []],
-            "lineage_columns": ["from", "to", "operator", "outcome_ref"],
+            "lineage_columns": ["from", "to", "operator", "outcome_ref", "role"],
             "lineage": sorted(lineage),
             **({key: node[key] for key in ("lineage_main_node_id", "lineage_other_node_ids")}
                if node.get("lineage_main_node_id") else {}),
@@ -1774,10 +1903,8 @@ class ScienceGraphStore:
             "SELECT hypothesis_id,verdict,source_json FROM cycle_evaluations WHERE cycle_id=?",
             (ident,),
         ).fetchone() if "cycle_evaluations" in tables else None)
-        goal_gate = (self.db.execute(
-            "SELECT verdict,rationale FROM goal_gate_assessments WHERE cycle_id=?",
-            (ident,),
-        ).fetchone() if "goal_gate_assessments" in tables else None)
+        goal_gate_history = self.goal_gate_history(ident)
+        goal_gate = goal_gate_history[-1] if goal_gate_history else None
         preserved = (self.db.execute(
             "SELECT hypothesis_id,source_json FROM cycle_preservations WHERE cycle_id=?",
             (ident,),
@@ -1846,8 +1973,8 @@ class ScienceGraphStore:
             "record_kind": record_kind,
             "adjudication_status": "adjudicated" if judge is not None else "unadjudicated",
             "judge_verdict": verdict if judge is not None else None,
-            "goal_gate": {"verdict": str(goal_gate["verdict"]),
-                          "rationale": str(goal_gate["rationale"])} if goal_gate is not None else None,
+            "goal_gate": self._goal_gate_display(goal_gate) if goal_gate is not None else None,
+            "goal_gate_history": goal_gate_history,
             "preserved": preserved is not None,
             "summary": preview(record.get("summary"), 520),
             "decisive_test": preview(record.get("decisive_test"), 300),

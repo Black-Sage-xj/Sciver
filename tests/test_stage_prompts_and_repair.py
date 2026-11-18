@@ -839,9 +839,12 @@ class StagePromptAndRepairTest(unittest.TestCase):
         self.assertIn("Do not substitute candidates from Frontier State", prompt)
         self.assertNotIn('"candidate_id": "old-a"', prompt)
 
-    def test_cycle_synthesis_delta_is_exactly_minimal_seed_plus_navigation(self):
+    def test_cycle_synthesis_delta_includes_full_previous_model_without_runtime_ledgers(self):
         context = {
-            "mode": "cycle_end", "scientific_model": empty_model("g"),
+            "mode": "cycle_end", "scientific_model": {
+                **empty_model("g"), "version": 7,
+                "summary": "Older response remains uncertain; the sample restriction differs from adjustment.",
+            },
             "scientific_model_path": "/tmp/scientific_model_in.json",
             "cycle_dir": "/tmp/cycle-1",
             "active_hypothesis": {
@@ -856,7 +859,13 @@ class StagePromptAndRepairTest(unittest.TestCase):
             "evidence_manifest": {"path": "/tmp/evidence.json", "payload": {"records": [{"evidence_id": "E-1"}]}},
         }
         delta = stage_context("research_lead", "cycle_synthesis", context)
-        self.assertEqual(set(delta), {"active_hypothesis", "judge_decision", "scientific_access"})
+        self.assertEqual(set(delta), {
+            "active_hypothesis", "judge_decision", "previous_scientific_model", "scientific_access",
+        })
+        self.assertEqual(delta["previous_scientific_model"], {
+            "version": 7,
+            "summary": context["scientific_model"]["summary"],
+        })
         self.assertEqual(delta["active_hypothesis"], {
             "hypothesis": "h", "scope": "s", "decisive_test": "d",
         })
@@ -876,6 +885,41 @@ class StagePromptAndRepairTest(unittest.TestCase):
         self.assertNotIn("y" * 100, prompt)
         self.assertIn("action=keep omits model", prompt)
         self.assertIn('"scientific_model_path": "/tmp/scientific_model_in.json"', prompt)
+        self.assertIn(context["scientific_model"]["summary"], prompt)
+        self.assertIn('"version": 7', prompt)
+
+    def test_synthesis_previous_model_is_untruncated_for_initial_and_continuation_turns(self):
+        summary = "前一人群的结果仍未定；样本限制与同样本调整已分别估计。" * 100
+        model = {
+            **empty_model("g"), "version": 12, "summary": summary,
+            "provenance": {"private_runtime_metadata": "not science"},
+        }
+        context = stage_context("research_lead", "cycle_synthesis", {
+            "scientific_model": model,
+            "active_hypothesis": {"hypothesis": "An alternative response differs", "scope": "other response"},
+            "judge_decision": {"verdict": "supported", "rationale": "The new response test is positive"},
+        })
+        contract = role_contract("research_lead", phase="cycle_synthesis")
+        shared = {
+            "role": "research_lead", "stage": "cycle_synthesis", "contract_ref": contract.ref,
+            "contract_schema": contract.prompt_projection(), "context": context,
+        }
+        prompts = (
+            build_initial_prompt(prefix="test", write_rule="No writes.", **shared),
+            build_continuation_prompt(**shared),
+        )
+        for prompt in prompts:
+            with self.subTest(kind=prompt.splitlines()[0]):
+                delivered = json.loads(prompt.split("Context:\n", 1)[1])
+                self.assertEqual(delivered["previous_scientific_model"], {"version": 12, "summary": summary})
+                self.assertNotIn("private_runtime_metadata", prompt)
+                self.assertIn("different population, response or model", prompt)
+                self.assertIn("not a per-claim retention ledger", prompt)
+        self.assertEqual(model["summary"], summary)
+
+    def test_synthesis_preserves_explicit_empty_initial_model(self):
+        delta = stage_context("research_lead", "cycle_synthesis", {"scientific_model": empty_model("g")})
+        self.assertEqual(delta["previous_scientific_model"], {"version": 0, "summary": ""})
 
     def test_cycle_synthesis_keep_contract_matches_runtime_validator(self):
         contract = role_contract("research_lead", phase="cycle_synthesis")

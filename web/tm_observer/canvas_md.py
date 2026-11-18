@@ -410,12 +410,14 @@ def _sqlite_graph_projection(root: Path) -> dict[str, Any]:
         })
     edges = [
         {"id": e["id"], "fromNode": e["source_hypothesis"],
-         "toNode": e["target_hypothesis"], "edge_type": "hypothesis_evolution",
+         "toNode": e["target_hypothesis"],
+         "edge_type": ("research_source" if json.loads(e["provenance_json"]).get("lineage_role") == "other"
+                       else "hypothesis_evolution"),
+         "lineage_role": json.loads(e["provenance_json"]).get("lineage_role"),
          "evolution_operator": e["evolution_operator"],
          "originating_outcome": e["originating_outcome"],
          "provenance_json": e["provenance_json"]}
         for e in source["edges"]
-        if json.loads(e["provenance_json"]).get("lineage_role") != "other"
     ]
     edges.extend({
         "id": e["id"], "fromNode": e["hypothesis_id"], "toNode": e["external_id"],

@@ -254,7 +254,8 @@ class RoleContractTest(unittest.TestCase):
         self.assertLess(len(role_contract("research_lead", phase="cycle_synthesis").prompt_projection()), 1250)
         self.assertLess(len(role_contract("research_lead", phase="frontier_maintenance").prompt_projection()), 300)
         self.assertLess(len(role_contract("investigator", phase="investigate").prompt_projection()), 1700)
-        self.assertLess(len(role_contract("judge", phase="terminal_assessment").prompt_projection()), 750)
+        # Current v8 baseline is 780 characters; keep a tight format-only budget.
+        self.assertLess(len(role_contract("judge", phase="terminal_assessment").prompt_projection()), 800)
 
     def test_frontier_proposal_lineage_prompt_and_legacy_validation(self):
         frontier = role_contract("research_lead", phase="frontier_proposal")

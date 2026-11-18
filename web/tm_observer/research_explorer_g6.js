@@ -272,9 +272,12 @@ function showError(message){alertBox.textContent='图谱无法渲染：'+message
 function knownType(n){return n.semantic?.type||'Unknown'}
 function rank(n){const m=n.semantic||{},cycle=displayCycle(n);return [cycle??999999,m.sortable_time||'',ID(n.id)]}
 function compareNodes(a,b){const x=rank(a),y=rank(b);return x[0]-y[0]||stable(x[1],y[1])||stable(x[2],y[2])}
+function isResearchReference(e){
+  return e.edge_type==='research_source'||e.type==='research_source'||e.lineage_role==='other';
+}
 function isScientificEdge(e){
   // Preserve all real edges, but reference/provenance edges do not advance a scientific branch.
-  return !['external_reference','research_source'].includes(e.edge_type)&&
+  return !isResearchReference(e)&&!['external_reference','research_source'].includes(e.edge_type)&&
     !['external_reference','research_source'].includes(e.type);
 }
 function structure(nodes,edges){
@@ -282,10 +285,10 @@ function structure(nodes,edges){
   const realEdges=edges.filter(e=>lookup.has(e.fromNode)&&lookup.has(e.toNode));
   // Choose from the complete index, before local scope or folding. A view
   // change must not silently choose a different predecessor for the same node.
-  const allEdges=globalThis.SciverTreeLayout.projectForest(nodes,
-    realEdges.map(e=>({id:ID(e.id||e.fromNode+'->'+e.toNode),source:e.fromNode,
+  const lineage=globalThis.SciverTreeLayout.projectForest(nodes,
+    realEdges.filter(e=>!isResearchReference(e)).map(e=>({id:ID(e.id||e.fromNode+'->'+e.toNode),source:e.fromNode,
       target:e.toNode,data:{sourceEdge:e}}))).edges.map(e=>e.data.sourceEdge);
-  const lineage=allEdges;
+  const allEdges=[...lineage,...realEdges.filter(isResearchReference)];
   const children=new Map(nodes.map(n=>[n.id,[]])),parents=new Map(nodes.map(n=>[n.id,[]]));
   for(const e of lineage){children.get(e.fromNode).push(e.toNode);parents.get(e.toNode).push(e.fromNode)}
   for(const v of children.values())v.sort(stable);
@@ -752,11 +755,10 @@ function g6Data(layoutBase=false){
       id:key,source:e.fromNode,target:e.toNode,
       data:{sourceEdge:e,baseLineWidth,highlighted},
       style:{sourcePort:'out:'+key,targetPort:'in:'+key,
-        // All relations are solid. Directional selection brightens successors,
-        // while an explicitly clicked edge gets a separate gold accent.
+        // Supplementary research sources are a focus overlay, independent of tree layout.
         stroke:bright,
         lineWidth:edgeWidth(baseLineWidth,highlighted),
-        lineDash:[],endArrow:true,
+        lineDash:isResearchReference(e)?[6,4]:[],endArrow:true,
         opacity:highlighted?1:dim?(lightGraph()?.55:.28):1,
         zIndex:isHovered?24:active?20:isDownstream?12:isIncoming?11:1,
         router:{type:'orth',padding:18},
@@ -765,7 +767,7 @@ function g6Data(layoutBase=false){
         cursor:'pointer',increasedLineWidthForHitTesting:12}
     };
   });
-  globalThis.SciverTreeLayout.treeCoordinates(nodes,edges);
+  globalThis.SciverTreeLayout.treeCoordinates(nodes,edges.filter(e=>!isResearchReference(e.data.sourceEdge)));
   return {nodes,edges};
 }
 
@@ -1074,6 +1076,7 @@ function positionEdgeMenu(){
 function openEdgeMenu(event){
   const id=ID(event.target?.id),edge=graph?.getEdgeData().find(e=>e.id===id);
   if(!edge||edge.style.visibility==='hidden')return;
+  if(isResearchReference(edge.data?.sourceEdge||{})){closeEdgeMenu();return;}
   clearTimeout(edgeMenuTimer);tooltip.hidden=true;
   const previous=hoveredEdge;hoveredEdge=id;
   refreshEdgeMenu();
@@ -1315,7 +1318,8 @@ function visibleNodes(){
 function desiredVisibility(){
   const s=structure(index.nodes,index.edges),vis=visibility(s);
   const displayedEdges=new Set(s.allEdges.filter(e=>vis.visible.has(e.fromNode)&&
-    vis.visible.has(e.toNode)&&!(collapsed.has(e.fromNode)&&isScientificEdge(e)))
+    vis.visible.has(e.toNode)&&!(collapsed.has(e.fromNode)&&isScientificEdge(e))&&
+    (!isResearchReference(e)||e.toNode===linkedNodeId()||selected?.kind==='edge'&&selected.id===ID(e.id)))
     .map(e=>ID(e.id||e.fromNode+'->'+e.toNode)));
   const result=new Map();
   for(const n of graph.getNodeData())result.set(n.id,vis.visible.has(n.id)?'visible':'hidden');
@@ -1620,7 +1624,7 @@ function withoutRepeatedTitle(body,title){
 }
 function researchTransition(sem={}){
   const value=sem.research_transition;
-  return value?.schema==='theory-master/research-transition/v1'&&
+  return ['theory-master/research-transition/v1','theory-master/research-transition/v2'].includes(value?.schema)&&
     ['prior_gap','current_change','why_now','goal_advance'].every(key=>typeof value[key]==='string')&&
     Array.isArray(value.sources)?value:null;
 }
@@ -1643,6 +1647,7 @@ function transitionSourcesHtml(sources){
       esc(uri('node',id))+'">'+label+'</button>':'<span>'+label+'</span>';
     const records=(source.outcome_refs||[]).filter(outcome=>String(outcome.cycle_id||'').trim());
     return '<li><span class="ex-transition-role">'+role+'</span>'+target+
+      (source.contribution?'<div class="ex-transition-contribution ex-md">'+mdHtml(source.contribution,null)+'</div>':'')+
       (source.scientific_status?'<span class="ex-transition-status">整体猜想：'+
         esc(transitionStatus(source.scientific_status))+'</span>':'')+
       (records.length?'<details class="ex-transition-results"><summary>来源检验 · '+records.length+' 轮</summary>'+

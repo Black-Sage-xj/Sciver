@@ -40,7 +40,7 @@ def test_production_lead_context_uses_compact_sqlite_view_not_canvas_path(tmp_pa
     )
     assert graph is not None
     assert graph["entry_hypothesis_id"] == "H-0001"
-    assert graph["lineage"] == [["H-0001", "H-0002", "derive", "cycle-outcome-1"]]
+    assert graph["lineage"] == [["H-0001", "H-0002", "derive", "cycle-outcome-1", "unknown"]]
 
     projected = stage_context("research_lead", "frontier_proposal", {
         "goal": "G", "research_contract": "C", "agent_graph": graph,

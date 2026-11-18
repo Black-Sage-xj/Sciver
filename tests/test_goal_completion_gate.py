@@ -153,7 +153,8 @@ class GoalCompletionGateTest(unittest.TestCase):
                 "the trajectory satisfies the original Goal Contract and Final Gate",
             )
             self.assertEqual(len(list_cycle_dirs(spec.research_root, task_mode=True)), 1)
-            self.assertEqual(set(backend.goal_context), {"research_plan_access", "agent_graph"})
+            self.assertEqual(set(backend.goal_context), {"research_plan_access", "agent_graph", "delivery_material_access"})
+            self.assertTrue(Path(backend.goal_context["delivery_material_access"]["revision_path"]).is_file())
             self.assertEqual(Path(backend.goal_context["research_plan_access"]["path"]), spec.document)
             self.assertGreater(backend.graph_hypotheses_at_gate, 0)
             gate_graph = backend.goal_context["agent_graph"]
@@ -190,7 +191,7 @@ class GoalCompletionGateTest(unittest.TestCase):
                     self.assertTrue(any(edge["fromNode"] in scientific_ids and edge["toNode"] == node["id"]
                                         for edge in canvas["edges"]))
                 self.assertTrue(any(row.get("id") == "cycle-outcome-1" for row in outcomes))
-                self.assertEqual(outcomes[0]["goal_gate"], {
+                self.assertEqual({key: outcomes[0]["goal_gate"][key] for key in ("verdict", "rationale")}, {
                     "verdict": "passed",
                     "rationale": state["goal_completion"]["rationale"],
                 })
@@ -249,10 +250,11 @@ class GoalCompletionGateTest(unittest.TestCase):
                 outcome = next(row for node in graph["nodes"] if node["type"] == "Hypothesis"
                                for row in node.get("cycle_outcomes") or [])
                 self.assertEqual(outcome["verdict"], "supported")
-                self.assertEqual(outcome["goal_gate"], receipt)
+                for key in ("verdict", "rationale", "assessment_id", "delivery_revision", "science_digest"):
+                    self.assertEqual(outcome["goal_gate"][key], receipt[key])
                 detail = store.agent_hypothesis_detail(outcome["hypothesis_id"])
-                self.assertEqual(detail["cycle_outcomes"][0]["goal_gate"], receipt)
-                self.assertEqual(store.agent_cycle_detail("1")["goal_gate"], receipt)
+                self.assertEqual(detail["cycle_outcomes"][0]["goal_gate"], outcome["goal_gate"])
+                self.assertEqual(store.agent_cycle_detail("1")["goal_gate"], outcome["goal_gate"])
                 attention = store.agent_view()["goal_gate_attention"]
                 self.assertEqual(attention, [[outcome["hypothesis_id"], "1", "not_passed",
                                                receipt["rationale"]]])

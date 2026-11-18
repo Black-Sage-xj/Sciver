@@ -9,12 +9,34 @@ TRANSITION_LIMIT = 400
 
 
 def validate_transition(value: Any) -> None:
-    if not isinstance(value, dict) or set(value) != {"prior_gap", "current_change"}:
-        raise ValueError("transition must contain exactly prior_gap and current_change")
+    required = {"prior_gap", "current_change"}
+    if (not isinstance(value, dict) or not required <= value.keys()
+            or set(value) - required - {"source_contributions"}):
+        raise ValueError("transition requires prior_gap/current_change and optional source_contributions")
     for field in ("prior_gap", "current_change"):
         text = value[field]
         if not isinstance(text, str) or not text.strip() or len(text) > TRANSITION_LIMIT:
             raise ValueError(f"transition.{field} must be nonempty and at most {TRANSITION_LIMIT} characters")
+    if "source_contributions" in value:
+        contributions = value["source_contributions"]
+        if (not isinstance(contributions, dict)
+                or any(not isinstance(key, str) or not key or key.strip() != key
+                       or not isinstance(text, str) or not text.strip() or len(text) > TRANSITION_LIMIT
+                       for key, text in contributions.items())):
+            raise ValueError("transition.source_contributions requires canonical H keys and nonempty bounded explanations")
+
+
+def validate_source_contributions(candidate: Mapping[str, Any], source_ids: list[str], *, required: bool = False) -> None:
+    """The map explains the existing source set; it cannot declare another set."""
+    transition = candidate.get("transition")
+    validate_transition(transition)
+    contributions = transition.get("source_contributions")
+    if contributions is None:
+        if required:
+            raise ValueError("new proposal requires transition.source_contributions ({} for a root H)")
+        return  # Historical checkpoints retain their recorded, possibly absent notes.
+    if set(contributions) != set(source_ids):
+        raise ValueError("transition.source_contributions keys must exactly match main and other source H IDs")
 
 
 def transition_record(candidate: Mapping[str, Any], sources: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -22,16 +44,19 @@ def transition_record(candidate: Mapping[str, Any], sources: list[dict[str, Any]
     if "transition" not in candidate:
         return None
     transition = candidate["transition"]
-    validate_transition(transition)
+    validate_source_contributions(candidate, [source["hypothesis_id"] for source in sources])
+    contributions = transition.get("source_contributions", {})
     for field in ("why_now", "goal_advance"):
         if not isinstance(candidate.get(field), str) or not candidate[field].strip():
             raise ValueError(f"research transition requires {field}")
     return {
         "schema": TRANSITION_SCHEMA,
-        **transition,
+        **{key: transition[key] for key in ("prior_gap", "current_change")},
         "why_now": candidate["why_now"],
         "goal_advance": candidate["goal_advance"],
-        "sources": sources,
+        "sources": [{**{key: val for key, val in source.items() if key != "contribution"},
+                     **({"contribution": contributions[source["hypothesis_id"]]}
+                        if source["hypothesis_id"] in contributions else {})} for source in sources],
     }
 
 
@@ -51,6 +76,8 @@ def research_transition_text(record: Mapping[str, Any] | None) -> str:
         ), ""]
         statuses = {"supported": "支持", "rejected": "反驳", "open": "尚无法判定", "unadjudicated": "未裁决"}
         for source in sources:
+            if source.get("contribution"):
+                lines += [source["hypothesis_id"] + " 的贡献：" + source["contribution"], ""]
             refs = ["[[" + ref["report_ref"] + "|Cycle " + str(ref["cycle_id"]) + " · "
                     + ("历史裁决：" + "、".join(ref["original_verdicts"]) if ref.get("original_verdicts")
                        else statuses.get(ref.get("verdict"), str(ref.get("verdict") or "未标记"))) + " 报告]]"

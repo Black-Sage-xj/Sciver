@@ -202,6 +202,8 @@
 
 Scientific Model 不是 append-only 文档。研究认识发生变化时，应**整体重写、合并和压缩**。
 
+每次综合直接取得上一版完整正文与版本。新结果若针对不同人群、响应量或模型，并不自动取代旧结果；仍影响当前 Goal 的结论、比较关系和未解限制应合并进同一段认识。只有被证据推翻、明确取代或已与 Goal 无关的内容才删除；不另建逐条 claim 保留账本。
+
 ---
 
 ## 4. Authority 与维护权
@@ -349,7 +351,7 @@ replace
 
 存在 durable scientific change：
 
-1. Research Lead 基于当前完整认识重写一段 `summary`；
+1. Research Lead 对照直接注入的上一版完整 `summary` 与版本、冻结命题和 Judge，重写一段当前完整认识；
 2. 删除被推翻/取代的内容；
 3. 不追加 chronology；
 4. SDK 验证 output contract；

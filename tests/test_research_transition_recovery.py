@@ -37,6 +37,7 @@ def test_dossier_publication_crash_reuses_durable_source_snapshot_on_resume(tmp_
         "transition": {
             "prior_gap": "The narrow-range relation holds, while the wider range remains untested.",
             "current_change": "This H tests the same relation in the wider range.",
+            "source_contributions": {"H-0001": "Provides the supported narrow-range relation and its applicability limit."},
         },
         "evolution_operator": "generalize", "lineage_main_node_id": "H-0001",
         "lineage_other_node_ids": [],
@@ -84,6 +85,7 @@ def test_dossier_publication_crash_reuses_durable_source_snapshot_on_resume(tmp_
         assert store.agent_hypothesis_detail("H-0003")["research_transition"] == original
     assert dossier.read_bytes() == published_bytes
     assert frozen["sources"][0]["title"] == "Original source title"
+    assert frozen["sources"][0]["contribution"] == selected["transition"]["source_contributions"]["H-0001"]
     assert "later-outcome" not in json.dumps(frozen)
     report = render_outcome_document({
         "id": "cycle-3-outcome", "hypothesis_id": "H-0003", "cycle_id": "3",

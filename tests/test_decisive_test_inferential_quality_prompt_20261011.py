@@ -12,6 +12,7 @@ from theory_master.prompt_stages import (
     build_continuation_prompt, build_initial_prompt, stage_context,
 )
 from theory_master.stage_registry import stage_card_text
+from theory_master.stage_registry import procedure_card_text
 
 
 class DecisiveTestInferentialQualityPromptTests(unittest.TestCase):
@@ -42,6 +43,29 @@ class DecisiveTestInferentialQualityPromptTests(unittest.TestCase):
                 self.assertIn("do not require irrelevant baselines", prompt)
                 self.assertIn("Current task: frontier_proposal", prompt)
                 self.assertIn("Context:", prompt)
+
+    def test_actual_qualification_turns_distinguish_model_gain_from_explanation(self):
+        for role, stage in (("research_lead", "frontier_proposal"), ("challenger", "candidate_review")):
+            for prompt in self._turn_prompts(role, stage, {"goal": "Distinguish live explanations"}):
+                with self.subTest(role=role, kind=prompt.splitlines()[0]):
+                    self.assertIn("competing", prompt)
+                    self.assertIn("model family" if role == "research_lead" else "model-family claim", prompt)
+                    self.assertIn("supplied premise", prompt)
+                    self.assertIn("useful optional strengthening alone does not close that gap", prompt)
+                    self.assertNotIn("Always fit an additional baseline", prompt)
+        review = stage_card_text("challenger", "candidate_review")
+        self.assertIn("A small group alone does not establish", review)
+        self.assertIn("Do not demand the research answer at qualification", review)
+
+    def test_judge_method_timing_instruction_reaches_both_turn_types_without_new_requirements(self):
+        for prompt in self._turn_prompts("judge", "terminal_assessment", {}):
+            with self.subTest(kind=prompt.splitlines()[0]):
+                self.assertIn("choices made before fitting, and later changes", prompt)
+                self.assertIn("Do not call an unstated tail choice, knot rule or equivalence margin frozen", prompt)
+                self.assertIn("a justified directional test need not be two-sided", prompt)
+                self.assertIn("unless the frozen science requires it", prompt)
+                self.assertIn("Do not request raw files", prompt)
+        self.assertNotIn("equivalence margin", procedure_card_text("challenger", "candidate_review"))
 
     def test_lead_must_define_informative_precision_relative_to_inference(self):
         card = stage_card_text("research_lead", "frontier_proposal")

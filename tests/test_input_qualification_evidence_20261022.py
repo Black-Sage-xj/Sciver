@@ -102,7 +102,7 @@ class InputQualificationEvidence(unittest.TestCase):
             ("new scope", "Test a local claim on a distinct admissible scope with new uncertainty",
              "local result bears on a broader claim only within its actual logical implication"),
             ("mechanism repair", "Old model failed; test a specified additional mechanism against that baseline",
-             "relevant adverse results from primary reports"),
+             "relevant adverse or competing results from primary reports"),
             ("new scientific work", "A credible in-scope derivation remains unknown and is the scientific test",
              "credible in-scope route and meaningful test remain"),
         )

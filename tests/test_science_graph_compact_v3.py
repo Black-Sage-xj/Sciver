@@ -35,7 +35,7 @@ def test_v3_preserves_complete_index_and_active_incoming_lineage(tmp_path: Path)
         (tmp_path / "notes/hypotheses").mkdir(parents=True)
         (tmp_path / "notes/hypotheses/H-0159.md").write_text("# Frozen claim", encoding="utf-8")
         view = store.agent_view()
-        assert view["projection_version"] == "compact-frontier-v3"
+        assert view["projection_version"] == "compact-frontier-v4"
         rows = [dict(zip(view["hypothesis_columns"], r)) for r in view["hypotheses"]]
         by_id = {r["id"]: r for r in rows}
         assert len(by_id) == 160
@@ -44,7 +44,7 @@ def test_v3_preserves_complete_index_and_active_incoming_lineage(tmp_path: Path)
         assert by_id["H-0159"]["frontier_states"] == ["active"]
         assert by_id["H-0001"]["cycle_result_pattern"] == "rejected"
         assert "dossier_ref" not in view["hypothesis_columns"]
-        assert ["H-0001", "H-0159", "specialize", "outcome-1"] in view["lineage"]
+        assert ["H-0001", "H-0159", "specialize", "outcome-1", "unknown"] in view["lineage"]
         assert not any(edge[1] == "H-0002" for edge in view["lineage"])
         assert view["lineage_omitted_count"] >= 1
         active = {item["id"]: item for item in view["current_frontiers"]}
@@ -76,13 +76,13 @@ def test_v3_does_not_mutate_checkpoint_and_reuses_stage_contract(tmp_path: Path)
     scoped = stage_context("research_lead", "frontier_proposal", {
         "goal": "G", "research_contract": "Frozen C", "agent_graph": lead,
     })
-    assert scoped["agent_graph"]["projection_version"] == "compact-frontier-v3"
+    assert scoped["agent_graph"]["projection_version"] == "compact-frontier-v4"
     rendered = build_initial_prompt(
         prefix="Research Lead.", role="research_lead", stage="frontier_proposal",
         contract_ref="contract", contract_schema="{}", context=scoped,
         write_rule="Write one frozen candidate.",
     )
-    assert "compact-frontier-v3" in rendered
+    assert "compact-frontier-v4" in rendered
     assert "H-0001" in rendered
     reuse = {"schema": lead["schema"], "projection_version": lead["projection_version"],
              "entry_hypothesis_id": lead["entry_hypothesis_id"]}

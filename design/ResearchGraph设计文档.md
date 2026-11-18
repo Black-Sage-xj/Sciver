@@ -4,7 +4,7 @@
 
 ## 科学身份与裁决
 
-- 每个**新**科学 Cycle 锁定一个新的、可独立裁决的冻结 H。新 H 可从一个或多个旧 H 产生，须说明相对来源的可证伪科学增量，来源分为唯一 `lineage_main_node_id` 和 0–2 个 `lineage_other_node_ids`；由 Lead 选择 main，只有 main 的有类型 H→H 边参与图谱连线和分支布局，其它来源保留在 SQLite 与详情中。换字、换方法或重复检验本身不构成增量。
+- 每个**新**科学 Cycle 锁定一个新的、可独立裁决的冻结 H。新 H 可从一个或多个旧 H 产生，须说明相对来源的可证伪科学增量，来源分为唯一 `lineage_main_node_id` 和 0–2 个 `lineage_other_node_ids`；由 Lead 选择 main，只有 main 的有类型 H→H 边参与分支布局，其它来源保留在 SQLite 与详情中，网页聚焦目标节点时以虚线显示。换字、换方法或重复检验本身不构成增量。
 - 同一 Cycle 的 Investigator 轮次、Judge rework、恢复与重试复用其已锁定 H，不创建第二个 H。`hypothesis_cycle_owners` 记录新规则下的 Cycle↔H 一对一身份。
 - 每个有终局科学裁决的 Cycle 恰有一条 **Cycle Outcome**。它含原 Judge verdict、冻结检验、理由、发现、问题、边界、Evidence、报告链接和完整 Markdown 汇总。`supported/rejected/open` 只覆盖该轮冻结命题及 scope。一个 Cycle 的多次尝试和中间决定是过程历史，不产生多个终局 Outcome。
 - 运行中、失败、中断、取消或仅运维收尾而无科学裁决的 Cycle 保留运行记忆，但没有科学 Outcome；不得用 `open` 补齐。Goal Completion 是独立任务级裁决。
@@ -21,6 +21,8 @@
 - 旧 `outcomes` 表保留每 H 一行，作为历史全 H 判断与旧前沿代码的兼容字段；它**不是**新规范下的 Cycle Outcome 列表。旧 H 的局部 Decision 导入时只进入 `cycle_evaluations`，不改这行的科学命运。新 H 与单一冻结 Cycle 完全同范围，终局裁决同步其 H 状态。
 - `notes/outcomes/<Cycle ID>.md` 是该轮唯一主报告：冻结的研究承接说明、同一份图谱概览、研究正文、折叠的 Judge/正式科学记录、补充材料和复现索引；完整结构化记录单独放在同名 `.json` 文件。Markdown 与 JSON 均有来源/渲染完整性标记。只有可验证的 SDK 生成文件允许随模板升级，人工编辑或来源不明的文件必须保留并报告冲突。
 - `cycle_memory_index` 继续索引 Cycle 运行目录、状态和过程记录。原始 Canvas 的字节备份、`legacy_records`、`legacy_edges`、`legacy_conversion_map`、Evidence 和旧报告保持可追溯。
+- 任务级 Goal 复评引用原有 supported Cycle Outcome，不新增 H 或科学 Outcome。旧 `goal_gate_assessments` 保持原行；新 `goal_gate_assessment_revisions` 按交付物版本追加评估身份、科学摘要、回执路径、理由和 `supersedes`。同一评估身份只允许相同内容重放，同一 Cycle 的纯交付修订不得改变科学摘要。旧任务缺少版本摘要时保留未知，不追认历史版本。
+- `goal_gate` 展示最新任务级评估，`goal_gate_history` 保留全部评估及原理由，Goal Judge 的图谱输入直接包含该历史。新的 passed 评估、任务封存和关闭前沿在同一事务提交；失败则全部回滚。Goal 封存后拒绝追加或改写评估，旧单评估 API 的精确重放规则保持不变。只读旧数据库无需创建新表或回填记录。
 
 ## 历史 Canvas 的整理规则
 
@@ -46,9 +48,13 @@
 
 ## Main 与其它来源（2026-11-09）
 
-新候选的 main 与其它来源必须互异、存在于 SQLite，派生类型仍由 `evolution_operator` 指定。SDK 在资格检查、选择及修订中保留来源角色，锁定时将角色写入 `scientific_edges.provenance_json.lineage_role`（`main` / `other`）。两类来源都保留可查询的科学关系；Canvas 导出与网页 SQLite 投影仅绘制 main，详情及 H 档案分别列出两类来源。根 H 省略来源字段。
+新候选的 main 与其它来源必须互异、存在于 SQLite，派生类型仍由 `evolution_operator` 指定。SDK 在资格检查、选择及修订中保留来源角色，锁定时将角色写入 `scientific_edges.provenance_json.lineage_role`（`main` / `other`）。两类来源都保留可查询的科学关系；Canvas 导出仅绘制 main；网页 SQLite 投影保留两类来源，main 实线构成分支树，other 作为聚焦目标节点时可见的虚线，不参与父子选择、布局或折叠。详情及 H 档案分别列出两类来源及冻结的贡献说明。根 H 省略来源字段。
 
 历史 singular/plural 来源合同继续用于旧 checkpoint 恢复；没有角色的历史边保持原有连线，不根据顺序或布局推断 main，也不修改历史科研裁决。原有 1–3 个来源的总数上限不变。
+
+新提案的 `transition.source_contributions` 按 main 与其它来源的精确 H ID 集合逐项说明所用结果、定义、方法或判别对照，每项 1–400 字符，根 H 使用空对象。它解释现有来源，不建立第二套引用集合；阅读过或顺带提到的节点不自动成为来源。SDK 将贡献说明冻结到同一 `research_transition.sources[].contribution`，档案、报告与图谱详情复用原文。旧 checkpoint 缺少说明时保留缺失，不补写历史。来源说明不增补冻结命题，也不成为 Judge Evidence。
+
+新提案入口仅将一个规范、已存在且不同于 main 的旁来源字符串无损包装为数组，记录确定性规范化回执；不拆分字符串、不猜测或静默删除 ID。合同修复保留首个可解析提案中的合法来源、main/other 角色与贡献，修复不得悄悄改变这些科学选择。精简图 v4 的 lineage 第五列显式携带 role；旧边标为 unknown，不从排序推断角色。
 
 ## 研究承接说明
 

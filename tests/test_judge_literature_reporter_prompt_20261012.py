@@ -61,12 +61,16 @@ class JudgeLiteratureReporterPromptTest(unittest.TestCase):
             from theory_master.contracts import role_contract
             role_contract("reporter", phase="canvas_maintenance")
 
-    def test_goal_completion_card_retains_gate_and_not_extra_procedure(self):
+    def test_goal_completion_card_retains_gate_and_delivery_provenance_boundary(self):
         card = stage_card_text("judge", "goal_completion")
         for token in ("Final Gate", "research_plan.md", "exploration.canvas", "not_passed",
                       "Do not produce a next-step plan"):
             self.assertIn(token, card)
-        self.assertEqual(procedure_card_text("judge", "goal_completion"), "")
+        procedure = procedure_card_text("judge", "goal_completion")
+        for token in ("delivery_material_access", "frozen delivery revision", "same-invocation provenance",
+                      "not per-Finding support", "earlier not_passed rationale"):
+            self.assertIn(token, procedure)
+        self.assertIn("Do not output requirement ledgers", card)
 
     def test_reporter_identity_source_matches_actual_runtime_resource(self):
         packaged = identities_root() / "reporter.md"

@@ -910,6 +910,8 @@ class WorkflowStateMixin:
             default_scope=str(lock.get("scope") or ""),
             source_transport=(state.get("last_sdk_scholarly_retrieval") if role == "literature"
                               and isinstance(state.get("last_sdk_scholarly_retrieval"), dict) else None),
+            invocation_artifact_manifest=(state.get("last_invocation_artifact_manifest")
+                                          if role == "investigator" else None),
         )
         state["evidence_refs"] = list(dict.fromkeys([*(state.get("evidence_refs") or []), *refs]))
         self._last_evidence_registration_audit = list(registry.last_registration_audit)

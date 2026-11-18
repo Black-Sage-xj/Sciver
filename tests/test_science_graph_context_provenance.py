@@ -130,7 +130,7 @@ def test_compact_context_preserves_all_h_ids_and_cross_branch_detail(tmp_path: P
         )
         view = store.agent_view("H-0160")
         assert len(view["hypotheses"]) == 160
-        assert view["projection_version"] == "compact-frontier-v3"
+        assert view["projection_version"] == "compact-frontier-v4"
         assert view["lineage_omitted_count"] > 130
         assert len(view["current_frontiers"]) <= 2
         assert "H-0025" in {row[0] for row in view["hypotheses"]}

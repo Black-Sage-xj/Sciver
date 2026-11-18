@@ -78,11 +78,14 @@ def test_lock_persists_roles_and_draws_only_main_in_both_views(tmp_path: Path):
         exported = canvas_projection(store)
     observed = _sqlite_graph_projection(tmp_path)
     for view in [exported, observed]:
-        edges = [(e["fromNode"], e["toNode"]) for e in view["edges"]]
+        edges = [(e["fromNode"], e["toNode"]) for e in view["edges"]
+                 if e.get("edge_type") != "research_source"]
         assert edges == [("H-0001", "H-0002"), ("H-0002", "H-0003")]
         text = next(n["text"] for n in view["nodes"] if n["id"] == "H-0003")
         assert "Main（分支连线）：H-0002" in text
         assert "其它（仅追溯）：H-0001" in text
+    assert [(e["fromNode"], e["toNode"]) for e in observed["edges"]
+            if e.get("edge_type") == "research_source"] == [("H-0001", "H-0003")]
 
 
 def test_sqlite_refuses_a_second_main(tmp_path):
@@ -108,6 +111,10 @@ def test_fake_workflow_preserves_main_and_other_through_qualification(tmp_path):
                 for candidate in output.get("candidates", []):
                     candidate["lineage_main_node_id"] = "H-0008"
                     candidate["lineage_other_node_ids"] = ["H-0007"]
+                    candidate["transition"]["source_contributions"] = {
+                        "H-0008": "Provides the main claim refined by this test.",
+                        "H-0007": "Provides the independent comparison combined with the main claim.",
+                    }
                 return tid, json.dumps(output)
             return tid, raw
 

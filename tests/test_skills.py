@@ -94,6 +94,20 @@ class LiteratureStartupCheckTest(unittest.TestCase):
 
 
 class SkillRegistryTest(unittest.TestCase):
+    def test_runtime_numerical_skill_checks_uncertainty_without_universal_statistics(self):
+        ref = resolve_skill("numerical-investigation")
+        expected = Path(__file__).resolve().parents[1] / "theory_master/resources/skills/numerical-investigation/SKILL.md"
+        self.assertEqual(ref.skill_md, expected)
+        loaded = loaded_skill_for_path("investigator", expected)
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded.skill_md, expected)
+        body = ref.skill_md.read_text(encoding="utf-8")
+        self.assertIn("不能只核对点估计或优化收敛", body)
+        self.assertIn("不要求统一校正公式、样本阈值或额外大规模模拟", body)
+        self.assertIn("拟合前明确的方法选择", body)
+        self.assertIn("后选的判断规则也不能追称", body)
+        self.assertNotIn("CR1", body)
+
     def test_every_listed_skill_exists(self):
         for role, names in ROLE_SKILLS.items():
             refs = role_skills(role)

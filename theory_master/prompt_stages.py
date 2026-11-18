@@ -34,7 +34,7 @@ STAGE_CONTEXT_FIELDS: dict[tuple[str, str], tuple[str, ...]] = {
         "repair_options",
     ),
     ("research_lead", "cycle_synthesis"): (
-        "active_hypothesis", "judge_decision", "scientific_access",
+        "active_hypothesis", "judge_decision", "previous_scientific_model", "scientific_access",
     ),
     ("research_lead", "frontier_maintenance"): (
         "goal", "research_contract", "final_gate", "scientific_model_summary",
@@ -74,7 +74,7 @@ STAGE_CONTEXT_FIELDS: dict[tuple[str, str], tuple[str, ...]] = {
         "prior_adjudicated_context",
     ),
     ("judge", "goal_completion"): (
-        "research_plan_access", "agent_graph", "agent_graph_reuse",
+        "research_plan_access", "agent_graph", "agent_graph_reuse", "delivery_material_access",
     ),
     ("reporter", "report"): (
         "hypothesis", "judge_decision", "scientific_synthesis",
@@ -508,7 +508,7 @@ def _cycle_synthesis_judge_view(value: Any) -> dict[str, Any]:
 
 
 def _cycle_synthesis_access(context: Mapping[str, Any]) -> dict[str, Any]:
-    """Stable navigation anchors; scientific content is opened by the Lead on demand."""
+    """Navigation for details beyond the directly supplied previous model."""
     manifest = context.get("evidence_manifest")
     manifest_path = manifest.get("path") if isinstance(manifest, dict) else None
     return {key: val for key, val in {
@@ -614,6 +614,7 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
         return {
             "active_hypothesis": _cycle_synthesis_hypothesis_view(context.get("active_hypothesis")),
             "judge_decision": _cycle_synthesis_judge_view(context.get("judge_decision")),
+            "previous_scientific_model": _model_summary(context.get("scientific_model")),
             "scientific_access": _cycle_synthesis_access(context),
         }
     if role == "research_lead" and stage == "frontier_maintenance":
@@ -714,6 +715,7 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
         plan_path = str(context.get("research_plan_path") or "").strip()
         return {key: value for key, value in {
             "research_plan_access": ({"path": plan_path} if plan_path else None),
+            "delivery_material_access": context.get("delivery_material_access"),
             **_graph_access(context),
         }.items() if value not in (None, "", [], {})}
     if role == "judge":
