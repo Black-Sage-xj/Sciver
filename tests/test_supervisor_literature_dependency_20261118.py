@@ -1,4 +1,4 @@
-"""Offline recovery of undelivered Literature; no scientific or model execution."""
+"""Offline recovery of failed role delivery; no scientific or model execution."""
 from __future__ import annotations
 
 import copy
@@ -45,8 +45,35 @@ def literature_dependency(tmp_path):
     return root, cycle, state
 
 
-def test_undelivered_literature_hands_off_without_paid_attention_review(literature_dependency):
+@pytest.fixture(params=["lead_literature_unavailable", "contract_repair_failed"])
+def delivery_dependency(request, literature_dependency):
     root, cycle, state = literature_dependency
+    if request.param == "contract_repair_failed":
+        state.update({
+            "phase": "judge:default:contract_repair_failed", "protocol_health": "violation",
+            "hypothesis_lock": {"status": "locked", "id": "H-frozen"},
+            "judge_verdict": None,
+            "role_outputs": {"research_lead": {"status": "committed"}},
+            "attention": {
+                "code": "contract_repair_failed",
+                "reason": "The judge:default output still violated its contract after bounded repair.",
+            },
+            "recovery": {
+                "action": "contract_repair_failed", "invocation_id": "INV-failed",
+                "role": "judge", "stage": "default", "thread_id": "failed-judge-thread",
+            },
+        })
+        state.pop("lead_literature_detours")
+        write_json(cycle / "checkpoints/000001-lead.json", {
+            "cycle_id": "2", "phase": "investigator:completed",
+            "hypothesis_lock": state["hypothesis_lock"],
+        })
+        write_json(cycle / "research_state.json", state)
+    return root, cycle, state
+
+
+def test_failed_delivery_hands_off_without_paid_attention_review(delivery_dependency):
+    root, cycle, state = delivery_dependency
     original = copy.deepcopy(state)
     backend = MagicMock()
     with patch.dict("os.environ", {KEY: "1"}):
@@ -69,10 +96,13 @@ def test_undelivered_literature_hands_off_without_paid_attention_review(literatu
     assert route["owner"] == "supervisor_runtime"
     assert supervisor._exit_disposition(root) == "failed"
     assert engineering_skill_eligible(state, result)
+    if state["attention"]["code"] == "contract_repair_failed":
+        assert "Judge verdict" in result["reason"]
+        assert "Protocol/contract violation" in resume_blocker(state)
 
 
-def test_real_handler_records_engineering_dependency_without_repeating_paid_turn(literature_dependency):
-    root, cycle, state = literature_dependency
+def test_real_handler_records_engineering_dependency_without_repeating_paid_turn(delivery_dependency):
+    root, cycle, state = delivery_dependency
     original = copy.deepcopy(state)
     backend = MagicMock()
     backend.invoke_runtime_review.return_value = ("fake-runtime-review", json.dumps({
@@ -94,7 +124,12 @@ def test_real_handler_records_engineering_dependency_without_repeating_paid_turn
         # owner and persistence. Only model/engineering execution are fake.
         assert not supervisor._handle_failed_state(root, repair_enabled=True)
         assert not supervisor._handle_failed_state(root, repair_enabled=True)
-    backend.invoke_runtime_review.assert_called_once()
+    if state["attention"]["code"] == "contract_repair_failed":
+        # The protocol violation is a deterministic plain-resume blocker;
+        # engineering still owns diagnosis without a resume-only model turn.
+        backend.invoke_runtime_review.assert_not_called()
+    else:
+        backend.invoke_runtime_review.assert_called_once()
     engineering.assert_called_once()
     job = jobs.read_job(cycle)
     assert job["status"] == "waiting" and job["dependency_wait"]
@@ -189,23 +224,29 @@ def test_scientific_budget_and_unknown_attention_still_stop(literature_dependenc
     assert supervisor._exit_disposition(root) == "terminal"
 
 
-@pytest.mark.parametrize("guard", [
-    {"recovery": {"action": "pause"}}, {"recovery": {"action": "interrupt"}},
-    {"abandoned_cycle": True}, {"resumable": False},
-    {"protocol_health": "violation"}, {"investigator_budget": {"exhausted": True}},
-    {"investigator_budget": {"rejected": True}},
-    {"last_safe_checkpoint": None, "role_outputs": {}},
+@pytest.mark.parametrize("guard,reason", [
+    ({"recovery": {"action": "pause"}}, "Operator pause"),
+    ({"recovery": {"action": "interrupt"}}, "Operator pause"),
+    ({"abandoned_cycle": True}, "Cycle was abandoned"),
+    ({"resumable": False}, "not resumable"),
+    ({"protocol_health": "violation"}, "Protocol/contract violation"),
+    ({"investigator_budget": {"exhausted": True}}, "Investigator budget guard"),
+    ({"investigator_budget": {"rejected": True}}, "Investigator budget guard"),
+    ({"last_safe_checkpoint": None, "role_outputs": {}}, "No existing safe checkpoint"),
 ])
-def test_literature_owner_does_not_waive_resume_guards(literature_dependency, guard):
-    _, _, state = literature_dependency
+def test_delivery_owner_does_not_waive_resume_guards(delivery_dependency, guard, reason):
+    _, cycle, state = delivery_dependency
+    # Isolate each guard from the contract fixture's original protocol blocker.
+    # The untouched failure's violation is checked by the handoff test above.
+    state["protocol_health"] = "valid"
     state.update(guard)
-    assert resume_blocker(state) is not None
+    assert reason in resume_blocker(state)
     if guard.get("recovery") or guard.get("abandoned_cycle"):
-        assert not jobs.due(literature_dependency[1], state)
+        assert not jobs.due(cycle, state)
 
 
-def test_supervisor_off_does_not_start_literature_recovery(literature_dependency):
-    root, cycle, _ = literature_dependency
+def test_supervisor_off_does_not_start_delivery_recovery(delivery_dependency):
+    root, cycle, _ = delivery_dependency
     stop = MagicMock()
     stop.is_set.return_value = False
     with patch.dict("os.environ", {KEY: "0"}), \

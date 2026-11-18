@@ -285,7 +285,7 @@ MINIMAL_LITERATURE_NOVELTY_SCHEMA = {
 }
 
 MINIMAL_JUDGE_SCHEMA = {
-    "verdict": "supported|rejected|milestone_advanced|open for terminal; null only when requesting one bounded rework",
+    "verdict": "supported|rejected|milestone_advanced|open|null",
     "rationale": "scientific evaluation of the supplied Investigation Result against the frozen decisive test",
     "objection": {
         "requested_resolution": "required only for verdict=null: smallest new discriminating scientific result needed",
@@ -317,7 +317,12 @@ INVESTIGATOR_FINDINGS_PROMPT_NOTE = (
     "independent attestation. Use only the schema fields."
 )
 
-JUDGE_INVESTIGATION_RESULT_PROMPT_NOTE = "Exclusive union: terminal verdicts omit objection; verdict=null requires exactly one objection containing only requested_resolution and boolean needs_external_scholarship."
+JUDGE_INVESTIGATION_RESULT_PROMPT_NOTE = (
+    'Exclusive union: terminal verdicts omit objection; verdict=null requires exactly one objection '
+    'containing only requested_resolution and boolean needs_external_scholarship. '
+    'Terminal verdicts are the exact JSON strings "supported", "rejected", '
+    '"milestone_advanced", or "open". JSON null requests one bounded rework.'
+)
 
 def _reject_candidate_workflow_marker(text: Any, label: str) -> None:
     value = str(text or "").strip()
@@ -864,7 +869,11 @@ def _minimal_literature_structure(output: dict[str, Any], context: Mapping[str, 
 def _minimal_judge_structure(output: dict[str, Any], context: Mapping[str, Any]) -> None:
     verdict = output.get("verdict")
     if verdict not in TERMINAL_BRANCH_VERDICTS | {None, "null"}:
-        raise ValueError("judge verdict is invalid")
+        raise ValueError(
+            "judge verdict is invalid; use an exact terminal JSON string from "
+            + json.dumps(sorted(TERMINAL_BRANCH_VERDICTS))
+            + ", or JSON null when requesting one bounded rework"
+        )
     _text(output.get("rationale"), "judge rationale")
     forbidden = {
         "objections", "evidence_assessments", "assessment_state", "missing_evidence", "rework_plan",

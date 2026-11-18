@@ -42,6 +42,8 @@ Worker FAILED / 白名单工程依赖 NEEDS_ATTENTION
 
 `lead_literature_unavailable` 表示 Lead 已授权的检索没有交付结果，属于上述工程依赖白名单。Attention 阶段确定性记录 `hold` 并交回运行恢复 owner，不调用只能选择 `hold` 的模型审查。即使 Runner 正常退出 0，管理进程仍进入持久恢复循环：诊断、工程交接或带依赖的 `RECOVERY_WAIT`，由 SDK 安全恢复同一请求。这个分类不授予额外科学 Literature detour、替换来源或修改 Lead 决策的权限。`lead_literature_detour_exhausted`、未知 Attention、真实科学停止和预算停止不因此获得自动恢复权限；Supervisor 关闭、用户暂停/终止和既有恢复守卫仍然有效。
 
+`contract_repair_failed` 同样属于工程交付白名单：角色输出在有界修复后仍未满足合同，Attention 确定性交接工程诊断并持续持有恢复责任。`protocol_health=violation` 保持生效，禁止未经独立修复验证的 plain resume；允许记录合同实现、准备上下文或依赖缺口，不能修改 Judge 科学裁决、冻结假设、证据或科研预算来消除故障。合同缺口尚未解决时持久等待，不把这次交付失败转为科学停止或伪造有效角色输出。
+
 ## 不可逾越的边界
 
 - 不擅自恢复用户主动暂停/终止的任务，不在 Goal Completion 后重新开科研 Cycle。

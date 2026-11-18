@@ -24,6 +24,9 @@ OPERATIONAL_ATTENTION = frozenset({
     # dependency is repaired or waiting is recorded; this grants no extra
     # scientific detour and does not include lead_literature_detour_exhausted.
     'lead_literature_unavailable',
+    # Bounded output-contract delivery failed. The protocol guard remains in
+    # force; ownership grants engineering diagnosis, never a scientific verdict.
+    'contract_repair_failed',
 })
 RETRY_WINDOW = 3
 BASE_DELAY = 300
