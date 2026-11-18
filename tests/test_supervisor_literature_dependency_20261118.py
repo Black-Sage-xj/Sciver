@@ -142,7 +142,7 @@ def test_real_handler_records_engineering_dependency_without_repeating_paid_turn
     assert handoff["recovery_job"]["dependency_wait"]
 
 
-def test_rc_zero_keeps_owner_waiting_then_resumes_same_cycle(literature_dependency):
+def test_startup_keeps_owner_waiting_then_resumes_same_cycle(literature_dependency):
     root, cycle, state = literature_dependency
     original = (cycle / "research_state.json").read_bytes()
     stop = MagicMock()
@@ -200,8 +200,8 @@ def test_rc_zero_keeps_owner_waiting_then_resumes_same_cycle(literature_dependen
         assert supervisor.main([
             "--task-root", str(root), "--operation", "run", "--launch-id", "offline",
         ]) == 0
-    assert spawn.call_count == 2 and reviews == [1, 2]
-    assert [call.args[1] for call in command.call_args_list] == ["run", "resume"]
+    assert spawn.call_count == 1 and reviews == [1, 2]
+    assert [call.args[1] for call in command.call_args_list] == ["resume"]
     waits = [call.kwargs for call in registry.call_args_list if call.kwargs.get("state") == "RECOVERY_WAIT"]
     assert len(waits) == 1
     assert waits[0]["recovery_job"]["recovery_owner"] == "sdk:runtime_supervisor"

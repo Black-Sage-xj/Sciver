@@ -760,6 +760,22 @@ def main(argv: list[str] | None = None) -> int:
     operation = args.operation if supervisor_attempt == 1 else "resume"; recoveries = 0; log_path = root / ".theory-master" / "runner.log"
     pending_runtime_verification: tuple[str, str] | None = None
     try:
+        # A restarted owner must honor the persisted failure before its first
+        # Runner launch, just as it does after a child exits. Reloading Python
+        # modules alone is neither a repair receipt nor permission to retry.
+        registry = load_registry(root)
+        _, initial_state, _ = _latest_scientific_state(root)
+        from .supervisor_recovery import operational_incident
+        if (not process_identity_alive(registry.get("runner_pid"), registry.get("runner_start_ticks"))
+                and operational_incident(initial_state)):
+            if not _recover_failed_state(
+                    root, repair_enabled=_error_repair_enabled(args.error_repair, root), stop=stop):
+                update_registry(root, state="FAILED", heartbeat_at=_stamp())
+                _notify_supervisor_terminal(root)
+                return 0
+            pending_runtime_verification = _runtime_supervisor_receipt(root)
+            operation = "resume"
+            update_registry(root, state="RECOVERING", heartbeat_at=_stamp())
         while True:
             registry = load_registry(root); old_pid = registry.get("runner_pid"); old_ticks = registry.get("runner_start_ticks")
             if process_identity_alive(old_pid, old_ticks):
