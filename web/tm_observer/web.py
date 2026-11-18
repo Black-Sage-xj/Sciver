@@ -51,6 +51,7 @@ from .research_explorer_ui import explorer_html
 from .research_chat import ResearchChatError, snapshot as research_chat_snapshot
 from .navigation_model import task_console_url
 from .workspace_scope import WorkspaceScopeError, host_route, scoped_state, task_in_workspace, workspace_path
+from .login_ui import login_html
 
 
 from .dashboard_ui import STYLE, THEME_BOOTSTRAP_SCRIPT, dashboard_shell
@@ -122,26 +123,6 @@ def placeholder_html(title: str, phase: str, description: str) -> str:
         f"Sciver Observatory — {title}",
         f"<h1>{html.escape(title)}</h1><div class='card'><strong>{html.escape(phase)}</strong><p>{html.escape(description)}</p></div>",
     )
-
-
-def login_html(error: str | None = None) -> str:
-    message = ""
-    if error:
-        message = f"<div class='card warning'>{html.escape(error)}</div>"
-    return f"""<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg">
-{THEME_BOOTSTRAP_SCRIPT}<title>Sciver Observatory Login</title>{STYLE}</head>
-<body>
-<h1>Sciver Observatory</h1>
-<p class="small">Runtime/scientific observability plus formal engineering change requests. Sign in to continue.</p>
-{message}
-<form method="post" action="/login" class="card" style="max-width:420px">
-  <label>Username<br><input name="username" autocomplete="username" required style="width:100%;box-sizing:border-box;padding:10px;margin:6px 0 14px"></label>
-  <label>Password<br><input name="password" type="password" autocomplete="current-password" required style="width:100%;box-sizing:border-box;padding:10px;margin:6px 0 14px"></label>
-  <button type="submit" style="padding:10px 18px">Sign in</button>
-</form>
-</body></html>"""
 
 
 def _static_warning(manager: StaticViewManager | None) -> str:
