@@ -264,11 +264,18 @@ TASK_ROLE_OVERRIDES_NAME = "web-role-routes.json"
 
 
 def task_route_catalog() -> list[dict[str, str]]:
-    """List only model/provider pairs explicitly supported by a provider map.
+    """List account routes and explicitly registered optional profile routes.
 
-    A scientific model preset is not proof that a provider can serve that model;
-    keep unsupported pairs out of task-local route controls and fail closed.
+    Optional routes require both a profile and operator-owned registration.
+    Credentials are resolved only when a model request is prepared.
     """
+    from .provider_extensions import configured_optional_provider_ids
+    try:
+        optional = configured_optional_provider_ids()
+    except (OSError, RuntimeError, UnicodeError, tomllib.TOMLDecodeError):
+        # Invalid optional configuration cannot disable account-backed routes.
+        optional = frozenset()
+    configured = ACCOUNT_PROVIDERS | optional
     variants = {
         (route.model, route.provider)
         for group in MODEL_PROVIDER_MAP.values()
@@ -277,7 +284,7 @@ def task_route_catalog() -> list[dict[str, str]]:
     variants.update((route.model, route.provider)
                     for profile in MODEL_PROFILES
                     for route in build_model_profile(profile).values()
-                    if route.provider in ACCOUNT_PROVIDERS)
+                    if route.provider in configured)
     return [{"model": model, "provider": provider} for model, provider in sorted(variants)]
 
 

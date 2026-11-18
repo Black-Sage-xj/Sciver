@@ -41,6 +41,18 @@ def _private_toml(path: Path) -> dict:
     return tomllib.loads(path.read_text(encoding="utf-8"))
 
 
+def configured_optional_provider_ids() -> frozenset[str]:
+    """Read registered IDs without resolving credentials or provider sources."""
+    registry = _private_toml(local_provider_config()).get("model_providers", {})
+    if not isinstance(registry, dict):
+        raise RuntimeError("invalid optional provider registry")
+    for provider, spec in registry.items():
+        if (not isinstance(provider, str) or not _ID.fullmatch(provider)
+                or not isinstance(spec, dict) or set(spec) - _ALLOWED):
+            raise RuntimeError("invalid optional provider definition")
+    return frozenset(registry)
+
+
 def optional_provider_overrides(
     providers: set[str], stored: Mapping[str, str], *, runtime_home: Path
 ) -> tuple[list[str], dict[str, str]]:

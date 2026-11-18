@@ -33,6 +33,16 @@ Both files must be regular owner-owned, mode-`0600` files. The SDK passes
 tokens only in the runtime environment, never in logged SDK overrides.
 An unknown provider is rejected until explicitly registered.
 
+Task and Worker route controls also accept model/provider pairs from a local
+profile when that provider is explicitly registered in the protected registry.
+Listing these routes reads registry metadata only: it does not resolve API
+keys, read provider source files, contact the provider or send model requests.
+A profile alone cannot register a provider. Existing saved overrides use the
+same validation as newly selected routes.
+An unreadable, unsafe or malformed optional registry excludes optional routes
+from these controls while account-backed routes remain available. Direct
+registry inspection and model dispatch retain their strict configuration checks.
+
 **Quota exhaustion is provider-sticky.** Exhaustion of all Codex accounts
 pauses the corresponding scientific work until Codex quota is available
 again. It is not permission to rotate to any other provider. User-requested

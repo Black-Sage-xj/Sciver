@@ -136,6 +136,7 @@ MODULE_CATEGORIES: dict[str, str] = {
     "test_output_normalization": "regression",
     "test_pricing": "ui",
     "test_provider_environment_boundary": "architecture",
+    "test_optional_provider_catalog": "invariant",
     "test_provider_quota_pause": "regression",
     "test_read_trace": "invariant",
     "test_recovery_resume": "invariant",
