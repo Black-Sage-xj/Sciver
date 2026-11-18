@@ -1648,21 +1648,24 @@ function transitionSourcesHtml(sources){
 }
 function researchTransitionHtml(node){
   const transition=researchTransition(node.semantic);
+  const sources=transition?.sources.length?transition.sources:
+    index.edges.filter(edge=>edge.toNode===node.id&&isScientificEdge(edge))
+      .map(edge=>index.nodes.find(source=>source.id===edge.fromNode))
+      .filter(source=>source&&['Hypothesis','Decision'].includes(knownType(source)))
+      .filter((source,position,items)=>items.findIndex(item=>item.id===source.id)===position)
+      .map(source=>({hypothesis_id:source.id,title:source.semantic?.title||source.label}));
+  // A source-free initial hypothesis has no predecessor rationale to display.
+  if(!sources.length)return '';
   let content;
   if(transition){
-    const fields=[['prior_gap',transition.sources.length?'前序留下的问题':'从什么问题出发'],
+    const fields=[['prior_gap','前序留下的问题'],
       ['current_change','这一步改变什么'],['why_now','为什么现在研究']];
-    content=transitionSourcesHtml(transition.sources)+
+    content=transitionSourcesHtml(sources)+
       '<dl class="ex-transition-facts">'+fields.map(([key,label])=>'<div><dt>'+label+
         '</dt><dd class="ex-md">'+mdHtml(transition[key],null)+'</dd></div>').join('')+'</dl>'+
       (transition.goal_advance?'<details class="ex-transition-goal"><summary>推进目标</summary><div class="ex-md">'+
         mdHtml(transition.goal_advance,null)+'</div></details>':'');
   }else{
-    const sources=index.edges.filter(edge=>edge.toNode===node.id&&isScientificEdge(edge))
-      .map(edge=>index.nodes.find(source=>source.id===edge.fromNode))
-      .filter(source=>source&&['Hypothesis','Decision'].includes(knownType(source)))
-      .filter((source,position,items)=>items.findIndex(item=>item.id===source.id)===position)
-      .map(source=>({hypothesis_id:source.id,title:source.semantic?.title||source.label}));
     content='<p class="ex-reader-empty">承接理由未记录。</p>'+transitionSourcesHtml(sources);
   }
   return '<section class="ex-research-transition" aria-label="为什么研究到这里">'+

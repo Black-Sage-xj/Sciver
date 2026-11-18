@@ -132,8 +132,23 @@ def test_reader_shows_frozen_transition_before_claim_and_source_clicks_navigate(
   elements['ex-reader'].listeners.click({target:{closest:selector=>selector==='[data-ref]'?sourceLink:null}});
   await tick();await tick();
   assert.equal(history.state.tmExplorerView.selected.id,'A');
-  assert(elements['ex-reader'].innerHTML.includes('从什么问题出发'),'explicit source-free record is a root');
-  assert(elements['ex-reader'].innerHTML.includes('Start from interval-dependent covariance'));
+  assert(!elements['ex-reader'].innerHTML.includes('ex-research-transition'),
+    'an explicit source-free record does not give the initial hypothesis a predecessor rationale');
+  assert(!elements['ex-reader'].innerHTML.includes('Start from interval-dependent covariance'));
+  assert.equal(JSON.stringify(nodes),before,'hidden root motivation remains in the scientific record');
+  // Another source-free root has no transition record and is not first in node order.
+  latestGraph.events['node:click']({target:{id:'B'}});await tick();await tick();
+  assert(!elements['ex-reader'].innerHTML.includes('ex-research-transition'));
+  assert(!elements['ex-reader'].innerHTML.includes('承接理由未记录。'));
+  // Reference links, and a scientific-looking edge from an external node, do not make it a successor.
+  nodes[4].semantic={type:'External',title:'Background reference'};
+  edges.push({id:'A-ref-B',fromNode:'A',toNode:'B',edge_type:'external_reference'},
+    {id:'C-source-B',fromNode:'C',toNode:'B',type:'research_source'},
+    {id:'X-context-B',fromNode:'X',toNode:'B'});
+  latestGraph.events['node:click']({target:{id:'B'}});await tick();await tick();
+  assert(!elements['ex-reader'].innerHTML.includes('ex-research-transition'),
+    'only scientific predecessor identities create a transition section');
+  edges.splice(-3);
   // A legacy H keeps real predecessor links but receives no invented cause.
   delete nodes[2].semantic.research_transition;
   latestGraph.events['node:click']({target:{id:'C'}});await tick();await tick();
