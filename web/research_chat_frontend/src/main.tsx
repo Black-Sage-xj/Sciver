@@ -20,6 +20,7 @@ import {
 } from '@assistant-ui/react';
 import ReactMarkdown from 'react-markdown';
 import { RichMarkdown } from './rich-content';
+import { SelectionQuotePopover } from './selection-quote';
 import { AttachmentPreview, DraftAttachments, MessageAttachments, attachmentAccept, useAttachments } from './attachments';
 import { QuestionPanel, RunActivity, RunEvents, RunMetadata } from './activity-ui';
 import { downloadText, formatLocalTime, matchingMessageIds, messageMarkdown, quotedMessage, type ChatAttachment, type ChatBranch, type FeatureMessage, type QueueEntry, type RunDetails, type RunQuestion } from './chat-features';
@@ -133,13 +134,8 @@ function ChatMessageView() {
   const id = useAuiState((state) => state.message.id);
   const actions = useContext(ChatActionsContext);
   const message = actions.messages.find((item) => item.id === id);
-  const [selection, setSelection] = useState('');
   return (
-    <MessagePrimitive.Root className="tm-aui-message" data-chat-message-id={id} id={`message-${id}`}
-      onMouseUp={(event) => {
-        const selected = window.getSelection();
-        setSelection(selected?.anchorNode && event.currentTarget.contains(selected.anchorNode) ? selected.toString().trim() : '');
-      }}>
+    <MessagePrimitive.Root className="tm-aui-message" data-chat-message-id={id} id={`message-${id}`}>
       <MessagePrimitive.If user>
         <div className="tm-aui-user-row">
           <div className="tm-aui-user-bubble">
@@ -171,7 +167,6 @@ function ChatMessageView() {
           </ActionBarPrimitive.Root>
         </div>
       </MessagePrimitive.If>
-      {!isSupervisor && selection && <button className="sc-selection-quote" type="button" onClick={() => { actions.quote(selection); setSelection(''); window.getSelection()?.removeAllRanges(); }}>引用所选文字继续追问</button>}
     </MessagePrimitive.Root>
   );
 }
@@ -1026,6 +1021,7 @@ function App({ sessionId, mode }: { sessionId: string; mode: string }) {
         {error && <div className="tm-aui-error" role="alert">{error}<button type="button" className="sc-dismiss-error" aria-label="关闭错误提示" onClick={() => setError('')}>×</button></div>}
         {!isSupervisor && <AttachmentPreview attachment={attachments.preview} onClose={() => attachments.setPreview(null)} />}
       </div>
+      {!isSupervisor && <SelectionQuotePopover onQuote={quote} />}
       </ChatActionsContext.Provider>
     </AssistantRuntimeProvider>
   );

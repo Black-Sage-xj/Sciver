@@ -1,5 +1,5 @@
 /* One reading surface for the page and the embedded chat. Shells can override the tokens. */
-.tm-research-chat{
+.tm-research-chat,.sc-selection-popover{
   --sc-chat-bg:var(--chat-bg,#1b1b1b);
   --sc-chat-panel:var(--chat-panel,#292929);
   --sc-chat-input:var(--chat-input,#333333);
@@ -10,7 +10,7 @@
   --sc-chat-reading-width:940px;
   --sc-chat-hover:color-mix(in srgb,var(--sc-chat-text) 7%,transparent);
 }
-html[data-sciver-theme="white"] .tm-research-chat{
+html[data-sciver-theme="white"] :is(.tm-research-chat,.sc-selection-popover){
   --sc-chat-bg:var(--chat-bg,#fff);
   --sc-chat-panel:var(--chat-panel,#f7f7f7);
   --sc-chat-input:var(--chat-input,#f4f4f4);
