@@ -430,7 +430,10 @@ def _durable_recovery_status(run: dict[str, Any], folder: Path,
                 and str(worker.get('status') or '').upper() in LIVE_STATUSES):
             return None
     job = _read_small_json(folder / 'supervisor/recovery.json', 128_000)
-    failure = dict(scientific.get('recovery') or {})
+    recovery = scientific.get('recovery')
+    if not isinstance(recovery, dict):
+        return None
+    failure = dict(recovery)
     attention = scientific.get('attention') or {}
     if (isinstance(attention, dict) and attention.get('code') in OPERATIONAL_ATTENTION
             and not failure.get('message')):
