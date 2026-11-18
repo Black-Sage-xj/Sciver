@@ -152,9 +152,22 @@ def _evidence(cycle: Path, state: dict, engine: Path) -> tuple[dict, dict[str, s
         raise ValueError("invalid failure window")
     rows = [r for r in _rows(cycle / "runtime_events.jsonl", inputs)
             if start <= str(r.get("ts") or "") <= finish]
+    recovery = state["recovery"]
+
+    def original_failure_projection(row: dict) -> bool:
+        # Collector's final RUN_FAILED mirrors this exact semantic-closure
+        # exception. It is not a provider error; no other error is waived.
+        return (row.get("event") == "RUN_FAILED" and row.get("ts") == finish
+                and row.get("error") == recovery["message"] == ERROR
+                and row.get("error_kind") == recovery["kind"] == "ValueError"
+                and row.get("failure_category") == recovery["category"] == "runtime_validation"
+                and row.get("resumable") is state.get("resumable")
+                and all(row.get(key) is None for key in ("thread_id", "role", "agent")))
+
     if any((r.get("event") in {"LLM_FAILED", "LLM_TURN_FAILED"} or r.get("error"))
            and (r.get("thread_id") in (None, thread) or r.get("role") == "investigator"
-                or r.get("agent") == "investigator") for r in rows):
+                or r.get("agent") == "investigator")
+           and not original_failure_projection(r) for r in rows):
         raise ValueError("provider error invalidates the success-return proof")
     setups = [r for r in rows if r.get("event") == "AGENT_INPUT"
               and r.get("role") == "investigator" and r.get("stage") == "investigate"

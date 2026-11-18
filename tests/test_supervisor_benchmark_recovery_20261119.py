@@ -93,6 +93,8 @@ def stopped(tmp_path):
          "input_kind": "native_goal_setup_turn", "content": setup},
         {"ts": start, "event": "AGENT_INPUT", "role": "investigator", "stage": "investigate",
          "input_kind": "native_goal_objective", "content": objective},
+        {"ts": finish, "event": "RUN_FAILED", "error": recovery.ERROR, "error_kind": "ValueError",
+         "failure_category": "runtime_validation", "resumable": True},
     ])
     trace = "Traceback (most recent call last):\n" + "".join(
         f'  File "{engine / name}", line 1, in original\n'
@@ -125,12 +127,22 @@ def test_receipt_proves_only_preserved_delivery_and_alias_repair(stopped):
     assert not (cycle / "evidence").exists()
 
 
+def test_exact_original_run_failed_projection_is_not_a_provider_error(stopped):
+    _,cycle,_=stopped
+    projection=json.loads((cycle / 'runtime_events.jsonl').read_text().splitlines()[-1])
+    assert projection == {'ts':'2026-11-19T02:39:30+08:00','event':'RUN_FAILED',
+                          'error':recovery.ERROR,'error_kind':'ValueError',
+                          'failure_category':'runtime_validation','resumable':True}
+    assert validate(stopped) is not None
+
+
 @pytest.mark.parametrize("mutation", [
     "phase", "thread", "active_invocation", "raw", "agent_output", "artifact", "manifest",
     "foreign_setup", "objective", "source_head", "source_hash", "trace", "no_benchmark",
     "foreign_config", "declaration_missing", "declaration_symlink", "traversal", "provider_error",
     "pause", "pending_pause", "budget", "protocol", "verdict", "committed", "duplicate_setup", "later_invocation",
     "corrupt_native", "contract", "oversize", "unscoped_provider_error",
+    "projection_message", "projection_time", "projection_event",
 ])
 def test_historical_proof_fails_closed(stopped, mutation):
     _, cycle, state = stopped
@@ -168,6 +180,12 @@ def test_historical_proof_fails_closed(stopped, mutation):
     elif mutation == "unscoped_provider_error":
         p=cycle / 'runtime_events.jsonl';data=[json.loads(line) for line in p.read_text().splitlines()]
         data.append({'ts':data[0]['ts'],'event':'LLM_FAILED','error':'unscoped provider failure'});rows(p,data)
+    elif mutation.startswith('projection_'):
+        p=cycle / 'runtime_events.jsonl';data=[json.loads(line) for line in p.read_text().splitlines()]
+        if mutation=='projection_message':data[-1]['error']='another unknown error'
+        elif mutation=='projection_time':data[-1]['ts']=data[0]['ts']
+        else:data[-1]['event']='LLM_FAILED'
+        rows(p,data)
     elif mutation == "pending_pause":write_json(cycle / 'recovery_control.json',{'action':'pause'})
     elif mutation == "budget":state['investigator_budget']={'exhausted':True}
     elif mutation == "protocol":state['protocol_health']='violation'
