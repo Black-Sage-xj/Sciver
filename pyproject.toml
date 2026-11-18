@@ -18,8 +18,9 @@ tm = "theory_master.__main__:main"
 tm-audit = "theory_master.audit_queue:main"
 
 [project.optional-dependencies]
-sdk = ["openai-codex>=0.1", "mcp>=1.0"]
-test = ["pytest>=8.0", "numpy>=1.24", "beautifulsoup4>=4.12", "textual>=0.50", "openai-codex>=0.1", "setuptools>=77", "wheel"]
+# Private Goal/Turn capabilities are tested only against this SDK release.
+sdk = ["openai-codex==0.155.1", "mcp>=1.0"]
+test = ["pytest>=8.0", "numpy>=1.24", "beautifulsoup4>=4.12", "textual>=0.50", "openai-codex==0.155.1", "setuptools>=77", "wheel"]
 tui = ["textual"]
 jev = ["typesafe-sdk>=0.7"]
 

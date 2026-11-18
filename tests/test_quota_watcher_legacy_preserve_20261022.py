@@ -41,14 +41,14 @@ def test_watcher_unblocks_terminated_quota_goal_without_cross_account_move(tmp_p
     }
     with (patch("theory_master.quota_auto_adjust.quota_auto_adjust_enabled",
                 side_effect=[True, False]),
-          patch.object(runtime, "read_worker", return_value=worker),
-          patch.object(runtime, "_read_json", return_value=state),
-          patch.object(runtime, "process_identity_alive", return_value=False),
+          patch('theory_master.worker_store.read_worker', return_value=worker),
+          patch('theory_master.multi_worker._read_json', return_value=state),
+          patch('theory_master.runtime_manager.process_identity_alive', return_value=False),
           patch("theory_master.codex_accounts.account_rate_limits",
                 side_effect=lambda a: records[a]),
           patch("theory_master.quota_provider_fallback.investigator_native_goal_in_flight",
                 return_value=False),
-          patch.object(runtime, "worker_action", return_value={"status": "STARTING"}) as resume,
+          patch('theory_master.worker_actions.worker_action', return_value={"status": "STARTING"}) as resume,
           patch("theory_master.worker_runtime.time.sleep")):
         assert runtime.watch_worker_quota(spec, wid) == 0
     resume.assert_called_once_with(
@@ -68,14 +68,14 @@ def test_watcher_does_not_transfer_unfinished_goal(tmp_path):
     spec = SimpleNamespace(research_root=root)
     with (patch("theory_master.quota_auto_adjust.quota_auto_adjust_enabled",
                 side_effect=[True, False]),
-          patch.object(runtime, "read_worker", return_value=worker),
-          patch.object(runtime, "_read_json", return_value=state),
-          patch.object(runtime, "process_identity_alive", return_value=False),
+          patch('theory_master.worker_store.read_worker', return_value=worker),
+          patch('theory_master.multi_worker._read_json', return_value=state),
+          patch('theory_master.runtime_manager.process_identity_alive', return_value=False),
           patch("theory_master.codex_accounts.account_rate_limits",
                 side_effect=lambda account: {"ok": True, "ordinary_usage_allowed": account == "1"}),
           patch("theory_master.quota_provider_fallback.investigator_native_goal_in_flight",
                 return_value=True),
-          patch.object(runtime, "worker_action") as resume,
+          patch('theory_master.worker_actions.worker_action') as resume,
           patch("theory_master.worker_runtime.time.sleep")):
         assert runtime.watch_worker_quota(spec, wid) == 0
     resume.assert_not_called()

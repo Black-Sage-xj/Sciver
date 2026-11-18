@@ -24,7 +24,7 @@ def test_each_worker_owns_its_two_cycle_allowance(tmp_path, monkeypatch, prior, 
     spec = SimpleNamespace(research_root=root, max_cycles=2)
     from theory_master import specification, worker_supervisor_dispatch
     monkeypatch.setattr(specification.TaskSpec, 'from_task_root', classmethod(lambda cls, path: spec))
-    monkeypatch.setattr(worker_runtime, '_master_complete', lambda root, **kw: False)
+    monkeypatch.setattr('theory_master.worker_store._master_complete', lambda root, **kw: False)
     monkeypatch.setattr(worker_supervisor_dispatch, 'dispatch_pending', lambda root: False)
     monkeypatch.setattr(worker_runtime.threading.Event, 'wait', lambda self, n: False)
     launched = []
@@ -32,7 +32,7 @@ def test_each_worker_owns_its_two_cycle_allowance(tmp_path, monkeypatch, prior, 
         chosen = sorted(eligible_worker_ids)
         launched.extend(chosen)
         return {'started': [{'worker_id': name} for name in chosen]}
-    monkeypatch.setattr(worker_runtime, 'schedule_once', fake_dispatch)
+    monkeypatch.setattr('theory_master.worker_scheduler.schedule_once', fake_dispatch)
     assert worker_runtime.scheduler_daemon(spec, 2) == 0
     assert len(launched) == expected
     data = json.loads(meta.read_text())
@@ -67,23 +67,23 @@ def test_reallocated_worker_keeps_its_pinned_account(tmp_path, monkeypatch):
         def __init__(self, *args): pass
         def claim_cycle(self, worker, **kwargs):
             return {'cycle_id':None,'hypothesis_id':None,'claim_id':f'claim-{worker}','fencing_epoch':1}
-    monkeypatch.setattr(worker_runtime,'CycleClaims',FakeClaims)
-    monkeypatch.setattr(worker_runtime,'runtime_health',lambda root:{'active':False})
-    monkeypatch.setattr(worker_runtime,'_master_complete',lambda root, **kw:False)
-    monkeypatch.setattr(worker_runtime,'_living_workers',lambda root:[])
-    monkeypatch.setattr(worker_runtime,'_route_capacity',lambda spec,slots:(2,['1','2']))
-    monkeypatch.setattr(worker_runtime,'_share_enabled',lambda root:True)
-    monkeypatch.setattr(worker_runtime,'list_workers',lambda root:existing)
-    monkeypatch.setattr(worker_runtime,'read_worker',lambda root,worker:next(w for w in existing if w['worker_id']==worker))
-    monkeypatch.setattr(worker_runtime,'save_worker',lambda *a,**kw:None)
-    monkeypatch.setattr(worker_runtime,'_task_scoped_process_env',lambda root:{})
-    monkeypatch.setattr(worker_runtime,'_pinned_codex_home',lambda root,worker,acct:tmp_path)
-    monkeypatch.setattr(worker_runtime,'process_start_ticks',lambda pid:1)
-    monkeypatch.setattr(worker_runtime,'_shared_account_candidate',lambda accounts,active,started:sorted(accounts)[-1] if accounts else None)
+    monkeypatch.setattr('theory_master.multi_worker.CycleClaims',FakeClaims)
+    monkeypatch.setattr('theory_master.runtime_manager.runtime_health',lambda root:{'active':False})
+    monkeypatch.setattr('theory_master.worker_store._master_complete',lambda root, **kw:False)
+    monkeypatch.setattr('theory_master.worker_store._living_workers',lambda root:[])
+    monkeypatch.setattr('theory_master.worker_routes._route_capacity',lambda spec,slots:(2,['1','2']))
+    monkeypatch.setattr('theory_master.worker_routes._share_enabled',lambda root:True)
+    monkeypatch.setattr('theory_master.worker_store.list_workers',lambda root:existing)
+    monkeypatch.setattr('theory_master.worker_store.read_worker',lambda root,worker:next(w for w in existing if w['worker_id']==worker))
+    monkeypatch.setattr('theory_master.worker_store.save_worker',lambda *a,**kw:None)
+    monkeypatch.setattr('theory_master.worker_launch._task_scoped_process_env',lambda root:{})
+    monkeypatch.setattr('theory_master.worker_routes._pinned_codex_home',lambda root,worker,acct:tmp_path)
+    monkeypatch.setattr('theory_master.runtime_manager.process_start_ticks',lambda pid:1)
+    monkeypatch.setattr('theory_master.worker_routes._shared_account_candidate',lambda accounts,active,started:sorted(accounts)[-1] if accounts else None)
     spawned=[]
     def fake_launch(args, **kwargs):
         spawned.append(args)
-    monkeypatch.setattr(worker_runtime, '_launch_detached_service', fake_launch)
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service', fake_launch)
     outcome=worker_runtime.schedule_once(spec,resource_slots=2,
                     eligible_worker_ids=frozenset({'worker-1','worker-2'}))
     assert [(row['worker_id'],row['account']) for row in outcome['started']] == [
@@ -104,15 +104,13 @@ def test_increasing_per_worker_cap_preserves_existing_counts(tmp_path, monkeypat
     spec = SimpleNamespace(research_root=root, max_cycles=20)
     from theory_master import specification, worker_supervisor_dispatch
     monkeypatch.setattr(specification.TaskSpec, 'from_task_root', classmethod(lambda cls, path: spec))
-    monkeypatch.setattr(worker_runtime, '_master_complete', lambda root, **kw: False)
+    monkeypatch.setattr('theory_master.worker_store._master_complete', lambda root, **kw: False)
     monkeypatch.setattr(worker_supervisor_dispatch, 'dispatch_pending', lambda root: False)
     monkeypatch.setattr(worker_runtime.threading.Event, 'wait', lambda self, n: False)
-    monkeypatch.setattr(worker_runtime, 'SCHEDULER_NO_PROGRESS_GRACE_SECONDS', 0)
-    monkeypatch.setattr(worker_runtime, 'schedule_once', lambda *a, **kw: {'started': [], 'reason': 'no eligible idle Worker'})
+    monkeypatch.setattr('theory_master.worker_state.SCHEDULER_NO_PROGRESS_GRACE_SECONDS', 0)
+    monkeypatch.setattr('theory_master.worker_scheduler.schedule_once', lambda *a, **kw: {'started': [], 'reason': 'no eligible idle Worker'})
     assert worker_runtime.scheduler_daemon(spec, 2) == 2
     data = json.loads(meta.read_text())
     assert data['max_cycles_per_worker'] == 20
     assert data['cycles_started_by_worker'] == {'worker-1': 10, 'worker-2': 2}
     assert data['remaining_cycles_by_worker'] == {'worker-1': 10, 'worker-2': 18}
-
-

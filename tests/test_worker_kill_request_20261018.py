@@ -32,7 +32,7 @@ def _fixture(tmp_path: Path, monkeypatch):
         "status":"active","execution_active":True,
         "sdk_runtime_capabilities":{"abandon_cycle_v1":True}
     })
-    monkeypatch.setattr(wr,"process_identity_alive",lambda pid,ticks: pid==123456 and ticks==101)
+    monkeypatch.setattr('theory_master.runtime_manager.process_identity_alive',lambda pid,ticks: pid==123456 and ticks==101)
     spec=SimpleNamespace(research_root=root,branch_canvas=root/"canvas.json")
     return spec,root
 

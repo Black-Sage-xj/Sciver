@@ -70,7 +70,8 @@ class LeadHistoryQuestionScope(unittest.TestCase):
                 "one keyword miss or first page does not establish novelty",
                 "what old results already imply, the remaining scientific unknown",
                 "renaming, reparameterizing or changing targets/scope alone does not establish novelty",
-                "what outcomes change understanding",
+                "which new result would distinguish it from the closest live alternative",
+                "Explain the substantive change from prior claims and what could contradict it",
                 "Expose material unavailable history rather than claim novelty",
                 "Avoid umbrella programs, filler, preparation-only work and fragments that add no scientific information",
             ):
@@ -86,7 +87,11 @@ class LeadHistoryQuestionScope(unittest.TestCase):
             self.assertIn("Output contract:", prompt)
         self.assertIn("不得读取、解析或直接修改它", identity_block("research_lead"))
         rendered = stage_definition_text("research_lead", "frontier_proposal")
-        self.assertLess(len(rendered), 8500)
+        # Scientific scale is one discriminating claim, rather than an
+        # obsolete character ceiling that predates the source-bound feedback.
+        self.assertIn("Each Candidate is one Cycle-decidable proposition", rendered)
+        self.assertEqual(rendered.count("Current objective:"), 1)
+        self.assertEqual(rendered.count("Procedure for this stage only:"), 1)
 
 
 if __name__ == "__main__":

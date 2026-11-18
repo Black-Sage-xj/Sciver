@@ -37,10 +37,10 @@ def test_scheduler_repairs_only_dead_fenced_quota_watchers_and_backs_off(tmp_pat
     spec = SimpleNamespace(research_root=root)
     with (patch("theory_master.quota_auto_adjust.quota_auto_adjust_enabled",
                 return_value=True),
-          patch.object(wr, "list_workers", return_value=[worker]),
-          patch.object(wr, "_live_cycle_claims", return_value=[claim]),
-          patch.object(wr, "process_identity_alive", return_value=False),
-          patch.object(wr, "start_worker_quota_watch",
+          patch('theory_master.worker_store.list_workers', return_value=[worker]),
+          patch('theory_master.worker_store._live_cycle_claims', return_value=[claim]),
+          patch('theory_master.runtime_manager.process_identity_alive', return_value=False),
+          patch('theory_master.worker_quota.start_worker_quota_watch',
                        return_value={"status": "starting"}) as watch):
         first = wr._repair_missing_quota_watchers(spec)
         assert first == [{"worker_id": wid, "cycle": cycle,
@@ -75,12 +75,12 @@ def test_scheduler_never_repairs_unfenced_or_disabled_quota_wait(tmp_path):
     spec = SimpleNamespace(research_root=root)
     with (patch("theory_master.quota_auto_adjust.quota_auto_adjust_enabled",
                 return_value=True),
-          patch.object(wr, "list_workers", return_value=[worker]),
-          patch.object(wr, "_live_cycle_claims", return_value=[{
+          patch('theory_master.worker_store.list_workers', return_value=[worker]),
+          patch('theory_master.worker_store._live_cycle_claims', return_value=[{
               "worker_id": "worker-1", "claim_id": "different",
               "fencing_epoch": 9, "cycle_id": "185"}]),
-          patch.object(wr, "process_identity_alive", return_value=False),
-          patch.object(wr, "start_worker_quota_watch") as watch):
+          patch('theory_master.runtime_manager.process_identity_alive', return_value=False),
+          patch('theory_master.worker_quota.start_worker_quota_watch') as watch):
         assert wr._repair_missing_quota_watchers(spec) == []
         watch.assert_not_called()
 
@@ -191,9 +191,9 @@ def test_orphaned_preservation_emits_once_without_releasing_science(tmp_path):
               "process_alive": False, "preservation_job_pid": 12345,
               "preservation_job_start_ticks": 777, "claim_id": "frozen-claim"}
     spec = SimpleNamespace(research_root=root)
-    with (patch.object(wr, "list_workers", return_value=[worker]),
-          patch.object(wr, "process_identity_alive", return_value=False),
-          patch.object(wr, "worker_action") as action):
+    with (patch('theory_master.worker_store.list_workers', return_value=[worker]),
+          patch('theory_master.runtime_manager.process_identity_alive', return_value=False),
+          patch('theory_master.worker_actions.worker_action') as action):
         result = wr._flag_orphaned_preservation_jobs(spec)
         assert result == [{"worker_id": "worker-2", "cycle": "184",
                            "status": "manual_reconciliation_required"}]
@@ -217,8 +217,8 @@ def test_short_preservation_startup_is_not_misclassified(tmp_path):
               "current_cycle": "184",
               "updated_at": datetime.now(timezone.utc).isoformat(),
               "process_alive": False, "preservation_job_pid": None}
-    with (patch.object(wr, "list_workers", return_value=[worker]),
-          patch.object(wr, "process_identity_alive", return_value=False)):
+    with (patch('theory_master.worker_store.list_workers', return_value=[worker]),
+          patch('theory_master.runtime_manager.process_identity_alive', return_value=False)):
         assert wr._flag_orphaned_preservation_jobs(
             SimpleNamespace(research_root=root)) == []
 
@@ -230,8 +230,8 @@ def test_invalid_cached_result_must_not_restart_or_spend(tmp_path):
     _write(receipt, {"status": "failed_preservation_retained_claim", "cycle": "183"})
     worker = {"worker_id": "worker-2", "status": "NEEDS_ATTENTION",
               "current_cycle": "184", "process_alive": False}
-    with (patch("theory_master.worker_runtime.list_workers", return_value=[worker]),
-          patch("theory_master.worker_runtime.worker_action") as launch):
+    with (patch("theory_master.worker_store.list_workers", return_value=[worker]),
+          patch("theory_master.worker_actions.worker_action") as launch):
         assert dispatch_auto_budget_preservation(SimpleNamespace(research_root=root)) is False
         launch.assert_not_called()
         assert not (cycle/"preservation/cached_replay_required.json").exists()

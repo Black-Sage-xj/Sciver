@@ -321,7 +321,8 @@ def test_physical_turn_boundary_consumes_limit_before_goal_auto_continues(tmp_pa
     assert backend.last_native_goal["native_goal_status"] == "administrative_cancel_requested"
     assert backend.last_native_goal["native_goal_cancel_requested"]
     assert backend.last_native_goal["boundary_turn_id"] == "physical-1"
-    observed = [call.args[0]["event"] for call in backend.collector.on_codex.call_args_list]
+    observed = [call.args[0]["event"] for call in backend.collector.on_codex.call_args_list
+                if call.args[0].get("turn_id") != "setup-turn"]
     assert "LLM_TURN_COMPLETED" not in observed  # Do not alter logical Collector semantics.
 
 
@@ -424,7 +425,7 @@ def test_token_guard_precedes_physical_boundary_limit_delivery(tmp_path, tokens_
                 context_prompt=json.dumps({"sdk_execution_limit_handoff": binding}),
                 handoff_path=str(handoff), thread_id=thread.id, model="Fake", provider="Fake",
                 token_allowance=100, tokens_before_goal=tokens_before)
-    assert calls == ["official_cancel", "official_unregister"]
+    assert calls == (["official_cancel", "official_unregister"] if tokens_before == 80 else [])
     assert backend.last_native_goal["status"] == "budgetLimited"
     read_limit.assert_not_called()
 

@@ -187,7 +187,7 @@ class NextCycleRouteReloadTests(unittest.TestCase):
         # First action of a new Cycle is route resolution, before allocating an ID.
         wf.invocation_cycle_index = 0
         with patch.object(Workflow, "_refresh_next_cycle_routes") as refresh:
-            with patch("theory_master.workflow.make_run_id", side_effect=BoundaryReached):
+            with patch.object(Workflow, "_claim_invocation_cycle_slot", side_effect=BoundaryReached):
                 with self.assertRaises(BoundaryReached):
                     wf._execute_cycle(None)
             refresh.assert_called_once_with()

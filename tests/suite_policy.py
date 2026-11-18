@@ -8,6 +8,15 @@ CATEGORIES = ("invariant", "architecture", "regression", "ui")
 # exists, not how important it is. A small number of tests in mixed legacy modules
 # may additionally participate in the invariant gate via INVARIANT_TEST_IDS.
 MODULE_CATEGORIES: dict[str, str] = {
+    "test_engineering_module_boundaries_20261119": "architecture",
+    "test_runtime_source_owners_20261119": "invariant",
+    "test_codex_account_attribution_20261119": "invariant",
+    "test_codex_transport_boundaries_20261119": "invariant",
+    "test_goal_snapshot_cas_20261119": "invariant",
+    "test_invocation_lifecycle_20261119": "invariant",
+    "test_runtime_admission_20261119": "invariant",
+    "test_supervisor_single_repair_owner_20261119": "invariant",
+
     "test_task_progression_continuation_20261119": "invariant",
     "test_qualification_stop_history_20261119": "invariant",
     "test_worker_task_progression_20261119": "invariant",

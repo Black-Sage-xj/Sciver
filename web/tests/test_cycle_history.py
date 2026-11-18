@@ -285,7 +285,7 @@ class TaskCycleHistoryTests(unittest.TestCase):
         self.assertIn('data-cycle-history-lazy="12"', historical)
         self.assertNotIn('href="?history_cycle=12"', historical)
         self.assertNotIn('查看记录 →', historical)
-        self.assertIn('const selectedHistoryCycle="1"', historical)
+        self.assertEqual(json.loads(BeautifulSoup(historical, "html.parser").select_one("#tm-run-config").string)["selectedHistoryCycle"], "1")
         self.assertIn("selectedHistoryCycle?'&history_cycle='", historical)
         self.assertIn("const cycleHistoryLoads=new Set()", historical)
         self.assertIn("Cycle history request failed", historical)
@@ -298,7 +298,7 @@ class TaskCycleHistoryTests(unittest.TestCase):
         self.assertIn('data-cycle-history-lazy="12"', latest)
         self.assertIn("14:12:00", latest)
         self.assertIn("Judge · supported", latest)
-        self.assertIn('const selectedHistoryCycle=""', latest)
+        self.assertEqual(json.loads(BeautifulSoup(latest, "html.parser").select_one("#tm-run-config").string)["selectedHistoryCycle"], "")
 
     def test_missing_and_untrustworthy_history_is_not_invented(self):
         self.snapshot("12", [self.start("11", 2)])

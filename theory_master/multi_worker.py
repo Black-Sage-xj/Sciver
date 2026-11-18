@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from .runtime_manager import process_identity_alive, runtime_health
+from .runtime_admission import admission_lock, assert_no_single_owner
 
 SCHEMA = "theory-master/branch-claims/v1"
 ACTIVE = "active"
@@ -162,7 +163,8 @@ class BranchClaims:
         if not re.fullmatch(r"worker-[1-9]\d*", worker_id):
             raise ValueError("worker ID must be worker-N (N>=1)")
         at = now or utcnow()
-        with self._locked() as state:
+        with admission_lock(self.root), self._locked() as state:
+            assert_no_single_owner(self.root)
             if runtime_health(self.root).get("active"):
                 raise ValueError("legacy single-Worker runtime is active; claims must not run concurrently")
             revision, frontiers = frontier_snapshot(self.graph_path)
@@ -516,7 +518,8 @@ class CycleClaims:
             raise ValueError("worker ID must be worker-N (N>=1)")
         _assert_goal_open(self.root, self.graph_path)
         at = now or utcnow()
-        with self._locked() as state:
+        with admission_lock(self.root), self._locked() as state:
+            assert_no_single_owner(self.root)
             if runtime_health(self.root).get("active"):
                 raise ValueError("legacy single-Worker runtime is active; claims must not run concurrently")
             if any(c.get("worker_id") == worker_id for c in state["claims"].values()):

@@ -68,21 +68,21 @@ def test_scheduler_honors_swap_at_new_cycle_without_touching_live_workers(tmp_pa
         def __init__(self, *a): pass
         def claim_cycle(self, worker):
             return {"claim_id": f"claim-{worker}", "fencing_epoch": 1}
-    monkeypatch.setattr(wr, "CycleClaims", FakeClaims)
-    monkeypatch.setattr(wr, "runtime_health", lambda root: {"active": False})
-    monkeypatch.setattr(wr, "_master_complete", lambda root, **kw: False)
-    monkeypatch.setattr(wr, "_living_workers", lambda root: [])
-    monkeypatch.setattr(wr, "_route_capacity", lambda spec, slots: (2, ["1", "2"]))
-    monkeypatch.setattr(wr, "_share_enabled", lambda root: False)
-    monkeypatch.setattr(wr, "list_workers", lambda root: existing)
-    monkeypatch.setattr(wr, "read_worker", lambda root, name:
+    monkeypatch.setattr('theory_master.multi_worker.CycleClaims', FakeClaims)
+    monkeypatch.setattr('theory_master.runtime_manager.runtime_health', lambda root: {"active": False})
+    monkeypatch.setattr('theory_master.worker_store._master_complete', lambda root, **kw: False)
+    monkeypatch.setattr('theory_master.worker_store._living_workers', lambda root: [])
+    monkeypatch.setattr('theory_master.worker_routes._route_capacity', lambda spec, slots: (2, ["1", "2"]))
+    monkeypatch.setattr('theory_master.worker_routes._share_enabled', lambda root: False)
+    monkeypatch.setattr('theory_master.worker_store.list_workers', lambda root: existing)
+    monkeypatch.setattr('theory_master.worker_store.read_worker', lambda root, name:
                         next(w for w in existing if w["worker_id"] == name))
-    monkeypatch.setattr(wr, "save_worker", lambda *a, **kw: None)
-    monkeypatch.setattr(wr, "_task_scoped_process_env", lambda root: {})
-    monkeypatch.setattr(wr, "_pinned_codex_home", lambda *a: tmp_path)
-    monkeypatch.setattr(wr, "_launch_detached_service", lambda *a, **kw: None)
+    monkeypatch.setattr('theory_master.worker_store.save_worker', lambda *a, **kw: None)
+    monkeypatch.setattr('theory_master.worker_launch._task_scoped_process_env', lambda root: {})
+    monkeypatch.setattr('theory_master.worker_routes._pinned_codex_home', lambda *a: tmp_path)
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service', lambda *a, **kw: None)
     rebound = []
-    monkeypatch.setattr(wr, "_rebind_idle_worker_home",
+    monkeypatch.setattr('theory_master.worker_routes._rebind_idle_worker_home',
                         lambda root, worker, old, new: rebound.append((worker, old, new)))
     spec = SimpleNamespace(research_root=root, branch_canvas=root / "canvas.json")
     result = wr.schedule_once(spec, resource_slots=2,
@@ -102,16 +102,16 @@ def test_idle_account_auth_rebind_rejects_live_worker(tmp_path, monkeypatch):
     home = root / ".theory-master" / "workers" / "worker-1" / "codex-home"
     home.mkdir(parents=True)
     (home / "auth.json").symlink_to(accounts / "1" / "auth.json")
-    monkeypatch.setattr(wr, "_pinned_codex_home", lambda *a: home)
-    monkeypatch.setattr(wr, "read_worker", lambda *a: {"status": "OVER", "pid": None})
-    monkeypatch.setattr(wr, "process_identity_alive", lambda *a: False)
+    monkeypatch.setattr('theory_master.worker_routes._pinned_codex_home', lambda *a: home)
+    monkeypatch.setattr('theory_master.worker_store.read_worker', lambda *a: {"status": "OVER", "pid": None})
+    monkeypatch.setattr('theory_master.runtime_manager.process_identity_alive', lambda *a: False)
     monkeypatch.setattr("theory_master.codex_accounts.ensure_layout",
                         lambda: {"1": accounts / "1", "2": accounts / "2"})
     monkeypatch.setattr("theory_master.codex_accounts.account_switch_lock", nullcontext)
     wr._rebind_idle_worker_home(root, "worker-1", "1", "2")
     assert (home / "auth.json").resolve() == (accounts / "2" / "auth.json").resolve()
-    monkeypatch.setattr(wr, "read_worker", lambda *a: {"status": "RUNNING", "pid": 123})
-    monkeypatch.setattr(wr, "process_identity_alive", lambda *a: True)
+    monkeypatch.setattr('theory_master.worker_store.read_worker', lambda *a: {"status": "RUNNING", "pid": 123})
+    monkeypatch.setattr('theory_master.runtime_manager.process_identity_alive', lambda *a: True)
     with pytest.raises(ValueError, match="cannot rebind"):
         wr._rebind_idle_worker_home(root, "worker-1", "2", "1")
     assert (home / "auth.json").resolve() == (accounts / "2" / "auth.json").resolve()

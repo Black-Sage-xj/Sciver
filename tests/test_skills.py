@@ -375,7 +375,10 @@ class SkillInjectionTest(unittest.TestCase):
             with self.subTest(precreated=precreated):
                 backend = CodexBackend(Path("/tmp"))
                 backend.cycle_id = "cycle-0023"
-                thread = SimpleNamespace(id="test-thread", run=lambda payload: SimpleNamespace(final_response="{}"))
+                event = SimpleNamespace(method="turn/completed", payload=SimpleNamespace(
+                    turn=SimpleNamespace(id="test-turn", status="completed", final_response="{}")))
+                handle = SimpleNamespace(stream=lambda: iter([event]), interrupt=lambda: None)
+                thread = SimpleNamespace(id="test-thread", turn=lambda payload: handle)
                 client = unittest.mock.Mock()
                 client.thread_start.return_value = thread
                 client.thread_resume.return_value = thread

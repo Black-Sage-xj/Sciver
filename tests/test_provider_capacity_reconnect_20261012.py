@@ -35,7 +35,11 @@ class FakeClock:
 def backend_fixture():
     cleared = []
     client = SimpleNamespace(thread_goal_clear=lambda tid: cleared.append(tid))
-    thread = SimpleNamespace(id="scientific-thread", _client=client)
+    setup = SimpleNamespace(method="turn/completed", payload=SimpleNamespace(
+        thread_id="scientific-thread", turn=SimpleNamespace(
+            id="setup-turn", status="completed", final_response="ready", error=None)))
+    handle = SimpleNamespace(stream=lambda: iter([setup]), interrupt=lambda: None)
+    thread = SimpleNamespace(id="scientific-thread", _client=client, turn=MagicMock(return_value=handle))
     backend = CodexBackend.__new__(CodexBackend)
     backend.threads = {thread.id: thread}
     backend._new_thread_ids = set()

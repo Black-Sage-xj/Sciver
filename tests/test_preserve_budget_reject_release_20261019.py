@@ -1,5 +1,6 @@
 """Deterministic preservation flow: budget reject -> provenance summary -> release."""
 from __future__ import annotations
+from theory_master import worker_launch, worker_store, worker_actions
 
 import json
 from contextlib import contextmanager
@@ -164,10 +165,10 @@ def test_preserve_request_reserves_claim_and_enqueues_only(monkeypatch, tmp_path
     worker_state = {"status": "NEEDS_ATTENTION", "current_cycle": "155",
                     "worker_id": "worker-1", "claim_id": "id", "epoch": 4,
                     "entry_node_id": "H-0090", "pid": None, "account": None}
-    monkeypatch.setattr(worker, "read_worker", lambda *args: dict(worker_state))
-    monkeypatch.setattr(worker, "save_worker", lambda *args, **kw: worker_state.update(kw) or dict(worker_state))
-    monkeypatch.setattr(worker, "process_identity_alive", lambda *args: False)
-    monkeypatch.setattr(worker, "_launch_detached_service", MagicMock())
+    monkeypatch.setattr('theory_master.worker_store.read_worker', lambda *args: dict(worker_state))
+    monkeypatch.setattr('theory_master.worker_store.save_worker', lambda *args, **kw: worker_state.update(kw) or dict(worker_state))
+    monkeypatch.setattr('theory_master.runtime_manager.process_identity_alive', lambda *args: False)
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service', MagicMock())
     import theory_master.research_preservation as rp
     # Production run_state.json deliberately omits the Worker owner fields.
     # Preserve MUST consult research_state.json, not the Web projection.
@@ -183,12 +184,12 @@ def test_preserve_request_reserves_claim_and_enqueues_only(monkeypatch, tmp_path
         def list_claims(self):
             return [{"worker_id": "worker-1", "claim_id": "id", "fencing_epoch": 4,
                      "cycle_id": "155", "hypothesis_id": None}]
-    monkeypatch.setattr(worker, "CycleClaims", FakeClaims)
+    monkeypatch.setattr('theory_master.multi_worker.CycleClaims', FakeClaims)
     spec = SimpleNamespace(research_root=research, branch_canvas=tmp_path / "exploration.canvas")
     result = worker.request_preserve_release(spec, "worker-1")
     assert result["status"] == worker_state["status"] == "PRESERVING"
     assert result["claim_preserved"]
-    worker._launch_detached_service.assert_called_once()
+    worker_launch._launch_detached_service.assert_called_once()
 
 
 def test_preserve_rejects_authoritative_worker_mismatch(monkeypatch, tmp_path):
@@ -199,19 +200,19 @@ def test_preserve_rejects_authoritative_worker_mismatch(monkeypatch, tmp_path):
         "worker_id": "worker-2", "claimed_frontier_id": "H-0090",
         "resumable": True,
     }))
-    monkeypatch.setattr(worker, "read_worker", lambda *_: {
+    monkeypatch.setattr('theory_master.worker_store.read_worker', lambda *_: {
         "status": "NEEDS_ATTENTION", "current_cycle": "155", "worker_id": "worker-1",
         "entry_node_id": "H-0090", "claim_id": "claim", "epoch": 17, "pid": None})
-    monkeypatch.setattr(worker, "process_identity_alive", lambda *_: False)
-    monkeypatch.setattr(worker, "save_worker", MagicMock())
-    monkeypatch.setattr(worker, "_launch_detached_service", MagicMock())
+    monkeypatch.setattr('theory_master.runtime_manager.process_identity_alive', lambda *_: False)
+    monkeypatch.setattr('theory_master.worker_store.save_worker', MagicMock())
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service', MagicMock())
     import theory_master.research_preservation as rp
     monkeypatch.setattr(rp, "blocked_checkpoint", lambda _: {"resumable": True})
     spec = SimpleNamespace(research_root=research, branch_canvas=tmp_path / "canvas")
     with pytest.raises(ValueError, match="authoritative frozen Cycle"):
         worker.request_preserve_release(spec, "worker-1")
-    worker.save_worker.assert_not_called()
-    worker._launch_detached_service.assert_not_called()
+    worker_store.save_worker.assert_not_called()
+    worker_launch._launch_detached_service.assert_not_called()
 
 
 def test_archive_job_failure_never_releases_claim(monkeypatch, tmp_path):
@@ -219,15 +220,15 @@ def test_archive_job_failure_never_releases_claim(monkeypatch, tmp_path):
     cycle = root / "155"
     cycle.mkdir(parents=True)
     worker_state = {"status": "PRESERVING", "current_cycle": "155"}
-    monkeypatch.setattr(worker, "read_worker", lambda *args: dict(worker_state))
-    monkeypatch.setattr(worker, "save_worker", lambda *args, **kw: worker_state.update(kw) or dict(worker_state))
-    monkeypatch.setattr(worker, "worker_action", MagicMock())
+    monkeypatch.setattr('theory_master.worker_store.read_worker', lambda *args: dict(worker_state))
+    monkeypatch.setattr('theory_master.worker_store.save_worker', lambda *args, **kw: worker_state.update(kw) or dict(worker_state))
+    monkeypatch.setattr('theory_master.worker_actions.worker_action', MagicMock())
     monkeypatch.setattr(worker.subprocess, "run",
                         MagicMock(return_value=SimpleNamespace(returncode=7)))
     spec = SimpleNamespace(research_root=root)
     result = worker.execute_preserve_release_job(spec, "worker-1")
     assert result == 1 and worker_state["status"] == "NEEDS_ATTENTION"
-    worker.worker_action.assert_not_called()
+    worker_actions.worker_action.assert_not_called()
     assert not (cycle / "preservation/closure.json").exists()
 
 
@@ -255,20 +256,20 @@ def test_archive_job_success_releases_only_after_verified_closure(monkeypatch, t
         "scientific_verdict": None,
     }))
     worker_state = {"status": "PRESERVING", "current_cycle": "155"}
-    monkeypatch.setattr(worker, "read_worker", lambda *args: dict(worker_state))
+    monkeypatch.setattr('theory_master.worker_store.read_worker', lambda *args: dict(worker_state))
     def release_action(*_args):
         assert (cycle / "preservation/closure.json").exists()
         assert json.loads((cycle / "research_state.json").read_text())["status"] == "over"
         worker_state["status"] = "RELEASED"
         return {"status": "RELEASED"}
     release = MagicMock(side_effect=release_action)
-    monkeypatch.setattr(worker, "worker_action", release)
+    monkeypatch.setattr('theory_master.worker_actions.worker_action', release)
     monkeypatch.setattr(worker.subprocess, "run",
                         MagicMock(return_value=SimpleNamespace(returncode=0)))
     import theory_master.worker_mode as wm
     monkeypatch.setattr(wm, "read_mode", lambda _: {"enabled": True, "desired_agents": 1})
     schedule = MagicMock(return_value={"status": "already_running"})
-    monkeypatch.setattr(worker, "start_scheduler", schedule)
+    monkeypatch.setattr('theory_master.worker_scheduler.start_scheduler', schedule)
     spec = SimpleNamespace(research_root=root)
     assert worker.execute_preserve_release_job(spec, "worker-1") == 0
     command = worker.subprocess.run.call_args.args[0]
@@ -305,17 +306,17 @@ def test_archived_cycle_recovery_releases_without_new_model(monkeypatch, tmp_pat
     worker_state = {"status": "NEEDS_ATTENTION", "worker_id": "worker-1",
                     "current_cycle": "155", "claim_id": "claim-1",
                     "epoch": 17, "pid": None, "entry_node_id": "H-0090"}
-    monkeypatch.setattr(worker, "read_worker", lambda *_: dict(worker_state))
-    monkeypatch.setattr(worker, "save_worker",
+    monkeypatch.setattr('theory_master.worker_store.read_worker', lambda *_: dict(worker_state))
+    monkeypatch.setattr('theory_master.worker_store.save_worker',
                         lambda *args, **kw: worker_state.update(kw) or dict(worker_state))
-    monkeypatch.setattr(worker, "process_identity_alive", lambda *_: False)
+    monkeypatch.setattr('theory_master.runtime_manager.process_identity_alive', lambda *_: False)
     released = []
     class FakeClaims:
         def __init__(self, *_): pass
         def update(self, wid, claim, epoch, action):
             released.append((wid, claim, epoch, action))
-    monkeypatch.setattr(worker, "CycleClaims", FakeClaims)
-    monkeypatch.setattr(worker, "reconcile_released_worker_cycle",
+    monkeypatch.setattr('theory_master.multi_worker.CycleClaims', FakeClaims)
+    monkeypatch.setattr('theory_master.worker_store.reconcile_released_worker_cycle',
                         lambda *_: {"reconciled": True})
     import theory_master.research_preservation as rp
     closure = MagicMock(return_value={"cycle_id": "155", "scientific_verdict": None})

@@ -75,8 +75,8 @@ class _Claims:
 def test_release_reconciles_dead_worker_cycle_without_fabricating_over(tmp_path, monkeypatch):
     root, cycle, checkpoint, evidence, frozen, before = _fixture(tmp_path)
     claims = _Claims()
-    monkeypatch.setattr(worker_runtime, "CycleClaims", lambda *args: claims)
-    monkeypatch.setattr(worker_runtime, "process_identity_alive", lambda *_args: False)
+    monkeypatch.setattr('theory_master.multi_worker.CycleClaims', lambda *args: claims)
+    monkeypatch.setattr('theory_master.runtime_manager.process_identity_alive', lambda *_args: False)
     spec = SimpleNamespace(research_root=root, branch_canvas=root / "branch_canvas.json")
 
     result = worker_runtime.worker_action(spec, "worker-1", "release")
@@ -124,9 +124,9 @@ def test_release_reconciles_dead_worker_cycle_without_fabricating_over(tmp_path,
 def test_release_refuses_if_cycle_owner_is_still_live(tmp_path, monkeypatch):
     root, cycle, _checkpoint, _evidence, _frozen, _before = _fixture(tmp_path)
     claims = _Claims()
-    monkeypatch.setattr(worker_runtime, "CycleClaims", lambda *args: claims)
+    monkeypatch.setattr('theory_master.multi_worker.CycleClaims', lambda *args: claims)
     monkeypatch.setattr(
-        worker_runtime, "process_identity_alive",
+        "theory_master.runtime_manager.process_identity_alive",
         lambda pid, _ticks=None: pid is not None and int(pid) == 424242,
     )
     science_path = cycle / "research_state.json"
@@ -148,8 +148,8 @@ def test_release_preserves_terminal_scientific_status_and_syncs_stale_run_state(
         tmp_path, status="over", run_status="RUNNING",
     )
     claims = _Claims()
-    monkeypatch.setattr(worker_runtime, "CycleClaims", lambda *args: claims)
-    monkeypatch.setattr(worker_runtime, "process_identity_alive", lambda *_args: False)
+    monkeypatch.setattr('theory_master.multi_worker.CycleClaims', lambda *args: claims)
+    monkeypatch.setattr('theory_master.runtime_manager.process_identity_alive', lambda *_args: False)
     science_path = cycle / "research_state.json"
     science = json.loads(science_path.read_text(encoding="utf-8"))
     science["execution_active"] = False

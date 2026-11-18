@@ -38,13 +38,65 @@ def _package_root() -> Path:
 
 _RUNTIME_SOURCE_MODULES = {
     "runtime_manager.py": "theory_master.runtime_manager",
+    "codex_backend.py": "theory_master.codex_backend",
+    "codex_errors.py": "theory_master.codex_errors",
+    "codex_sdk_compat.py": "theory_master.codex_sdk_compat",
+    "codex_turn_transport.py": "theory_master.codex_turn_transport",
+    "codex_goal_transport.py": "theory_master.codex_goal_transport",
+    "goal_gate.py": "theory_master.goal_gate",
+    "goal_snapshot.py": "theory_master.goal_snapshot",
+    "goal_materials.py": "theory_master.goal_materials",
+    "invocation_execution.py": "theory_master.invocation_execution",
+    "invocation_preparation.py": "theory_master.invocation_preparation",
+    "invocation_context.py": "theory_master.invocation_context",
+    "invocation_transport.py": "theory_master.invocation_transport",
+    "invocation_output.py": "theory_master.invocation_output",
+    "invocation_commit.py": "theory_master.invocation_commit",
+    "invocation_lifecycle.py": "theory_master.invocation_lifecycle",
+    "qualification_session.py": "theory_master.qualification_session",
+    "qualification_proposal.py": "theory_master.qualification_proposal",
+    "qualification_recovery.py": "theory_master.qualification_recovery",
+    "qualification_review.py": "theory_master.qualification_review",
+    "qualification_lock.py": "theory_master.qualification_lock",
+    "cycle_runner.py": "theory_master.cycle_runner",
+    "cycle_start.py": "theory_master.cycle_start",
+    "cycle_exit.py": "theory_master.cycle_exit",
+    "runtime_supervisor_review.py": "theory_master.runtime_supervisor_review",
+    "supervisor_continuity.py": "theory_master.supervisor_continuity",
     "worker_runtime.py": "theory_master.worker_runtime",
+    "runtime_admission.py": "theory_master.runtime_admission",
+    "worker_store.py": "theory_master.worker_store",
+    "worker_launch.py": "theory_master.worker_launch",
+    "worker_routes.py": "theory_master.worker_routes",
+    "worker_direction.py": "theory_master.worker_direction",
+    "worker_execution.py": "theory_master.worker_execution",
+    "worker_quota.py": "theory_master.worker_quota",
+    "worker_preservation.py": "theory_master.worker_preservation",
+    "worker_actions.py": "theory_master.worker_actions",
+    "worker_scheduler.py": "theory_master.worker_scheduler",
+    "worker_state.py": "theory_master.worker_state",
     "worker_supervisor_dispatch.py": "theory_master.worker_supervisor_dispatch",
     "workflow.py": "theory_master.workflow",
     "workflow_qualification.py": "theory_master.workflow_qualification",
     "canvas_projection.py": "theory_master.canvas_projection",
     "workflow_state.py": "theory_master.workflow_state",
     "skills.py": "theory_master.skills",
+    "web/tm_observer/codex_usage.py": "tm_observer.codex_usage",
+    "web/tm_observer/collector.py": "tm_observer.collector",
+    "web/tm_observer/run_monitor.py": "tm_observer.run_monitor",
+    "web/tm_observer/run_views.py": "tm_observer.run_views",
+    "web/tm_observer/web.py": "tm_observer.web",
+    "web/tm_observer/bounded_log.py": "tm_observer.bounded_log",
+    "web/tm_observer/http_chat_routes.py": "tm_observer.http_chat_routes",
+    "web/tm_observer/http_context.py": "tm_observer.http_context",
+    "web/tm_observer/http_handler.py": "tm_observer.http_handler",
+    "web/tm_observer/http_host_routes.py": "tm_observer.http_host_routes",
+    "web/tm_observer/http_page_routes.py": "tm_observer.http_page_routes",
+    "web/tm_observer/http_supervisor_routes.py": "tm_observer.http_supervisor_routes",
+    "web/tm_observer/http_task_routes.py": "tm_observer.http_task_routes",
+    "web/tm_observer/run_console_client.py": "tm_observer.run_console_client",
+    "web/tm_observer/state_cache.py": "tm_observer.state_cache",
+    "web/tm_observer/web_pages.py": "tm_observer.web_pages",
 }
 
 
@@ -105,25 +157,33 @@ def _git_source_identity(start: Path) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _source_module_locations(package_root: Path, name: str) -> tuple[Path, ...]:
+    """Canonical checkout/wheel locations; never derive trust from loaded paths."""
+    package_root = Path(package_root).resolve()
+    if name.startswith("web/tm_observer/"):
+        return (package_root / name, package_root / Path(name).relative_to("web"))
+    return (package_root / "theory_master" / name,)
+
+
 def runtime_source_provenance() -> dict[str, Any]:
     """Identify SDK source paths and hashes available to this process, without a model call."""
     package_root = _package_root().resolve()
-    module_root = package_root / "theory_master"
     module_paths: dict[str, str] = {}
     module_sha256: dict[str, str] = {}
     for name, import_name in _RUNTIME_SOURCE_MODULES.items():
         loaded = sys.modules.get(import_name)
         loaded_path = getattr(loaded, "__file__", None) if loaded is not None else None
-        path = Path(loaded_path).resolve() if loaded_path else (module_root / name).resolve()
+        locations = _source_module_locations(package_root, name)
+        expected = next((candidate for candidate in locations if candidate.is_file()), locations[0])
+        path = Path(loaded_path).resolve() if loaded_path else expected.resolve()
         module_paths[name] = str(path)
         try:
             module_sha256[name] = hashlib.sha256(path.read_bytes()).hexdigest()
         except OSError:
             continue
-    expected_module_root = module_root.resolve()
     coherence_errors = [
         f"{name}: {path}" for name, path in module_paths.items()
-        if Path(path).parent != expected_module_root
+        if Path(path) not in _source_module_locations(package_root, name)
     ]
     git_root, git_sha = _git_source_identity(package_root)
     return {
@@ -166,18 +226,9 @@ def branch_claim_lock_path(research_root: Path) -> Path:
 
 
 def _reject_legacy_when_claimed(research_root: Path) -> None:
-    """Called while branch_claims.lock is held; fail closed on registry damage."""
-    path = runtime_dir(research_root) / "branch_claims.json"
-    if not path.exists():
-        return
-    value = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("schema") != "theory-master/branch-claims/v1":
-        raise RuntimeError("invalid branch claim registry; legacy runtime startup blocked")
-    claims = value.get("claims")
-    if not isinstance(claims, dict):
-        raise RuntimeError("invalid branch claims; legacy runtime startup blocked")
-    if claims:
-        raise RuntimeError("existing multi-Worker branch claims block legacy single-owner runtime")
+    """Compatibility entry; caller holds the shared owner admission lock."""
+    from .runtime_admission import assert_no_worker_claims
+    assert_no_worker_claims(research_root)
 
 
 @contextmanager
@@ -206,15 +257,25 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+class RuntimeRegistryError(RuntimeError):
+    """Persisted ownership is unreadable; new ownership must fail closed."""
+
+
 def load_registry(research_root: Path) -> dict[str, Any]:
     path = registry_path(research_root)
-    if not path.is_file():
+    if path.is_symlink():
+        raise RuntimeRegistryError("Unsafe runtime registry symlink")
+    if not path.exists():
         return {}
+    if not path.is_file():
+        raise RuntimeRegistryError("Runtime registry is not a regular file")
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-    return payload if isinstance(payload, dict) else {}
+    except (OSError, ValueError) as exc:
+        raise RuntimeRegistryError("Runtime registry is unreadable") from exc
+    if not isinstance(payload, dict) or payload.get("schema") != RUNTIME_SCHEMA:
+        raise RuntimeRegistryError("Runtime registry has an invalid schema")
+    return payload
 
 
 def update_registry(research_root: Path, **fields: Any) -> dict[str, Any]:
@@ -282,7 +343,11 @@ def _age_seconds(value: Any) -> float | None:
 
 
 def runtime_health(research_root: Path, *, stale_after_s: float = HEARTBEAT_STALE_S) -> dict[str, Any]:
-    payload = load_registry(research_root)
+    try:
+        payload = load_registry(research_root)
+    except RuntimeRegistryError as exc:
+        return {"state": "REGISTRY_INVALID", "active": True, "registry": {},
+                "ownership_unknown": True, "error": str(exc)}
     if not payload:
         return {"state": "ABSENT", "active": False, "registry": {}}
     supervisor_pid = payload.get("supervisor_pid")
@@ -326,7 +391,11 @@ def foreground_runtime(research_root: Path, *, master_id: int, operation: str) -
 
     pid = os.getpid()
     ticks = process_start_ticks(pid)
-    prior = load_registry(root)
+    try:
+        prior = load_registry(root)
+    except BaseException:
+        owner.__exit__(None, None, None)
+        raise
     base_elapsed = max(0.0, float(prior.get("active_elapsed_s") or 0.0))
     segments = list(prior.get("runtime_segments") or [])
     if prior.get("active_segment_started_at"):
@@ -343,7 +412,8 @@ def foreground_runtime(research_root: Path, *, master_id: int, operation: str) -
     resume_count = int(prior.get("resume_count") or 0) + (1 if operation == "resume" else 0)
     launch_id = uuid.uuid4().hex
     try:
-        with _file_lock(branch_claim_lock_path(root)):
+        from .runtime_admission import admission_lock
+        with admission_lock(root), _file_lock(branch_claim_lock_path(root)):
             _reject_legacy_when_claimed(root)
             update_registry(
                 root,
@@ -555,7 +625,8 @@ def _runtime_env() -> dict[str, str]:
 
 def launch_managed_runtime(spec: Any, *, operation: str, identifier: str, model: str | None = None, provider: str | None = None, routes: list[str] | None = None, cycle_audit: bool | None = None, error_repair: bool | None = None, attention_takeover: bool | None = None, check_literature: bool = False) -> dict[str, Any]:
     root = Path(spec.research_root).resolve()
-    with _file_lock(launch_lock_path(root)), _file_lock(branch_claim_lock_path(root)):
+    from .runtime_admission import admission_lock
+    with admission_lock(root), _file_lock(launch_lock_path(root)), _file_lock(branch_claim_lock_path(root)):
         _reject_legacy_when_claimed(root)
         health = runtime_health(root)
         if health.get("active"):
@@ -564,6 +635,8 @@ def launch_managed_runtime(spec: Any, *, operation: str, identifier: str, model:
         if legacy is not None:
             payload = update_registry(root, state="LEGACY_RUNNING", master_id=int(getattr(spec, "master_id", 0) or 0), runner_pid=legacy["pid"], runner_start_ticks=process_start_ticks(legacy["pid"]), current_cycle=legacy["cycle"], heartbeat_at=None, launcher="legacy-adopted")
             return {"status": "already_running", "legacy": True, "registry": payload}
+        from .runtime_admission import assert_no_single_owner
+        assert_no_single_owner(root)
         launch_id = uuid.uuid4().hex
         initial_cycle = latest_cycle_name(root)
         master_id = int(getattr(spec, "master_id", 0) or 0)

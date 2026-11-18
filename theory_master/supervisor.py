@@ -517,7 +517,7 @@ def _handle_failed_state(root: Path, *, repair_enabled: bool) -> bool:
         return False
     update_registry(root, state="SUPERVISING", heartbeat_at=_stamp())
     from .supervisor_continuity import review_and_repair_runtime_failure
-    from .worker_runtime import list_workers
+    from .worker_store import list_workers
     gate = root / ".theory-master" / "scheduler.lock"
     gate.parent.mkdir(parents=True, exist_ok=True)
     with gate.open("a+") as handle:
@@ -753,6 +753,13 @@ def main(argv: list[str] | None = None) -> int:
     registry = load_registry(root)
     if registry.get("launch_id") != args.launch_id:
         print("TheoryMaster supervisor launch id is stale; refusing ownership", file=sys.stderr); return 0
+    from .runtime_admission import admission_lock, assert_no_worker_claims
+    with admission_lock(root):
+        # The service may start after LAUNCHING's grace period. Recheck actual
+        # Claim ownership while runner.lock is held before publishing STARTING.
+        assert_no_worker_claims(root)
+        update_registry(root, state="STARTING", supervisor_pid=os.getpid(),
+                        supervisor_start_ticks=process_start_ticks(os.getpid()))
     supervisor_attempt = int(registry.get("supervisor_attempt") or 0) + 1
     supervisor_pid = os.getpid()
     update_registry(root, state="STARTING", supervisor_pid=supervisor_pid, supervisor_start_ticks=process_start_ticks(supervisor_pid), supervisor_attempt=supervisor_attempt, heartbeat_at=_stamp())

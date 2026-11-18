@@ -61,7 +61,7 @@ def test_original_graph_hides_v0_toolbar_entry_but_route_remains_registered():
         'id="ex-layout-demo-b-link"', 'id="ex-layout-demo-a0-link"', 'id="ex-layout-demo-v0-link"',
     ):
         assert removed not in original
-    source = Path(__file__).parents[1] / "tm_observer" / "web.py"
+    source = Path(__file__).parents[1] / "tm_observer" / "http_page_routes.py"
     route_source = source.read_text()
     assert "from .research_explorer_layout_demo_v0 import explorer_layout_v0_demo_html" not in route_source
     assert '"/research-explorer-tmp-v0"' in route_source

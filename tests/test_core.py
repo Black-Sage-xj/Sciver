@@ -461,8 +461,9 @@ class TheoryMasterTest(unittest.TestCase):
     def test_same_hypothesis_identity_survives_milestone_into_next_cycle(self):
         class ContinuingBackend(FakeBackend):
             def __init__(self):
-                from theory_master.backend_fakes import _fake_sqlite_lineage, _prompt_stage
+                from theory_master.backend_fakes import _fake_sqlite_lineage, _fake_source_contributions, _prompt_stage
                 self._fake_sqlite_lineage = _fake_sqlite_lineage
+                self._fake_source_contributions = _fake_source_contributions
                 self._prompt_stage = _prompt_stage
                 super().__init__(reworks=0)
                 self.frontier_calls = 0
@@ -489,6 +490,7 @@ class TheoryMasterTest(unittest.TestCase):
                             "prior_gap": ("The first bounded adjudication leaves the next discriminant unresolved."
                                           if continuing_same_h else "The Goal leaves this scientific claim unresolved."),
                             "current_change": "Test the next bounded discriminant within the declared scope.",
+                            "source_contributions": self._fake_source_contributions(context),
                         },
                         "goal_advance": "accumulate decisive evidence for the same scientific claim",
                         "decisive_test": decisive_test,
@@ -2017,76 +2019,82 @@ class TheoryMasterTest(unittest.TestCase):
             self.assertEqual(route, DEFAULT_ROUTE)
 
     def test_resolve_routes_overlays_without_touching_code_default(self):
-        isolated = resolve_routes(env={})
-        self.assertEqual(isolated, MODEL_PROFILES["test"])
-        self.assertEqual(set(MODEL_PROFILES), {"test", "codex", "advanced"})
-        for name in ("test", "codex", "advanced"):
-            self.assertEqual(set(MODEL_PROFILES[name]), set(DEFAULT_ROUTES))
-        test_profile = resolve_routes(profile="test", env={})
-        self.assertTrue(all(route.model == "gpt-6-luna" for route in test_profile.values()))
-        self.assertTrue(all(route.reasoning_effort == "medium" for route in test_profile.values()))
-        self.assertEqual(resolve_routes(profile="1", env={}), test_profile)
-        codex = resolve_routes(profile="codex", env={})
-        self.assertEqual(resolve_routes(profile="2", env={}), codex)
-        self.assertEqual(codex["research_lead"].model, "gpt-6-sol")
-        self.assertEqual(codex["research_lead"].reasoning_effort, "high")
-        self.assertEqual(codex["challenger"].model, "gpt-6-sol")
-        self.assertEqual(codex["challenger"].reasoning_effort, "medium")
-        self.assertEqual(codex["investigator"].model, "gpt-6-sol")
-        self.assertEqual(codex["investigator"].reasoning_effort, "low")
-        routed = resolve_routes(profile="codex", env={"THEORYMASTER_MODEL_PROVIDER": "codex"})
-        self.assertEqual(routed["investigator"].model, "gpt-6-sol")
-        self.assertEqual(routed["investigator"].reasoning_effort, "low")
-        self.assertEqual(routed["research_lead"].model, "gpt-6-sol")
-        self.assertEqual(codex["judge"].model, "gpt-6-sol")
-        self.assertEqual(codex["judge"].reasoning_effort, "medium")
-        self.assertEqual(codex["literature"].model, "gpt-6-luna")
-        self.assertEqual(codex["literature"].reasoning_effort, "low")
-        self.assertEqual(codex["reporter"].model, "gpt-6-luna")
-        self.assertEqual(codex["reporter"].reasoning_effort, "low")
-        advanced = resolve_routes(profile="advanced", env={})
-        self.assertEqual(resolve_routes(profile="3", env={}), advanced)
-        self.assertEqual(advanced["research_lead"].reasoning_effort, "xhigh")
-        self.assertEqual(advanced["investigator"].reasoning_effort, "xhigh")
-        self.assertEqual(advanced["judge"].reasoning_effort, "high")
-        self.assertEqual(advanced["challenger"].reasoning_effort, "high")
-        self.assertEqual(advanced["literature"].model, "gpt-6-luna")
-        self.assertEqual(advanced["literature"].reasoning_effort, "medium")
-        self.assertEqual(advanced["reporter"].model, "gpt-6-luna")
-        self.assertEqual(advanced["reporter"].reasoning_effort, "medium")
-        luna = KNOWN_ROUTES["gpt-6-luna"]
-        deepseek = KNOWN_ROUTES["deepseek-flash"]
-        all_luna = resolve_routes(model="gpt-6-luna", env={"THEORYMASTER_MODEL": "deepseek-flash"})
-        self.assertTrue(all(route == luna for route in all_luna.values()))
-        mixed = resolve_routes(model="deepseek-flash", role_specs=["investigator=gpt-6-luna", "judge=gpt-6-luna"], env={})
-        self.assertEqual(mixed["investigator"], luna)
-        self.assertEqual(mixed["judge"], luna)
-        self.assertEqual(mixed["literature"], deepseek)
-        from_env = resolve_routes(env={"THEORYMASTER_MODEL": "gpt-6-luna", "THEORYMASTER_ROUTE": "investigator=deepseek-flash"})
-        self.assertEqual(from_env["investigator"], deepseek)
-        self.assertEqual(from_env["literature"], luna)
-        sol = parse_model_spec("gpt-6-sol@Codex")
-        with tempfile.TemporaryDirectory() as task_file:
-            task_env = Path(task_file) / "env"
-            task_env.write_text(
-                "THEORYMASTER_MODEL=gpt-6-luna@Codex\n"
-                "THEORYMASTER_ROUTE=investigator=gpt-6-sol@Codex\n",
-                encoding="utf-8",
-            )
-            with mock.patch.object(CodexBackend, "_env_file_values", return_value={"THEORYMASTER_MODEL": "deepseek-flash"}):
-                with mock.patch.dict("os.environ", {}, clear=True):
-                    from_task = resolve_routes(task_env_file=task_env)
-            self.assertEqual(from_task["investigator"], sol)
-            self.assertEqual(from_task["literature"], luna)
-        with self.assertRaisesRegex(ValueError, "unknown model"):
-            parse_model_spec("gpt-5.6-terra")
-        terra = parse_model_spec("gpt-5.6-terra@FixtureProvider")
-        self.assertEqual(terra.model, "gpt-5.6-terra")
-        self.assertEqual(terra.provider, "FixtureProvider")
-        luna6 = parse_model_spec("gpt-6-luna")
-        self.assertEqual(luna6.model, "gpt-6-luna")
-        self.assertEqual(luna6.provider, "Codex")
-        self.assertEqual(parse_model_spec("gpt-6-luna@Codex"), luna6)
+        from unittest.mock import patch
+        import theory_master.backend_config as profiles
+        with tempfile.TemporaryDirectory() as local:
+            with patch.object(profiles, "LOCAL_MODEL_PROFILE_DIR", Path(local)):
+                builtins = profiles._load_model_profiles()
+            with patch.dict(MODEL_PROFILES, builtins, clear=True):
+                isolated = resolve_routes(env={})
+                self.assertEqual(isolated, MODEL_PROFILES["test"])
+                self.assertEqual(set(MODEL_PROFILES), {"test", "codex", "advanced"})
+                for name in ("test", "codex", "advanced"):
+                    self.assertEqual(set(MODEL_PROFILES[name]), set(DEFAULT_ROUTES))
+                test_profile = resolve_routes(profile="test", env={})
+                self.assertTrue(all(route.model == "gpt-6-luna" for route in test_profile.values()))
+                self.assertTrue(all(route.reasoning_effort == "medium" for route in test_profile.values()))
+                self.assertEqual(resolve_routes(profile="1", env={}), test_profile)
+                codex = resolve_routes(profile="codex", env={})
+                self.assertEqual(resolve_routes(profile="2", env={}), codex)
+                self.assertEqual(codex["research_lead"].model, "gpt-6-sol")
+                self.assertEqual(codex["research_lead"].reasoning_effort, "high")
+                self.assertEqual(codex["challenger"].model, "gpt-6-sol")
+                self.assertEqual(codex["challenger"].reasoning_effort, "medium")
+                self.assertEqual(codex["investigator"].model, "gpt-6-sol")
+                self.assertEqual(codex["investigator"].reasoning_effort, "low")
+                routed = resolve_routes(profile="codex", env={"THEORYMASTER_MODEL_PROVIDER": "codex"})
+                self.assertEqual(routed["investigator"].model, "gpt-6-sol")
+                self.assertEqual(routed["investigator"].reasoning_effort, "low")
+                self.assertEqual(routed["research_lead"].model, "gpt-6-sol")
+                self.assertEqual(codex["judge"].model, "gpt-6-sol")
+                self.assertEqual(codex["judge"].reasoning_effort, "medium")
+                self.assertEqual(codex["literature"].model, "gpt-6-luna")
+                self.assertEqual(codex["literature"].reasoning_effort, "low")
+                self.assertEqual(codex["reporter"].model, "gpt-6-luna")
+                self.assertEqual(codex["reporter"].reasoning_effort, "low")
+                advanced = resolve_routes(profile="advanced", env={})
+                self.assertEqual(resolve_routes(profile="3", env={}), advanced)
+                self.assertEqual(advanced["research_lead"].reasoning_effort, "xhigh")
+                self.assertEqual(advanced["investigator"].reasoning_effort, "xhigh")
+                self.assertEqual(advanced["judge"].reasoning_effort, "high")
+                self.assertEqual(advanced["challenger"].reasoning_effort, "high")
+                self.assertEqual(advanced["literature"].model, "gpt-6-luna")
+                self.assertEqual(advanced["literature"].reasoning_effort, "medium")
+                self.assertEqual(advanced["reporter"].model, "gpt-6-luna")
+                self.assertEqual(advanced["reporter"].reasoning_effort, "medium")
+                luna = KNOWN_ROUTES["gpt-6-luna"]
+                deepseek = KNOWN_ROUTES["deepseek-flash"]
+                all_luna = resolve_routes(model="gpt-6-luna", env={"THEORYMASTER_MODEL": "deepseek-flash"})
+                self.assertTrue(all(route == luna for route in all_luna.values()))
+                mixed = resolve_routes(model="deepseek-flash", role_specs=["investigator=gpt-6-luna", "judge=gpt-6-luna"], env={})
+                self.assertEqual(mixed["investigator"], luna)
+                self.assertEqual(mixed["judge"], luna)
+                self.assertEqual(mixed["literature"], deepseek)
+                from_env = resolve_routes(env={"THEORYMASTER_MODEL": "gpt-6-luna", "THEORYMASTER_ROUTE": "investigator=deepseek-flash"})
+                self.assertEqual(from_env["investigator"], deepseek)
+                self.assertEqual(from_env["literature"], luna)
+                sol = parse_model_spec("gpt-6-sol@Codex")
+                with tempfile.TemporaryDirectory() as task_file:
+                    task_env = Path(task_file) / "env"
+                    task_env.write_text(
+                        "THEORYMASTER_MODEL=gpt-6-luna@Codex\n"
+                        "THEORYMASTER_ROUTE=investigator=gpt-6-sol@Codex\n",
+                        encoding="utf-8",
+                    )
+                    with mock.patch.object(CodexBackend, "_env_file_values", return_value={"THEORYMASTER_MODEL": "deepseek-flash"}):
+                        with mock.patch.dict("os.environ", {}, clear=True):
+                            from_task = resolve_routes(task_env_file=task_env)
+                    self.assertEqual(from_task["investigator"], sol)
+                    self.assertEqual(from_task["literature"], luna)
+                with self.assertRaisesRegex(ValueError, "unknown model"):
+                    parse_model_spec("gpt-5.6-terra")
+                terra = parse_model_spec("gpt-5.6-terra@FixtureProvider")
+                self.assertEqual(terra.model, "gpt-5.6-terra")
+                self.assertEqual(terra.provider, "FixtureProvider")
+                luna6 = parse_model_spec("gpt-6-luna")
+                self.assertEqual(luna6.model, "gpt-6-luna")
+                self.assertEqual(luna6.provider, "Codex")
+                self.assertEqual(parse_model_spec("gpt-6-luna@Codex"), luna6)
 
 
 

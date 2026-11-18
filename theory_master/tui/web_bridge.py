@@ -128,7 +128,8 @@ def project(research_root: Path, *, secondary: str = "", cycle_dir: Path | None 
     if worker_id is not None:
         # Worker tabs must not display FileSource's task-global latest Cycle.
         # Read the selected Worker's frozen Cycle and its own runtime status.
-        from theory_master.worker_runtime import read_worker, process_identity_alive
+        from theory_master.worker_store import read_worker
+        from theory_master import runtime_manager
         if not re.fullmatch(r"worker-[1-9][0-9]*", worker_id):
             raise ValueError("invalid Worker identity")
         worker = read_worker(research_root, worker_id)
@@ -164,7 +165,7 @@ def project(research_root: Path, *, secondary: str = "", cycle_dir: Path | None 
         state["status"] = str(worker.get("status") or "UNKNOWN").upper()
         state["execution_active"] = (state["status"] in
             {"RUNNING", "STARTING", "PAUSE_REQUESTED", "STOP_REQUESTED"}
-            and process_identity_alive(worker.get("pid"), worker.get("pid_start_ticks")))
+            and runtime_manager.process_identity_alive(worker.get("pid"), worker.get("pid_start_ticks")))
         state["cycle_id"] = cycle_dir.name
         # Collector's cycle_index is an invocation ordinal; the directory
         # name is a task-global Cycle ID and must never become that ordinal.

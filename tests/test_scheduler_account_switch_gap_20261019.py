@@ -22,8 +22,8 @@ def prepare(tmp_path, monkeypatch, *, prior_status="STALLED"):
     spec = SimpleNamespace(research_root=root, max_cycles=20)
     from theory_master import specification, worker_supervisor_dispatch
     monkeypatch.setattr(specification.TaskSpec, "from_task_root", classmethod(lambda cls, path: spec))
-    monkeypatch.setattr(worker_runtime, "_living_workers", lambda root: [])
-    monkeypatch.setattr(worker_runtime, "list_workers", lambda root: [])
+    monkeypatch.setattr('theory_master.worker_store._living_workers', lambda root: [])
+    monkeypatch.setattr('theory_master.worker_store.list_workers', lambda root: [])
     monkeypatch.setattr(worker_supervisor_dispatch, "dispatch_pending", lambda root: False)
     monkeypatch.setattr(worker_runtime.threading.Event, "wait", lambda self, seconds: False)
     return root, metadata, spec
@@ -37,7 +37,7 @@ def observe_scheduler_metadata(monkeypatch, metadata):
         if path == metadata:
             snapshots.append(dict(payload))
         return original(path, payload)
-    monkeypatch.setattr(worker_runtime, "_save_json", recording_save)
+    monkeypatch.setattr('theory_master.multi_worker._save_json', recording_save)
     return snapshots
 
 
@@ -52,8 +52,8 @@ def test_temporary_gap_resumes_and_keeps_allocation_counts(tmp_path, monkeypatch
             return {"started": [], "eligible": 1, "concurrency": 2}
         return {"started": [{"worker_id": "worker-2"}], "eligible": 1, "concurrency": 2}
 
-    monkeypatch.setattr(worker_runtime, "_master_complete", lambda root: len(outcomes) >= 2)
-    monkeypatch.setattr(worker_runtime, "schedule_once", schedule)
+    monkeypatch.setattr('theory_master.worker_store._master_complete', lambda root: len(outcomes) >= 2)
+    monkeypatch.setattr('theory_master.worker_scheduler.schedule_once', schedule)
     assert worker_runtime.scheduler_daemon(spec, 2) == 0
     result = json.loads(metadata.read_text())
     assert result["status"] == "STOPPED"
@@ -75,8 +75,8 @@ def test_no_frontier_waits_for_future_candidate_instead_of_stalling(tmp_path, mo
         calls.append(1)
         return {"started": [], "eligible": 0, "concurrency": 2}
 
-    monkeypatch.setattr(worker_runtime, "_master_complete", lambda root: len(calls) >= 3)
-    monkeypatch.setattr(worker_runtime, "schedule_once", schedule)
+    monkeypatch.setattr('theory_master.worker_store._master_complete', lambda root: len(calls) >= 3)
+    monkeypatch.setattr('theory_master.worker_scheduler.schedule_once', schedule)
     assert worker_runtime.scheduler_daemon(spec, 2) == 0
     waiting = [s for s in saves if s.get("last_no_progress_reason") == "awaiting_eligible_frontier"]
     assert len(waiting) == 3
@@ -89,11 +89,11 @@ def test_paused_claim_retains_capacity_despite_missing_pid(tmp_path, monkeypatch
     _, metadata, spec = prepare(tmp_path, monkeypatch)
     saves = observe_scheduler_metadata(monkeypatch, metadata)
     calls = []
-    monkeypatch.setattr(worker_runtime, "_living_workers", lambda root: [{"worker_id": "worker-2",
+    monkeypatch.setattr('theory_master.worker_store._living_workers', lambda root: [{"worker_id": "worker-2",
                                                                            "claim_id": "pinned"}])
-    monkeypatch.setattr(worker_runtime, "schedule_once",
+    monkeypatch.setattr('theory_master.worker_scheduler.schedule_once',
                         lambda *a, **kw: (calls.append(1) or {"started": [], "eligible": 1}))
-    monkeypatch.setattr(worker_runtime, "_master_complete", lambda root: len(calls) >= 1)
+    monkeypatch.setattr('theory_master.worker_store._master_complete', lambda root: len(calls) >= 1)
     assert worker_runtime.scheduler_daemon(spec, 2) == 0
     assert any(s.get("last_no_progress_reason") == "workers_active_or_claimed" for s in saves)
     assert all(s["status"] != "STALLED" for s in saves)
@@ -104,14 +104,14 @@ def test_failed_claim_reports_manual_recovery_without_mislabeling_live_work(tmp_
     _, metadata, spec = prepare(tmp_path, monkeypatch)
     saves = observe_scheduler_metadata(monkeypatch, metadata)
     calls = []
-    monkeypatch.setattr(worker_runtime, "_living_workers", lambda root: [{
+    monkeypatch.setattr('theory_master.worker_store._living_workers', lambda root: [{
         "worker_id": "worker-2", "claim_id": "pinned", "status": "FAILED",
         "process_alive": False, "current_cycle": "172",
         "error_kind": "NativeGoalRuntimeFailure",
     }])
-    monkeypatch.setattr(worker_runtime, "schedule_once",
+    monkeypatch.setattr('theory_master.worker_scheduler.schedule_once',
                         lambda *a, **kw: (calls.append(1) or {"started": [], "eligible": 1}))
-    monkeypatch.setattr(worker_runtime, "_master_complete", lambda root: len(calls) >= 1)
+    monkeypatch.setattr('theory_master.worker_store._master_complete', lambda root: len(calls) >= 1)
 
     assert worker_runtime.scheduler_daemon(spec, 2) == 0
     blocked = [s for s in saves if "workers_require_manual_recovery" in
@@ -130,9 +130,9 @@ def test_failed_claim_reports_manual_recovery_without_mislabeling_live_work(tmp_
 
 def test_persistent_block_reports_stalled_without_losing_quota(tmp_path, monkeypatch):
     _, metadata, spec = prepare(tmp_path, monkeypatch)
-    monkeypatch.setattr(worker_runtime, "SCHEDULER_NO_PROGRESS_GRACE_SECONDS", 0)
-    monkeypatch.setattr(worker_runtime, "_master_complete", lambda root: False)
-    monkeypatch.setattr(worker_runtime, "schedule_once",
+    monkeypatch.setattr('theory_master.worker_state.SCHEDULER_NO_PROGRESS_GRACE_SECONDS', 0)
+    monkeypatch.setattr('theory_master.worker_store._master_complete', lambda root: False)
+    monkeypatch.setattr('theory_master.worker_scheduler.schedule_once',
                         lambda *a, **kw: {"started": [], "eligible": 1, "reason": "no eligible idle Worker"})
     assert worker_runtime.scheduler_daemon(spec, 2) == 2
     result = json.loads(metadata.read_text())

@@ -20,7 +20,7 @@ class _Handle:
     def stream(self):
         yield SimpleNamespace(
             method="turn/completed",
-            payload=SimpleNamespace(turn=SimpleNamespace(final_response="{}")),
+            payload=SimpleNamespace(turn=SimpleNamespace(id="turn-default", status="completed", final_response="{}")),
         )
 
 
@@ -28,7 +28,7 @@ class _TerminalBeforeItemHandle:
     def stream(self):
         yield SimpleNamespace(
             method="turn/completed",
-            payload=SimpleNamespace(turn=SimpleNamespace(final_response=None)),
+            payload=SimpleNamespace(turn=SimpleNamespace(id="turn-default", status="completed", final_response=None)),
         )
         yield SimpleNamespace(
             method="item/completed",
@@ -42,7 +42,7 @@ class _CompletedWithoutTextHandle:
     def stream(self):
         yield SimpleNamespace(
             method="turn/completed",
-            payload=SimpleNamespace(turn=SimpleNamespace(final_response=None)),
+            payload=SimpleNamespace(turn=SimpleNamespace(id="turn-default", status="completed", final_response=None)),
         )
 
 
@@ -58,7 +58,7 @@ class _DeltaOnlyHandle:
         )
         yield SimpleNamespace(
             method="turn/completed",
-            payload=SimpleNamespace(turn=SimpleNamespace(final_response=None)),
+            payload=SimpleNamespace(turn=SimpleNamespace(id="turn-default", status="completed", final_response=None)),
         )
 
 
@@ -94,7 +94,7 @@ class _HistoryFallbackThread:
     def read(self, *, include_turns=False):
         assert include_turns is True
         return SimpleNamespace(thread=SimpleNamespace(turns=[SimpleNamespace(
-            id="turn-history",
+            id="turn-default",
             items=[SimpleNamespace(root=SimpleNamespace(type="agentMessage", text="{}"))],
         )]))
 
@@ -113,7 +113,7 @@ class _DelayedHistoryFallbackThread:
             root=SimpleNamespace(type="agentMessage", text="{}"),
         )]
         return SimpleNamespace(thread=SimpleNamespace(turns=[SimpleNamespace(
-            id="turn-history-delayed",
+            id="turn-default",
             items=items,
         )]))
 
@@ -124,7 +124,7 @@ class _ResponseShapeHandle:
             method="turn/completed",
             payload=SimpleNamespace(
                 turn=SimpleNamespace(
-                    final_response=None,
+                    id="turn-default", status="completed", final_response=None,
                     items=[SimpleNamespace(
                         type="agent_message",
                         content=[SimpleNamespace(type="input_text", text="{}")],
@@ -156,7 +156,7 @@ class _UnknownItemShapeHandle:
         )
         yield SimpleNamespace(
             method="turn/completed",
-            payload=SimpleNamespace(turn=SimpleNamespace(final_response=None)),
+            payload=SimpleNamespace(turn=SimpleNamespace(id="turn-default", status="completed", final_response=None)),
         )
 
 
@@ -194,7 +194,7 @@ class _NestedTurnOutputHandle:
             method="turn/completed",
             payload=SimpleNamespace(
                 turn=SimpleNamespace(
-                    final_response=None,
+                    id="turn-default", status="completed", final_response=None,
                     output=SimpleNamespace(
                         data=[SimpleNamespace(type="agentMessage", text="{}")]
                     ),
@@ -219,7 +219,7 @@ class _ApprovalUnavailableHandle:
         )
         yield SimpleNamespace(
             method="turn/completed",
-            payload=SimpleNamespace(turn=SimpleNamespace(final_response='{"findings":[],"remaining_scientific_question":"unavailable"}')),
+            payload=SimpleNamespace(turn=SimpleNamespace(id="turn-default", status="completed", final_response='{"findings":[],"remaining_scientific_question":"unavailable"}')),
         )
 
 
@@ -247,7 +247,7 @@ class _WatchdogProgressHandle:
         time.sleep(0.03)
         yield SimpleNamespace(
             method="turn/completed",
-            payload=SimpleNamespace(turn=SimpleNamespace(final_response=None)),
+            payload=SimpleNamespace(turn=SimpleNamespace(id="turn-default", status="completed", final_response=None)),
         )
 
 

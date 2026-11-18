@@ -142,16 +142,16 @@ def _budget_fixture(tmp_path, *, error_type="RuntimeError", detail="turn complet
 def test_budget_transport_one_verified_resume_no_grant_or_repeat(tmp_path):
     root, cycle, worker = _budget_fixture(tmp_path)
     spec = SimpleNamespace(research_root=root)
-    with (patch.object(wr, "list_workers", return_value=[worker]),
-          patch.object(wr, "process_identity_alive", return_value=False),
-          patch.object(wr, "_graph_path", return_value=root/"graph.db"),
-          patch.object(wr, "_worker_live_claim", return_value={"cycle_id": "185"}),
-          patch.object(wr, "_checkpoint_matches_claim", return_value=True),
+    with (patch('theory_master.worker_store.list_workers', return_value=[worker]),
+          patch('theory_master.runtime_manager.process_identity_alive', return_value=False),
+          patch('theory_master.worker_store._graph_path', return_value=root/"graph.db"),
+          patch('theory_master.worker_store._worker_live_claim', return_value={"cycle_id": "185"}),
+          patch('theory_master.worker_store._checkpoint_matches_claim', return_value=True),
           patch("theory_master.investigator_budget.budget_status",
                 return_value={"review_index": 1, "rejected": False}),
           patch("theory_master.codex_accounts.account_rate_limits", return_value={"ok": True}),
           patch("theory_master.codex_accounts.quota_available", return_value=True),
-          patch.object(wr, "worker_action", return_value={"status": "STARTING"}) as resume):
+          patch('theory_master.worker_actions.worker_action', return_value={"status": "STARTING"}) as resume):
         assert wr._dispatch_exhausted_budget_reviewer_transport(spec) is True
         assert wr._dispatch_exhausted_budget_reviewer_transport(spec) is False
         resume.assert_called_once_with(spec, "worker-2", "resume")
@@ -164,15 +164,15 @@ def test_budget_json_failure_never_retried_as_transport(tmp_path):
         tmp_path, error_type="ValueError",
         detail="Budget Reviewer did not return one valid JSON object")
     spec = SimpleNamespace(research_root=root)
-    with (patch.object(wr, "list_workers", return_value=[worker]),
-          patch.object(wr, "process_identity_alive", return_value=False),
-          patch.object(wr, "_graph_path", return_value=root/"graph.db"),
-          patch.object(wr, "_worker_live_claim", return_value={"cycle_id": "185"}),
-          patch.object(wr, "_checkpoint_matches_claim", return_value=True),
+    with (patch('theory_master.worker_store.list_workers', return_value=[worker]),
+          patch('theory_master.runtime_manager.process_identity_alive', return_value=False),
+          patch('theory_master.worker_store._graph_path', return_value=root/"graph.db"),
+          patch('theory_master.worker_store._worker_live_claim', return_value={"cycle_id": "185"}),
+          patch('theory_master.worker_store._checkpoint_matches_claim', return_value=True),
           patch("theory_master.investigator_budget.budget_status",
                 return_value={"review_index": 1, "rejected": False}),
           patch("theory_master.codex_accounts.account_rate_limits") as provider,
-          patch.object(wr, "worker_action") as resume):
+          patch('theory_master.worker_actions.worker_action') as resume):
         assert wr._dispatch_exhausted_budget_reviewer_transport(spec) is False
         assert wr._dispatch_exhausted_budget_reviewer_transport(spec) is False
         provider.assert_not_called()
@@ -197,14 +197,14 @@ def test_orphan_with_authoritative_closed_preservation_releases_without_model(tm
               "preservation_job_start_ticks": 4,
               "claim_id": "original", "epoch": 5}
     spec = SimpleNamespace(research_root=root)
-    with (patch.object(wr, "list_workers", return_value=[worker]),
-          patch.object(wr, "process_identity_alive", return_value=False),
-          patch.object(wr, "_graph_path", return_value=root/"graph.db"),
-          patch.object(wr, "_worker_live_claim", return_value={"cycle_id": "184"}),
-          patch.object(wr, "_checkpoint_matches_claim", return_value=True),
+    with (patch('theory_master.worker_store.list_workers', return_value=[worker]),
+          patch('theory_master.runtime_manager.process_identity_alive', return_value=False),
+          patch('theory_master.worker_store._graph_path', return_value=root/"graph.db"),
+          patch('theory_master.worker_store._worker_live_claim', return_value={"cycle_id": "184"}),
+          patch('theory_master.worker_store._checkpoint_matches_claim', return_value=True),
           patch("theory_master.research_preservation.finalize_preserved_cycle",
                 return_value={"scientific_verdict": None}),
-          patch.object(wr, "worker_action", return_value={
+          patch('theory_master.worker_actions.worker_action', return_value={
               "status": "RELEASED", "model_calls": 0}) as release):
         result = wr._flag_orphaned_preservation_jobs(spec)
         assert result == [{"worker_id": "worker-2", "cycle": "184",
@@ -226,11 +226,11 @@ def test_dead_budget_reviewer_watcher_restarted_only_before_retry_guard(tmp_path
              "fencing_epoch": 2, "cycle_id": "185"}
     spec = SimpleNamespace(research_root=root)
     with (patch("theory_master.quota_auto_adjust.quota_auto_adjust_enabled", return_value=True),
-          patch.object(wr, "list_workers", return_value=[worker]),
-          patch.object(wr, "_live_cycle_claims", return_value=[claim]),
-          patch.object(wr, "process_identity_alive", return_value=False),
-          patch.object(wr, "_checkpoint_matches_claim", return_value=True),
-          patch.object(wr, "start_worker_quota_watch",
+          patch('theory_master.worker_store.list_workers', return_value=[worker]),
+          patch('theory_master.worker_store._live_cycle_claims', return_value=[claim]),
+          patch('theory_master.runtime_manager.process_identity_alive', return_value=False),
+          patch('theory_master.worker_store._checkpoint_matches_claim', return_value=True),
+          patch('theory_master.worker_quota.start_worker_quota_watch',
                        return_value={"status": "starting"}) as watcher):
         result = wr._repair_missing_quota_watchers(spec)
         assert result[0]["status"] == "starting"
@@ -297,14 +297,14 @@ def test_budget_reviewer_post_transport_failure_is_recorded_without_new_spend(tm
         "cycle": "185", "worker_id": "worker-2", "status": "resume_dispatched",
         "failed_sessions": 2, "review_index": 1})
     spec = SimpleNamespace(research_root=root)
-    with (patch.object(wr, "list_workers", return_value=[worker]),
-          patch.object(wr, "process_identity_alive", return_value=False),
-          patch.object(wr, "_graph_path", return_value=root/"graph.db"),
-          patch.object(wr, "_worker_live_claim", return_value={"cycle_id": "185"}),
-          patch.object(wr, "_checkpoint_matches_claim", return_value=True),
+    with (patch('theory_master.worker_store.list_workers', return_value=[worker]),
+          patch('theory_master.runtime_manager.process_identity_alive', return_value=False),
+          patch('theory_master.worker_store._graph_path', return_value=root/"graph.db"),
+          patch('theory_master.worker_store._worker_live_claim', return_value={"cycle_id": "185"}),
+          patch('theory_master.worker_store._checkpoint_matches_claim', return_value=True),
           patch("theory_master.investigator_budget.budget_status",
                 return_value={"review_index": 1, "rejected": False}),
-          patch.object(wr, "worker_action") as resume):
+          patch('theory_master.worker_actions.worker_action') as resume):
         assert wr._dispatch_exhausted_budget_reviewer_transport(spec) is False
         resume.assert_not_called()
     events = [json.loads(x) for x in (cycle/"important_events.jsonl").read_text().splitlines()]
@@ -314,14 +314,14 @@ def test_budget_reviewer_post_transport_failure_is_recorded_without_new_spend(tm
 def test_budget_ledger_corruption_is_not_misclassified_as_quota(tmp_path):
     root, cycle, worker = _budget_fixture(tmp_path)
     spec = SimpleNamespace(research_root=root)
-    with (patch.object(wr, "list_workers", return_value=[worker]),
-          patch.object(wr, "process_identity_alive", return_value=False),
-          patch.object(wr, "_graph_path", return_value=root/"graph.db"),
-          patch.object(wr, "_worker_live_claim", return_value={"cycle_id": "185"}),
-          patch.object(wr, "_checkpoint_matches_claim", return_value=True),
+    with (patch('theory_master.worker_store.list_workers', return_value=[worker]),
+          patch('theory_master.runtime_manager.process_identity_alive', return_value=False),
+          patch('theory_master.worker_store._graph_path', return_value=root/"graph.db"),
+          patch('theory_master.worker_store._worker_live_claim', return_value={"cycle_id": "185"}),
+          patch('theory_master.worker_store._checkpoint_matches_claim', return_value=True),
           patch("theory_master.investigator_budget.budget_status",
                 side_effect=ValueError("bad ledger")),
-          patch.object(wr, "worker_action") as resume):
+          patch('theory_master.worker_actions.worker_action') as resume):
         assert wr._dispatch_exhausted_budget_reviewer_transport(spec) is False
         resume.assert_not_called()
     events = [json.loads(x) for x in (cycle/"important_events.jsonl").read_text().splitlines()]

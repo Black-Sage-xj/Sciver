@@ -53,7 +53,7 @@ class FakeCodex:
         assert thread_id == THREAD
         assert kwargs.get("include_turns") is False
 
-    def thread_read(self, thread_id):
+    def thread_read(self, thread_id, *, include_turns=True):
         return SimpleNamespace(thread=SimpleNamespace(
             id=thread_id, status=SimpleNamespace(
                 root=SimpleNamespace(type=self.root_type)
@@ -69,7 +69,7 @@ class CapacityIdleRecoveryTests(unittest.TestCase):
     def probe(self, research, cycle, state, *, worker_status="FAILED", process_alive=False):
         worker = {"worker_id": "worker-1", "status": worker_status,
                   "process_alive": process_alive}
-        with patch("theory_master.worker_runtime.list_workers", return_value=[worker]), \
+        with patch("theory_master.worker_store.list_workers", return_value=[worker]), \
              patch("openai_codex.Codex", FakeCodex):
             return _recovered_capacity_thread_is_idle(research, cycle, state)
 

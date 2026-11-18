@@ -50,10 +50,10 @@ def task(tmp_path, monkeypatch):
     plan = tmp_path / 'research_plan.md'
     plan.write_text('# Goal\nAn unfinished research Goal.')
     spec = SimpleNamespace(research_root=root, branch_canvas=canvas, document=plan, max_cycles=2)
-    monkeypatch.setattr(wr, 'resolve_worker_routes', lambda *_: {})
-    monkeypatch.setattr(wr, '_route_capacity', lambda spec, n: (n, [None] * n))
-    monkeypatch.setattr(wr, '_task_scoped_process_env', lambda *_: {})
-    monkeypatch.setattr(wr, '_update_cycle_memory_index', lambda *a, **k: None)
+    monkeypatch.setattr('theory_master.worker_routes.resolve_worker_routes', lambda *_: {})
+    monkeypatch.setattr('theory_master.worker_routes._route_capacity', lambda spec, n: (n, [None] * n))
+    monkeypatch.setattr('theory_master.worker_launch._task_scoped_process_env', lambda *_: {})
+    monkeypatch.setattr('theory_master.worker_execution._update_cycle_memory_index', lambda *a, **k: None)
     return spec, root
 
 
@@ -122,7 +122,7 @@ def test_local_failure_finishes_old_claim_and_next_allocation_is_unbound(task, m
     assert worker['target_h_id'] is None and worker['entry_node_id'] is None
     assert worker['last_local_replan']['reason'] == reason
     launches = []
-    monkeypatch.setattr(wr, '_launch_detached_service', lambda args, **kw: launches.append(args))
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service', lambda args, **kw: launches.append(args))
     outcome = wr.schedule_once(spec, resource_slots=1, preferred_hypothesis='H-0001',
                                eligible_worker_ids=frozenset({'worker-1'}))
     assert len(outcome['started']) == 1 and len(launches) == 1
@@ -158,7 +158,7 @@ def test_independent_guards_keep_a_local_failure_out_of_new_allocations(task, mo
         assert claims.list_claims()[0]['status'] == 'paused'
     else:
         assert code == 0 and worker['status'] == wr.WAITING_RESEARCH_DIRECTION
-    monkeypatch.setattr(wr, '_launch_detached_service', lambda *a, **kw: pytest.fail('guarded allocation'))
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service', lambda *a, **kw: pytest.fail('guarded allocation'))
     assert wr.schedule_once(spec, resource_slots=1,
                             eligible_worker_ids=frozenset({'worker-1'}))['started'] == []
     assert all(path.read_bytes() == data for path, data in snapshots)
@@ -184,8 +184,8 @@ def test_daemon_replans_with_new_claims_only_within_remaining_worker_quota(task,
     monkeypatch.setattr(specification.TaskSpec, 'from_task_root', classmethod(lambda cls, path: spec))
     monkeypatch.setattr(worker_supervisor_dispatch, 'dispatch_pending', lambda *_: False)
     monkeypatch.setattr(budget_auto_preservation, 'dispatch_auto_budget_preservation', lambda *_: False)
-    monkeypatch.setattr(wr, '_repair_missing_quota_watchers', lambda *_: [])
-    monkeypatch.setattr(wr, '_dispatch_exhausted_budget_reviewer_transport', lambda *_: False)
+    monkeypatch.setattr('theory_master.worker_quota._repair_missing_quota_watchers', lambda *_: [])
+    monkeypatch.setattr('theory_master.worker_quota._dispatch_exhausted_budget_reviewer_transport', lambda *_: False)
     # Only shorten the daemon poll. Real run_once heartbeat still blocks until
     # its stop event is set, preventing a synthetic busy heartbeat thread.
     original_wait = wr.threading.Event.wait
@@ -204,7 +204,7 @@ def test_daemon_replans_with_new_claims_only_within_remaining_worker_quota(task,
         assert '--resume-cycle' not in args
         assert wr.run_once(spec, 'worker-1', claim_id, epoch) == 0
         wr.save_worker(root, 'worker-1', pid=None, pid_start_ticks=None)
-    monkeypatch.setattr(wr, '_launch_detached_service', launch)
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service', launch)
     assert wr.scheduler_daemon(spec, 1) == 0
     metadata = json.loads(path.read_text())
     assert metadata['stop_reason'] == 'cycle_budget_exhausted'
@@ -233,7 +233,7 @@ def test_historical_canonical_waiting_attempt_wakes_for_one_fresh_claim(task, mo
     waiting_worker(root, local_state('no_qualified_candidate'))
     before = (root / '1/research_state.json').read_bytes()
     launches = []
-    monkeypatch.setattr(wr, '_launch_detached_service', lambda args, **kw: launches.append(args))
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service', lambda args, **kw: launches.append(args))
     result = wr.schedule_once(spec, resource_slots=1, eligible_worker_ids=frozenset({'worker-1'}))
     assert len(result['started']) == 1 and len(launches) == 1
     assert result['started'][0]['wake_reason'] == 'local_replan:no_qualified_candidate'
@@ -262,7 +262,7 @@ def test_historical_waiting_replan_requires_safe_matching_unguarded_state(task, 
         target = root / 'original-state.json'
         path.rename(target)
         path.symlink_to(target)
-    monkeypatch.setattr(wr, '_launch_detached_service', lambda *a, **kw: pytest.fail('invalid state replan'))
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service', lambda *a, **kw: pytest.fail('invalid state replan'))
     assert wr.schedule_once(spec, resource_slots=1)['started'] == []
 
 
@@ -273,5 +273,5 @@ def test_goal_seal_stops_the_next_allocation_after_local_failure(task, monkeypat
     with ScienceGraphStore(Path(spec.branch_canvas).with_name('science_graph.sqlite3')) as store:
         store.seal_goal(goal_id='g', source_cycle='9', research_plan_sha256='0' * 64,
                         judge_receipt_ref=None, detail={'verdict': 'passed'})
-    monkeypatch.setattr(wr, '_launch_detached_service', lambda *a, **kw: pytest.fail('sealed allocation'))
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service', lambda *a, **kw: pytest.fail('sealed allocation'))
     assert wr.schedule_once(spec, resource_slots=1)['reason'] == 'master_complete'

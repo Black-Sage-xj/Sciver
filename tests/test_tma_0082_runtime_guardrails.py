@@ -19,7 +19,7 @@ def test_dead_scheduler_pid_reconciles_stale_running_to_failed(tmp_path, monkeyp
     meta.parent.mkdir(parents=True)
     meta.write_text(json.dumps({"status": "RUNNING", "pid": 4321,
                                 "start_ticks": 99, "cycles_started": 7}))
-    monkeypatch.setattr(worker_runtime, "process_identity_alive", lambda pid, ticks: False)
+    monkeypatch.setattr('theory_master.runtime_manager.process_identity_alive', lambda pid, ticks: False)
     provenance = {
         "schema": "theory-master/runtime-source-provenance/v1",
         "source_root": str(tmp_path / "sdk"),
@@ -30,7 +30,7 @@ def test_dead_scheduler_pid_reconciles_stale_running_to_failed(tmp_path, monkeyp
         "source_coherent": True,
         "source_coherence_errors": [],
     }
-    monkeypatch.setattr(worker_runtime, "runtime_source_provenance", lambda: provenance)
+    monkeypatch.setattr('theory_master.runtime_manager.runtime_source_provenance', lambda: provenance)
 
     status = worker_runtime.scheduler_status(root)
 
@@ -51,7 +51,7 @@ def test_terminal_scheduler_state_is_not_rewritten(tmp_path, monkeypatch):
     meta.parent.mkdir(parents=True)
     meta.write_text(json.dumps({"status": "STOPPED", "pid": 4321,
                                 "start_ticks": 99}))
-    monkeypatch.setattr(worker_runtime, "process_identity_alive", lambda pid, ticks: False)
+    monkeypatch.setattr('theory_master.runtime_manager.process_identity_alive', lambda pid, ticks: False)
 
     status = worker_runtime.scheduler_status(root)
 
@@ -85,7 +85,7 @@ def test_scheduler_preflight_rejects_mixed_sdk_source_roots(monkeypatch, tmp_pat
     config = tmp_path / "theory-master.config.json"
     config.write_text("{}")
     spec = SimpleNamespace(config_path=config)
-    monkeypatch.setattr(worker_runtime, "runtime_source_provenance", lambda: {
+    monkeypatch.setattr('theory_master.runtime_manager.runtime_source_provenance', lambda: {
         "source_coherent": False,
         "source_coherence_errors": ["workflow_qualification.py: /old/sdk/theory_master/workflow_qualification.py"],
     })

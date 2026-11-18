@@ -49,7 +49,8 @@ def settle_failed_capacity_turn(thread: object, turn_id: str) -> bool:
     if not turn_id:
         return False
     try:
-        client = thread._client
+        from .codex_sdk_compat import goal_client
+        client = goal_client(thread)
         snapshot = client.thread_read(thread.id, include_turns=True).thread
         root = getattr(getattr(snapshot, "status", None), "root", None)
         turns = getattr(snapshot, "turns", None) or []

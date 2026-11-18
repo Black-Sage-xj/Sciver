@@ -262,6 +262,8 @@ class WebTuiMonitoringTests(unittest.TestCase):
             "cycle": "1", "state": "OVER",
         }, tab="research", fragment=True)
         self.assertNotIn('data-codex-quota', secondary)
+        from bs4 import BeautifulSoup
+        config = BeautifulSoup(page, "html.parser").select_one("#tm-run-config").string
         source = page.split("<script>")[-1].split("</script>", 1)[0]
         anchor = "      let busy=false;"
         self.assertIn(anchor, source)
@@ -286,7 +288,10 @@ let quota = {
 const host = {addEventListener(){},
   querySelector(key){return key==='[data-codex-quota]'?quota:null;}};
 const document = {hidden:false,addEventListener(){},
-  getElementById(id){return id==='tm-run-live'?host:null;}};
+  getElementById(id){
+    if(id==='tm-run-config') return {textContent:process.argv[2]};
+    return id==='tm-run-live'?host:null;
+  }};
 const window = {addEventListener(){}};
 const now=Math.floor(Date.now()/1000);
 let payload = {active_account:'account-2',refreshing:false,accounts:[
@@ -368,7 +373,7 @@ const {loadCodexQuota,paintCodexQuota}=window.__quotaTest;
 })().catch(error=>{console.error(error); process.exitCode=1;});
 """
         result = subprocess.run(
-            ["node", "-e", test, source], capture_output=True,
+            ["node", "-e", test, source, config], capture_output=True,
             text=True, timeout=12,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -381,6 +386,8 @@ const {loadCodexQuota,paintCodexQuota}=window.__quotaTest;
             self.skipTest("Node.js unavailable")
         page=run_detail_body({"observer_id":"a"*16,"run_id":1,"task_name":"Mock",
                               "cycle":"1","state":"OVER"})
+        from bs4 import BeautifulSoup
+        config = BeautifulSoup(page, "html.parser").select_one("#tm-run-config").string
         source=page.split("<script>")[-1].split("</script>",1)[0]
         anchor="      function select(viewName){"
         self.assertIn(anchor,source)
@@ -398,7 +405,8 @@ function el(tag){
   return o;
 }
 const document={
- getElementById:(id)=>id==='tm-run-live'?host:null,
+ getElementById:(id)=>id==='tm-run-config'?{textContent:process.argv[2]}:
+   id==='tm-run-live'?host:null,
  addEventListener(){},createElement:el,
  body:{append(p){appended.push(p);}}};
 const window={addEventListener(){},innerWidth:1200,innerHeight:900};
@@ -429,7 +437,7 @@ closeUsagePopover();
 assert(panel.removed);
 assert.equal(button.attrs['aria-expanded'],'false');
 """
-        result=subprocess.run(["node","-e",verify,source],capture_output=True,text=True,timeout=12)
+        result=subprocess.run(["node","-e",verify,source,config],capture_output=True,text=True,timeout=12)
         self.assertEqual(result.returncode,0,result.stderr)
 
     def test_web_theme_uses_existing_dashboard_palette_not_terminal_theme(self):

@@ -66,14 +66,10 @@ def _safe_json(path: Path) -> dict[str, Any]:
 
 
 def _event_tail(path: Path, limit: int = 300) -> list[dict[str, Any]]:
-    if not path.is_file():
-        return []
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return []
+    from .bounded_log import tail_lines
+    lines = tail_lines(path, limit=limit)
     events: list[dict[str, Any]] = []
-    for line in lines[-limit:]:
+    for line in lines:
         if not line.strip():
             continue
         try:

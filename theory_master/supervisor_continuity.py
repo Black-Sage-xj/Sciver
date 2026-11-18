@@ -26,6 +26,9 @@ def engineering_skill_eligible(state: dict[str, Any], review: dict[str, Any]) ->
     checkpoint = Path(str(state.get("last_safe_checkpoint") or ""))
     if not ((checkpoint.is_file() and not checkpoint.is_symlink()) or state.get("role_outputs")):
         return False
+    if review.get("repair_route") == "isolated_runtime":
+        from .runtime_supervisor_review import resume_blocker
+        return resume_blocker({**state, "protocol_health": "valid"}, for_repair=True) is None
     from .observability.incident_routing import classify_incident
     from .supervisor_recovery import failure_details
     recovery = failure_details(state)
@@ -64,6 +67,21 @@ def attempt_engineering_skill(root: Path, cycle: Path, state: dict[str, Any],
         )
         if not record:
             return {"status": "engineering_unavailable", "reason": "No incident session"}
+        if review.get("repair_route") == "isolated_runtime":
+            from .supervisor_intervention import SupervisorSession, supervisor_model
+            from .supervisor_runtime_repair import attempt_runtime_repair
+            session = SupervisorSession(cycle, profile="runtime", incident_id=str(record["id"]),
+                                        code="run_failed", summary=str(review.get("reason") or ""),
+                                        model=supervisor_model(root))
+            outcome = attempt_runtime_repair(
+                root=root, cycle_dir=cycle, state=state, state_path=cycle / "research_state.json",
+                session=session, model=supervisor_model(root), incident_id=str(record["id"]),
+                **({"log_path": Path(review["log_path"])} if review.get("log_path") else {}))
+            session.close("returned" if outcome["action"] == "resume" else "hold",
+                          action=outcome["action"], reason=outcome["reason"])
+            return {"status": "engineering_attempted", "incident_session_id": str(record["id"]),
+                    "repair_route": "isolated_runtime", "reason": outcome["reason"],
+                    "verification": "pending_runtime_recheck"}
         from .supervisor import _supervisor_backend
         from .supervisor_intervention import supervisor_model, DEFAULT_PROVIDER
         from .supervisor_candidate_repair import attempt_candidate_repair

@@ -81,6 +81,9 @@ def test_master_and_worker_cycle_fields_cannot_be_confused(tmp_path):
     assert 'data-cycle-max-current' in page
     scripts = BeautifulSoup(page, "html.parser").select("script")
     for script in scripts:
+        if script.get("type") == "application/json":
+            json.loads(script.get_text())
+            continue
         code = script.get_text()
         if code.strip():
             check = subprocess.run(["node", "--check", "-"], input=code, text=True,

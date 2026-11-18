@@ -1,4 +1,5 @@
 """Cycle card owns limit edit; State owns run/pause/resume/kill, no duplicate panel."""
+import json
 import subprocess
 import unittest
 from unittest.mock import patch
@@ -76,6 +77,9 @@ class CycleInlineEditorTests(unittest.TestCase):
                               "task_name":"Fixture","state":"RUNNING"})
         doc=BeautifulSoup(html,"html.parser")
         for index,tag in enumerate(doc.select("script")):
+            if tag.get("type") == "application/json":
+                json.loads(tag.get_text())
+                continue
             if tag.get("src"): continue
             code=tag.string or ""
             if not code.strip():continue

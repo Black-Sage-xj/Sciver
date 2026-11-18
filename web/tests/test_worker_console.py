@@ -135,6 +135,9 @@ def test_over_worker_has_next_cycle_control_not_resume(tmp_path):
     assert "['OVER','RELEASED','CANCELLED','STOPPED','FAILED_START'].includes(state)" in page
     assert "document.getElementById('tm-operator')||selectedWorker" in page
     for script in soup.select('script'):
+        if script.get("type") == "application/json":
+            json.loads(script.get_text())
+            continue
         code = script.get_text()
         if not code.strip():
             continue

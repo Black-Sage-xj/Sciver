@@ -949,14 +949,15 @@ class WebTests(unittest.TestCase):
         self.assertEqual(set(SDK_OWNERSHIP_FIELDS), stage_pairs)
         self.assertEqual(
             STAGE_CONTEXT_FIELDS[("judge", "goal_completion")],
-            ("research_plan_access", "agent_graph", "agent_graph_reuse"),
+            ("research_plan_access", "agent_graph", "agent_graph_reuse", "delivery_material_access"),
         )
         self.assertEqual(
             STAGE_CONTEXT_FIELDS[("research_lead", "frontier_proposal")],
             (
                 "goal", "research_contract", "final_gate", "scientific_model_summary",
                 "agent_graph", "agent_graph_reuse", "science_graph_tools", "running_hypotheses",
-                "operator_guidance", "qualification_feedback", "lead_literature_result", "workspace_access",
+                "operator_guidance", "recent_execution_limits", "recent_qualification_stops",
+                "qualification_feedback", "lead_literature_result", "workspace_access",
             ),
         )
         self.assertEqual(
@@ -985,7 +986,7 @@ class WebTests(unittest.TestCase):
         )
         self.assertEqual(
             STAGE_CONTEXT_FIELDS[("research_lead", "cycle_synthesis")],
-            ("active_hypothesis", "judge_decision", "scientific_access"),
+            ("active_hypothesis", "judge_decision", "previous_scientific_model", "scientific_access"),
         )
         # Overview is the navigation-first default. Full view is the contract
         # detail mode where individual Agent/SDK field chips must appear.
@@ -1192,7 +1193,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("显示规则 / 维护说明", body)
         self.assertIn("◆", body)
         self.assertLess(
-            body.index('<div class="stage-canvas-shell">'),
+            body.index('<div class="stage-canvas-shell"'),
             body.index('<details class="stage-meta stage-policy" id="workflow-guide">'),
         )
         self.assertIn(".stage-toolbar { position:absolute; top:10px; left:10px;", body)
@@ -1360,13 +1361,15 @@ class WebTests(unittest.TestCase):
                 thread2.join(timeout=3)
 
     def test_workflow_without_historical_warnings_keeps_diagram_without_diagnostics(self):
-        with patch("tm_observer.web.load_change_requests", return_value=ChangeRequestLoad((), ())):
+        with patch("tm_observer.web_pages.load_change_requests", return_value=ChangeRequestLoad((), ())):
             page = stage_workflow_html()
         self.assertIn('class="stage-canvas"', page)
         self.assertNotIn('class="tm-workflow-diagnostics"', page)
 
     def test_get_pages_and_json_are_read_only_and_post_is_disabled(self):
-        with tempfile.TemporaryDirectory() as temp:
+        with tempfile.TemporaryDirectory() as temp, patch(
+            "tm_observer.web_pages.load_change_requests", return_value=ChangeRequestLoad((), ())
+        ):
             root = Path(temp)
             task = make_task(root, "web-task", status="RUNNING", pid=os.getpid(), execution_active=True, master_id=9)
             before = tree_signature(task)

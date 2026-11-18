@@ -121,7 +121,7 @@ def test_migration_rejects_stale_frontier_and_live_process_without_mutation(tmp_
         with pytest.raises(ValueError,match="no longer owns"):
             runtime._migrate_paused_worker_account(root,worker,"1")
     assert json.loads((root/"134/research_state.json").read_text())==science
-    with mock.patch.object(runtime,"process_identity_alive",return_value=True):
+    with mock.patch('theory_master.runtime_manager.process_identity_alive',return_value=True):
         with pytest.raises(ValueError,match="active scientific Turn"):
             runtime._migrate_paused_worker_account(root,worker,"1")
     assert runtime.read_worker(root,"worker-2")["account"]=="2"
@@ -133,7 +133,7 @@ def test_quota_watcher_prefers_migrating_paused_cycle_when_other_login_has_quota
     spec=SimpleNamespace(research_root=root)
     with mock.patch("theory_master.codex_accounts.account_rate_limits",
                     side_effect=lambda acct:_quota(0 if acct=="2" else 90)), \
-         mock.patch.object(runtime,"worker_action",
+         mock.patch('theory_master.worker_actions.worker_action',
                            return_value={"status":"STARTING","cycle":"134"}) as resume, \
          mock.patch("theory_master.worker_runtime.time.sleep",
                     side_effect=StopIteration("one pass completed")):
@@ -165,7 +165,7 @@ def test_budget_technical_failure_quota_resume_same_login_once(tmp_path):
     spec = SimpleNamespace(research_root=root)
     with mock.patch("theory_master.codex_accounts.account_rate_limits",
                     side_effect=lambda acct: _quota(80 if acct == "1" else 55)), \
-         mock.patch.object(runtime, "worker_action",
+         mock.patch('theory_master.worker_actions.worker_action',
                            return_value={"status": "STARTING", "cycle": "184"}) as resume:
         assert runtime.watch_worker_quota(spec, "worker-2") == 0
         resume.assert_called_once_with(spec, "worker-2", "resume")
@@ -196,7 +196,7 @@ def test_budget_technical_watcher_survives_transient_quota_probe_failure(tmp_pat
     with mock.patch("theory_master.codex_accounts.account_rate_limits",
                     side_effect=[TimeoutError("temporary quota service error"), _quota(30)]) as probe, \
          mock.patch("theory_master.worker_runtime.time.sleep") as sleep, \
-         mock.patch.object(runtime, "worker_action",
+         mock.patch('theory_master.worker_actions.worker_action',
                            return_value={"status": "STARTING", "cycle": "184"}) as resume:
         assert runtime.watch_worker_quota(spec, "worker-2") == 0
     assert probe.call_count == 2
@@ -237,7 +237,7 @@ def test_quota_watcher_never_overrides_budget_rejection(tmp_path):
         "schema": runtime.SCHEMA, "worker_id": "worker-2", "account": "2",
         "status": "NEEDS_ATTENTION", "current_cycle": "184",
     })
-    with mock.patch.object(runtime, "worker_action") as resume:
+    with mock.patch('theory_master.worker_actions.worker_action') as resume:
         assert runtime.watch_worker_quota(SimpleNamespace(research_root=root), "worker-2") == 0
         resume.assert_not_called()
 
@@ -248,7 +248,7 @@ def test_quota_watcher_never_migrates_unrelated_pause(tmp_path):
     science["phase"]="needs_attention"
     _write(root/"134/research_state.json",science)
     spec=SimpleNamespace(research_root=root)
-    with mock.patch.object(runtime,"worker_action") as resume:
+    with mock.patch('theory_master.worker_actions.worker_action') as resume:
         assert runtime.watch_worker_quota(spec,"worker-2")==0
     resume.assert_not_called()
 

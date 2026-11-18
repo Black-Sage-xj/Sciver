@@ -3,7 +3,6 @@ from __future__ import annotations
 """Official Codex SDK transport adapter."""
 
 import json
-import hashlib
 import logging
 import os
 import shutil
@@ -19,7 +18,6 @@ from .backend_config import ACCOUNT_PROVIDERS, DEFAULT_ROUTES, RoleRoute
 from .execution_policy import PROCESS_CONTROL_GUARD, REPO_GUARD, make_approval_decision
 from .role_registry import WRITE_ROLES
 from .skills import developer_instructions, turn_input
-from .provider_errors import ProviderQuotaExhausted, is_provider_quota_exhausted
 
 
 def _codex_home() -> Path:
@@ -39,45 +37,10 @@ def _codex_home() -> Path:
     return ensure_layout()["runtime"]
 
 
-class ToolApprovalUnavailable(RuntimeError):
-    """An automatic review service failed before an authorized tool could run."""
-
-
-class CodexProviderRequestRejected(RuntimeError):
-    """Provider explicitly rejected the model/request; reconnect cannot fix it."""
-
-
-class CodexTurnCancelled(RuntimeError):
-    """The caller explicitly stopped this interactive turn."""
-
-
-def provider_request_rejection(raw_error: str | None) -> CodexProviderRequestRejected | None:
-    """Preserve the original provider 400 instead of treating it as absent output.
-
-    Only an explicit invalid_request_error / HTTP 400 is classified here.
-    Stream EOFs and genuinely missing assistant replies remain recoverable.
-    """
-    if not raw_error:
-        return None
-    try:
-        payload = json.loads(raw_error)
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    detail = payload.get("error")
-    if not isinstance(detail, dict):
-        return None
-    code = payload.get("status") or detail.get("status") or detail.get("code")
-    category = str(detail.get("type") or "")
-    if str(code) != "400" or category != "invalid_request_error":
-        return None
-    message = str(detail.get("message") or "Provider rejected the request")
-    # Preserve the actionable model name and reason, without exposing arbitrary
-    # provider metadata/headers or dumping potentially sensitive payloads.
-    return CodexProviderRequestRejected(
-        f"Codex provider HTTP 400 invalid_request_error: {message[:700]}"
-    )
+from .codex_errors import (
+    ToolApprovalUnavailable, CodexProviderRequestRejected, CodexTurnCancelled,
+    CodexTurnFailed, provider_request_rejection,
+)
 
 
 class CodexBackend:
@@ -507,6 +470,7 @@ class CodexBackend:
         except ImportError as exc:
             raise RuntimeError("Codex SDK unavailable; install `.[sdk]`") from exc
         if self.client is None:
+            self._verify_provider_runtime()
             self._run_network_guard("theorymaster-startup" if not self._network_checked else "theorymaster-client-rebuild", required=True)
             routes = self.routes or DEFAULT_ROUTES
             account_backed = any(route.provider in ACCOUNT_PROVIDERS for route in routes.values())
@@ -531,41 +495,16 @@ class CodexBackend:
             else:
                 self.client_account = None
                 self.client = Codex(CodexConfig(config_overrides=overrides, env=environment, cwd=str(self.cwd)))
-            inner = getattr(self.client, "_client", None)
-            if inner is not None:
-                # The cycle workspace plus the OS temp dir are the only writable roots; anything
-                # else (repository history, gs_study task roots, 笔记区) needs a human.
-                inner._approval_handler = make_approval_decision(
-                    (Path(self.cwd).resolve(), Path(tempfile.gettempdir()).resolve())
-                )
+            from .codex_sdk_compat import install_approval_handler
+            install_approval_handler(self.client, make_approval_decision(
+                (Path(self.cwd).resolve(), Path(tempfile.gettempdir()).resolve())
+            ))
         return self.client
 
     @staticmethod
     def _verify_provider_runtime() -> None:
-        """Fail before a managed Cycle when the lazy Codex dependency is unusable.
-
-        Keeping these imports lazy remains useful for offline commands.  Managed
-        execution, however, must discover a missing or incompatible SDK before
-        it creates a Cycle and persists an active research state.
-        """
-        try:
-            from openai_codex import ApprovalMode, Codex, CodexConfig, Sandbox  # type: ignore
-        except (ImportError, AttributeError) as exc:
-            raise RuntimeError(
-                "Codex provider runtime unavailable; install a compatible `.[sdk]` before starting TheoryMaster"
-            ) from exc
-        required = {
-            "Codex": Codex,
-            "CodexConfig": CodexConfig,
-            "ApprovalMode.deny_all": getattr(ApprovalMode, "deny_all", None),
-            "Sandbox.workspace_write": getattr(Sandbox, "workspace_write", None),
-            "Sandbox.read_only": getattr(Sandbox, "read_only", None),
-        }
-        missing = [name for name, value in required.items() if value is None]
-        if missing:
-            raise RuntimeError(
-                "Codex provider runtime is incompatible; missing SDK symbols: " + ", ".join(missing)
-            )
+        from .codex_sdk_compat import verify_sdk
+        verify_sdk()
 
     def preflight_runtime(self) -> None:
         """Validate all configured Codex routes without making a model turn.
@@ -785,10 +724,8 @@ class CodexBackend:
         from .budget_review_transcript import write_sdk_thread_snapshot
 
         client = self._ensure_client()
-        inner = getattr(client, "_client", None)
-        if inner is None or not callable(getattr(inner, "thread_read", None)):
-            raise RuntimeError("Codex SDK does not expose thread/read")
-        result = inner.thread_read(thread_id, include_turns=True)
+        from .codex_sdk_compat import read_thread
+        result = read_thread(client, thread_id, include_turns=True)
         return write_sdk_thread_snapshot(
             result, thread_id=thread_id, destination=Path(destination),
         )
@@ -835,332 +772,13 @@ class CodexBackend:
                     model: str, provider: str,
                     token_allowance: int | None = None,
                     tokens_before_goal: int = 0) -> tuple[str, str]:
-        """Production Investigator native Goal; Findings exist only on Goal complete.
-
-        Other roles still use ordinary stage-bound Codex turns.
-        """
-        if role != "investigator":
-            raise ValueError("Native Goal execution is reserved for Investigator")
-        from .native_goal import (
-            run_native_goal, read_goal_findings, NativeGoalIncomplete,
-            NativeGoalBudgetExceeded, CODEX_GOAL_MAX_CHARS,
-            verify_native_goal_context_reference, native_goal_setup_turn,
-            NativeGoalExecutionLimit, NativeGoalDeliveryError,
-            execution_limit_setup_binding, read_execution_limit_handoff,
-        )
-        # Fail before the paid/setup model Turn if a Native Goal reference is
-        # inconsistent with the complete immutable objective supplied in Context.
-        if len(goal_objective) > CODEX_GOAL_MAX_CHARS:
-            raise ValueError(
-                f"native Goal objective exceeds Codex's {CODEX_GOAL_MAX_CHARS}-character limit: {len(goal_objective)}"
-            )
-        verify_native_goal_context_reference(goal_objective, context_prompt)
-        limit_binding = execution_limit_setup_binding(context_prompt, Path(handoff_path))
-        identifier = self.ensure_thread(role, thread_id, model, provider)
-        thread = self.threads[identifier]
-        from .provider_capacity import (
-            CapacityReconnectWindow, CAPACITY_WAIT_LIMIT_SECONDS, is_model_at_capacity,
-            is_native_goal_thread_busy, CapacityRecoveryTimeout,
-            settle_failed_capacity_turn,
-        )
-        from .native_goal import NativeGoalResult
-        from .backend_config import ACCOUNT_PROVIDERS
-        capacity_window = CapacityReconnectWindow(
-            Path(handoff_path), thread_id=identifier, model=model, provider=provider
-        )
-        def capacity_event(event_name: str, *, wait: float = 0.0, retry: int = 0,
-                           elapsed: float = 0.0, error: str = "") -> None:
-            if self.collector is not None:
-                try:
-                    self.collector.on_codex({
-                        "event": event_name, "agent": role, "provider": provider,
-                        "duration_s": wait,
-                        "detail": f"attempt={retry}; elapsed={elapsed:.1f}s; max=1800s",
-                        "error": error[:400],
-                    }, role=role, thread_id=identifier)
-                except Exception:
-                    self._logger.debug("capacity wait observability failed", exc_info=True)
-
-        prior_window = capacity_window.snapshot() if provider in ACCOUNT_PROVIDERS else None
-
-        def capacity_timeout(receipt: dict, error: str) -> None:
-            """After a bounded provider retry window, escalate OPERATIONS, not science."""
-            self.last_native_goal = {
-                "status": "failed", "thread_id": identifier,
-                "capacity_reconnect": {
-                    "status": "timeout", "retry_count": int(receipt["retries"]),
-                    "busy_retries": int(receipt.get("busy_retries") or 0),
-                    "limit_seconds": CAPACITY_WAIT_LIMIT_SECONDS, "error": error[:400],
-                },
-            }
-            capacity_event("CAPACITY_RETRY_EXHAUSTED",
-                           retry=int(receipt["retries"]),
-                           elapsed=CAPACITY_WAIT_LIMIT_SECONDS, error=error)
-            capacity_window.clear()
-            raise CapacityRecoveryTimeout(
-                thread_id=identifier,
-                detail=f"Provider capacity recovery timed out after "
-                      f"{CAPACITY_WAIT_LIMIT_SECONDS}s "
-                      f"(capacity failures={receipt['retries']}, "
-                      f"thread busy={receipt.get('busy_retries', 0)}): {error}",
-            )
-
-        if prior_window is not None and capacity_window.remaining(prior_window) <= 0:
-            capacity_timeout(prior_window, str(prior_window.get("last_error") or "capacity wait expired"))
-        if identifier in self._new_thread_ids or context_prompt:
-            # Context/qualifier/paths are supplied in a separate ordinary turn,
-            # not confused with the Goal's immutable scientific finish condition.
-            thread.run(native_goal_setup_turn(context_prompt, goal_objective))
-            self._new_thread_ids.discard(identifier)
-        provider_usage_baseline: int | None = None
-        observed_goal_tokens = int(tokens_before_goal)
-        capacity_error = ""
-        terminal_provider_error = ""
-        failed_capacity_turn_id = ""
-        recovered_progress = False
-
-        def on_event(event: Any) -> None:
-            nonlocal provider_usage_baseline, observed_goal_tokens, capacity_error, recovered_progress, terminal_provider_error, failed_capacity_turn_id
-            from .observability.codex_events import map_notification
-            mapped = map_notification(event, role=role, thread_id=identifier)
-            if not mapped:
-                return
-            if (mapped.get("event") in {"LLM_FAILED", "LLM_TURN_FAILED"}
-                    or (mapped.get("event") == "LLM_TURN_COMPLETED" and mapped.get("error"))):
-                terminal_provider_error = str(mapped.get("error") or "provider turn failed")
-            if mapped.get("event") in {"LLM_FAILED", "LLM_TURN_FAILED", "LLM_TURN_COMPLETED"}:
-                if is_model_at_capacity(mapped.get("error")):
-                    capacity_error = str(mapped["error"])
-                    failed_capacity_turn_id = str(mapped.get("turn_id") or "")
-            if mapped.get("event") in {"LLM_MESSAGE", "TOOL_ACTIVITY"}:
-                # Fresh model output AFTER an old transport failure is evidence
-                # that the earlier failure is not this Goal's terminal cause.
-                terminal_provider_error = ""
-                recovered_progress = True
-                # An earlier capacity warning is no longer terminal if the
-                # provider has since delivered fresh scientific work.
-                capacity_error = ""
-                failed_capacity_turn_id = ""
-            if self.collector is not None:
-                try:
-                    self.collector.on_codex(mapped, role=role, thread_id=identifier)
-                except Exception:
-                    self._logger.debug("native Goal observability event failed", exc_info=True)
-            if token_allowance is None or mapped.get("event") != "TOKEN_USAGE":
-                return
-            raw = mapped.get("raw_usage")
-            if not isinstance(raw, dict):
-                return
-            # thread/tokenUsage.total is lifetime cumulative (cached inputs included).
-            # First event's last-request amount counts usage NEW to this Goal.
-            provider_total = int(raw.get("input_tokens") or 0) + int(raw.get("output_tokens") or 0)
-            if provider_usage_baseline is None:
-                last = mapped.get("last_request_usage")
-                request_total = (
-                    int(last.get("input_tokens") or 0) + int(last.get("output_tokens") or 0)
-                    if isinstance(last, dict) else 0
-                )
-                provider_usage_baseline = max(0, provider_total - request_total)
-            observed = int(tokens_before_goal) + max(0, provider_total - provider_usage_baseline)
-            observed_goal_tokens = max(observed_goal_tokens, observed)
-            if self.collector is not None:
-                self.collector.record_native_goal_usage(
-                    role, observed_tokens=observed, allowance_tokens=int(token_allowance)
-                )
-            if observed >= int(token_allowance):
-                raise NativeGoalBudgetExceeded(identifier, observed, int(token_allowance))
-
-        execution_limit_boundary_turn = ""
-
-        def on_turn_boundary(event: Any) -> None:
-            """Consume only formal input limitations after a completed physical turn."""
-            nonlocal execution_limit_boundary_turn
-            from openai_codex.generated.v2_all import TurnCompletedNotification, TurnStatus
-            payload = getattr(event, "payload", None)
-            if (limit_binding is None or getattr(event, "method", "") != "turn/completed"
-                    or not isinstance(payload, TurnCompletedNotification)
-                    or payload.thread_id != identifier or payload.turn.status != TurnStatus.completed
-                    or payload.turn.error is not None):
-                return
-            # Usage/resource authority wins over an administrative handoff.
-            if token_allowance is not None and observed_goal_tokens >= int(token_allowance):
-                raise NativeGoalBudgetExceeded(identifier, observed_goal_tokens, int(token_allowance))
-            if terminal_provider_error or capacity_error:
-                return
-            try:
-                limit = read_execution_limit_handoff(
-                    NativeGoalResult("execution_limited", identifier, 0, 0), Path(handoff_path),
-                    invocation_id=limit_binding["invocation_id"],
-                    frozen_objective_sha256=limit_binding["frozen_objective_sha256"],
-                    workspace_path=Path(limit_binding["workspace_path"]),
-                )
-            except NativeGoalDeliveryError:
-                return  # An incomplete/invalid file grants no permission to interrupt.
-            if limit is not None:
-                execution_limit_boundary_turn = payload.turn.id
-                raise NativeGoalExecutionLimit(identifier, limit, Path(handoff_path))
-
-        # Native Goal owns its own blocked audit. Re-entering unchanged work
-        # cannot repair an external dependency or a contract conflict.
-        while True:
-            capacity_error = ""
-            terminal_provider_error = ""
-            failed_capacity_turn_id = ""
-            recovered_progress = False
-            try:
-                boundary = {"on_turn_boundary": on_turn_boundary} if limit_binding is not None else {}
-                goal = run_native_goal(thread, goal_objective, on_event=on_event, **boundary)
-            except NativeGoalExecutionLimit as exc:
-                # run_native_goal has already cancelled the official Goal and
-                # closed/unregistered its stream. This is an SDK execution exit,
-                # never a forged native blocked or scientific completion.
-                capacity_window.clear()
-                self.last_native_goal = {
-                    "status": "execution_limited", "source": "sdk_turn_boundary_handoff",
-                    "native_goal_status": "administrative_cancel_requested",
-                    "native_goal_cancel_requested": True,
-                    "thread_id": identifier, "boundary_turn_id": execution_limit_boundary_turn,
-                    "execution_limit_kind": exc.execution_limit["kind"],
-                }
-                raise
-            except NativeGoalBudgetExceeded as exc:
-                self.last_native_goal = {
-                    "status": "budgetLimited", "source": "theory_master_live_token_guard",
-                    "thread_id": identifier, "observed_tokens": exc.observed_tokens,
-                    "allowance_tokens": exc.allowance_tokens,
-                }
-                raise
-            except Exception as exc:
-                # A direct capacity exception may occur before a turn event.
-                # Do not retry unrelated transport, quota, contract or SDK errors.
-                if is_native_goal_thread_busy(exc, identifier) and prior_window is not None:
-                    # A rejected Goal start does not create another Goal. Never
-                    # call thread_goal_clear() on a potentially ACTIVE Goal:
-                    # preserve the original thread and wait for server idle.
-                    receipt = capacity_window.record_busy(str(exc))
-                    prior_window = receipt
-                    if capacity_window.remaining(receipt) <= 0:
-                        capacity_timeout(receipt, str(exc))
-                    delay = capacity_window.busy_delay(receipt)
-                    capacity_event("CAPACITY_THREAD_BUSY_WAIT", wait=delay,
-                                   retry=int(receipt["busy_retries"]),
-                                   elapsed=CAPACITY_WAIT_LIMIT_SECONDS - capacity_window.remaining(receipt),
-                                   error=str(exc))
-                    import time
-                    time.sleep(delay)
-                    if capacity_window.remaining(receipt) <= 0:
-                        capacity_timeout(receipt, str(exc))
-                    continue
-                if is_provider_quota_exhausted(exc):
-                    # Native Goal can raise an explicit account quota error before
-                    # returning a terminal status. Route it through Workflow's
-                    # durable PAUSED/quota-watcher protocol; never retry it as
-                    # model capacity or collapse it into a generic FAILED Worker.
-                    capacity_window.clear()
-                    accounts = getattr(self, "thread_accounts", {})
-                    account = accounts.get(identifier or "") if isinstance(accounts, dict) else None
-                    self.last_native_goal = {
-                        "status": "usageLimited",
-                        "thread_id": identifier,
-                        "runtime_failure_kind": "provider_quota_exhausted",
-                        "provider": provider,
-                        "account": account,
-                    }
-                    raise ProviderQuotaExhausted(
-                        str(exc), provider=provider, account=account
-                    ) from exc
-                if not is_model_at_capacity(exc):
-                    raise
-                goal = NativeGoalResult("blocked", identifier, 0, 0)
-                capacity_error = str(exc)
-            if recovered_progress and prior_window is not None:
-                # Real scientific work after reconnect ends that outage episode;
-                # a later capacity failure gets a fresh 30-minute window.
-                capacity_window.clear()
-                prior_window = None
-            self.last_native_goal = {
-                "status": goal.status, "thread_id": identifier,
-                "physical_turns": goal.physical_turns, "tools_started": goal.tools_started,
-            }
-            if goal.status == "complete":
-                capacity_window.clear()
-                thread._client.thread_goal_clear(thread.id)
-                if limit_binding is not None:
-                    limit = read_execution_limit_handoff(
-                        goal, Path(handoff_path), invocation_id=limit_binding["invocation_id"],
-                        frozen_objective_sha256=limit_binding["frozen_objective_sha256"],
-                        workspace_path=Path(limit_binding["workspace_path"]),
-                    )
-                    if limit is not None:
-                        self.last_native_goal["execution_limit_kind"] = limit["kind"]
-                        raise NativeGoalExecutionLimit(identifier, limit, Path(handoff_path))
-                return identifier, read_goal_findings(goal, Path(handoff_path))
-            if goal.status == "blocked" and not capacity_error and not terminal_provider_error:
-                capacity_window.clear()
-                if limit_binding is not None:
-                    try:
-                        limit = read_execution_limit_handoff(
-                            goal, Path(handoff_path), invocation_id=limit_binding["invocation_id"],
-                            frozen_objective_sha256=limit_binding["frozen_objective_sha256"],
-                            workspace_path=Path(limit_binding["workspace_path"]),
-                        )
-                    except NativeGoalDeliveryError as exc:
-                        self.last_native_goal["execution_limit_delivery_error"] = exc.detail
-                    else:
-                        if limit is not None:
-                            self.last_native_goal["execution_limit_kind"] = limit["kind"]
-                            thread._client.thread_goal_clear(thread.id)
-                            raise NativeGoalExecutionLimit(identifier, limit, Path(handoff_path))
-                from .supervisor_incident import NativeGoalRuntimeFailure, _safe
-                self.last_native_goal.update(
-                    runtime_failure_kind="native_goal_dependency_blocked",
-                    objective_sha256=hashlib.sha256(goal_objective.encode()).hexdigest(),
-                    reported_block_reason=_safe(goal.final_response, 1800),
-                    automatic_reentries=0,
-                )
-                raise NativeGoalRuntimeFailure(
-                    thread_id=identifier,
-                    error="Native Goal returned blocked without a terminal provider error; "
-                          "SDK dependency or contract diagnosis is required before resuming. "
-                          "No scientific verdict or preservation is authorized.",
-                )
-            if goal.status != "blocked" or not capacity_error or provider not in ACCOUNT_PROVIDERS:
-                capacity_window.clear()
-                if goal.status == "blocked" and terminal_provider_error:
-                    # Do not turn provider LLM_FAILED into an Investigator
-                    # scientific verdict. Runtime Supervisor receives the exact
-                    # error and may authorize a *bounded* managed resume.
-                    from .supervisor_incident import NativeGoalRuntimeFailure
-                    self.last_native_goal["provider_failure"] = terminal_provider_error[:1200]
-                    raise NativeGoalRuntimeFailure(
-                        thread_id=identifier, error=terminal_provider_error,
-                        provider_event="LLM_FAILED",
-                    )
-                raise NativeGoalIncomplete(goal.status, identifier)
-            receipt = capacity_window.record_failure(capacity_error)
-            prior_window = receipt
-            remaining = capacity_window.remaining(receipt)
-            elapsed = min(CAPACITY_WAIT_LIMIT_SECONDS,
-                          CAPACITY_WAIT_LIMIT_SECONDS - remaining)
-            if remaining <= 0:
-                capacity_timeout(receipt, capacity_error)
-            wait = capacity_window.delay(receipt)
-            # Some providers emit a terminal capacity failure while the exact
-            # physical turn remains active. Only when that failed turn is still
-            # the last active turn, settle it before a new native Goal. Never
-            # interrupt another turn or clear an unconfirmed active Goal.
-            if failed_capacity_turn_id and settle_failed_capacity_turn(thread, failed_capacity_turn_id):
-                capacity_event("CAPACITY_FAILED_TURN_SETTLED",
-                               retry=int(receipt["retries"]), error=capacity_error)
-            thread._client.thread_goal_clear(thread.id)
-            capacity_event("CAPACITY_RETRY_WAIT", wait=wait, retry=receipt["retries"],
-                           elapsed=elapsed, error=capacity_error)
-            import time
-            time.sleep(wait)
-            # Re-read the durable deadline before retry to avoid crossing the
-            # window after a long scheduling pause or Runner interruption.
-            if capacity_window.remaining(receipt) <= 0:
-                capacity_timeout(receipt, capacity_error)
+        """Production Investigator native Goal; Findings require native completion."""
+        from .codex_goal_transport import NativeGoalRunner
+        return NativeGoalRunner(
+            self, role, goal_objective=goal_objective, context_prompt=context_prompt,
+            handoff_path=handoff_path, thread_id=thread_id, model=model, provider=provider,
+            token_allowance=token_allowance, tokens_before_goal=tokens_before_goal,
+        ).run()
 
     def invoke(self, role: str, prompt: str, thread_id: str | None, model: str, provider: str,
                *, on_delta: Any | None = None,
@@ -1168,20 +786,7 @@ class CodexBackend:
                on_event: Any | None = None, on_handle: Any | None = None,
                input_images: list[str] | None = None,
                request_user_input: Any | None = None) -> tuple[str, str]:
-        from theory_master.observability.codex_events import (
-            extract_agent_delta,
-            extract_agent_text,
-            extract_final_from_turn,
-            extract_final_from_thread,
-            is_transient_reconnect_error,
-            map_notification,
-        )
-        from theory_master.read_trace import paths_from_event
-        # `thread_id` is the continuation signal. New threads receive Role Core
-        # plus the optional-skill whitelist in developer instructions; SKILL.md
-        # bodies are not eagerly attached. Resumed turns carry only the stage delta.
-        # Direct callers may pass no thread ID; ensure_thread will create one
-        # during this invocation, so that path is also a first turn.
+        from .codex_turn_transport import CodexTurnTransport
         include_skills = thread_id is None or thread_id in self._new_thread_ids
         payload = turn_input(role, prompt, include_skills=include_skills, task_config_path=self.task_config_path)
         if input_images:
@@ -1190,369 +795,8 @@ class CodexBackend:
                 LocalImageInput(path=path) for path in input_images]
         if thread_id:
             self._new_thread_ids.discard(thread_id)
-        identifier = thread_id
-        last_error: Exception | None = None
-        retry_payload: str | None = None
-        budget_review_finalization_attempted = False
-        for attempt in range(self.OUTER_TURN_RETRIES + 1):
-            try:
-                identifier = self.ensure_thread(role, identifier, model, provider)
-                self._new_thread_ids.discard(identifier)
-                thread = self.threads[identifier]
-                turn = getattr(thread, "turn", None)
-                if not callable(turn):
-                    result = thread.run(payload)
-                    return identifier, getattr(result, "final_response", "") or ""
-                turn_payload = retry_payload if retry_payload is not None else payload
-                retry_payload = None
-                # Interactive callbacks are opt-in for the operator chat. The
-                # scientific collector and approval decisions retain their own
-                # projection and handler.
-                inner = getattr(self.client, "_client", None)
-                original_handler = getattr(inner, "_approval_handler", None)
-                waiting_input = threading.Event()
-                def interactive_request(method, params):
-                    if role == "research_chat" and method.endswith("/requestUserInput") and callable(request_user_input):
-                        waiting_input.set()
-                        try:
-                            return request_user_input(params or {})
-                        finally:
-                            waiting_input.clear()
-                    return original_handler(method, params) if callable(original_handler) else {}
-                if inner is not None and callable(request_user_input) and role == "research_chat":
-                    inner._approval_handler = interactive_request
-                try:
-                    handle = thread.turn(turn_payload)
-                except Exception:
-                    if inner is not None and callable(original_handler):
-                        inner._approval_handler = original_handler
-                    raise
-                if callable(on_handle):
-                    on_handle(handle)
-                texts: list[str] = []
-                delta_text: list[str] = []
-                streamed_events: list[Any] = []
-                turn_reads: list[str] = []
-                terminal_error: str | None = None
-                approval_error: str | None = None
-                turn_completed = False
-                completed_turn_id: str | None = None
-                watchdog_fired = threading.Event()
-                watchdog_lock = threading.Lock()
-                watchdog: list[threading.Timer | None] = [None]
-                cancel_watch_done = threading.Event()
-
-                def _watch_cancel() -> None:
-                    if cancel_event is None:
-                        return
-                    while not cancel_watch_done.wait(0.1):
-                        if cancel_event.is_set():
-                            try:
-                                handle.interrupt()
-                            except Exception:
-                                pass
-                            return
-
-                cancel_watch = threading.Thread(target=_watch_cancel, daemon=True)
-                cancel_watch.start()
-
-                def _watchdog_interrupt() -> None:
-                    # A terminal notification can be queued at the same time
-                    # as the timer callback.  Do not turn a completed turn
-                    # into a reconnect merely because the callback won the
-                    # scheduling race.
-                    with watchdog_lock:
-                        if turn_completed:
-                            return
-                        if waiting_input.is_set():
-                            # A human choosing an option is not a dead stream.
-                            timer = threading.Timer(self._watchdog_seconds(), _watchdog_interrupt)
-                            timer.daemon = True
-                            watchdog[0] = timer
-                            timer.start()
-                            return
-                        watchdog_fired.set()
-                    try:
-                        handle.interrupt()
-                    except Exception:
-                        pass
-
-                def _arm_watchdog() -> None:
-                    timeout_s = self._watchdog_seconds()
-                    with watchdog_lock:
-                        old = watchdog[0]
-                        if old is not None:
-                            old.cancel()
-                        timer = threading.Timer(timeout_s, _watchdog_interrupt)
-                        timer.daemon = True
-                        watchdog[0] = timer
-                        timer.start()
-
-                _arm_watchdog()
-                try:
-                    for event in handle.stream():
-                        # Keep the original SDK notifications as well as the
-                        # normalized observability events.  The official SDK
-                        # collector has stricter knowledge of the installed
-                        # notification models than our duck-typed mapper and
-                        # is the final-response fallback for real streams.
-                        streamed_events.append(event)
-                        # The SDK may emit turn/completed before the final
-                        # item/completed notification.  Keep draining the
-                        # stream so the agent message is not lost, but do not
-                        # let the inactivity watchdog interrupt an already
-                        # terminal turn while the transport closes.
-                        with watchdog_lock:
-                            completed = turn_completed
-                        if not completed:
-                            _arm_watchdog()
-                        try:
-                            mapped = map_notification(event, role=role, thread_id=identifier)
-                        except Exception:
-                            mapped = None
-                        if role == "research_chat" and callable(on_event):
-                            from theory_master.observability.codex_events import map_chat_notification
-                            visible = map_chat_notification(event)
-                            if visible:
-                                on_event(visible)
-                        if mapped:
-                            turn_reads.extend(paths_from_event(mapped))
-                        if mapped and mapped.get("event", "").startswith("COMPACTION_"):
-                            mapped.setdefault("episode_id", identifier)
-                            mapped.setdefault("compact_threshold_tokens", self._native_compact_threshold())
-                            mapped.setdefault("compact_scope", self._native_compact_scope())
-                        if mapped and self.collector is not None:
-                            try:
-                                self.collector.on_codex(mapped, role=role, thread_id=identifier)
-                            except Exception:
-                                pass
-                        if mapped and is_provider_quota_exhausted(mapped.get("error")):
-                            raise ProviderQuotaExhausted(
-                                str(mapped.get("error") or "provider quota exhausted"),
-                                provider=provider,
-                                account=self.thread_accounts.get(identifier or ""),
-                            )
-                        if mapped and mapped.get("event") == "TOOL_APPROVAL_UNAVAILABLE":
-                            approval_error = str(mapped.get("error") or "automatic approval review failed")
-                        if mapped and mapped.get("event") == "LLM_RECONNECTING":
-                            network_result = self._run_network_guard("llm-reconnecting", required=False)
-                            if network_result and network_result.get("changed"):
-                                raise ConnectionError(
-                                    "Codex connection route changed by codex-net after LLM_RECONNECTING; rebuild client and retry turn"
-                                )
-                        method = str(getattr(event, "method", "") or "")
-                        event_payload = getattr(event, "payload", None)
-                        if mapped and mapped.get("event") in {"LLM_TURN_FAILED", "LLM_FAILED"}:
-                            terminal_error = str(mapped.get("error") or "Codex turn failed")
-                        if mapped and mapped.get("event") == "LLM_TURN_COMPLETED" and mapped.get("error"):
-                            terminal_error = str(mapped["error"])
-                        if method == "item/completed" or method.endswith("/agentMessage/completed"):
-                            text = extract_agent_text(event_payload)
-                            if text:
-                                texts.append(text)
-                        elif method == "item/agentMessage/delta" or method.endswith("/agentMessage/delta"):
-                            delta = extract_agent_delta(event_payload)
-                            if delta:
-                                delta_text.append(delta)
-                                if callable(on_delta):
-                                    try:
-                                        on_delta(delta)
-                                    except Exception:
-                                        self._logger.debug("Codex stream callback failed", exc_info=True)
-                        elif method == "turn/completed":
-                            text = extract_final_from_turn(event_payload)
-                            if text:
-                                texts.append(text)
-                            completed_turn_id = getattr(
-                                getattr(event_payload, "turn", None), "id", None
-                            )
-                            # The SDK has delivered the terminal event.  Some
-                            # transports keep the underlying stream open for a
-                            # short time after this notification; waiting for
-                            # that close lets the inactivity watchdog interrupt
-                            # an already-finished turn and incorrectly retry it
-                            # on the same server-side writer.
-                            with watchdog_lock:
-                                turn_completed = True
-                finally:
-                    if inner is not None and callable(original_handler):
-                        inner._approval_handler = original_handler
-                    if callable(on_handle):
-                        on_handle(None)
-                    cancel_watch_done.set()
-                    cancel_watch.join(timeout=0.2)
-                    with watchdog_lock:
-                        timer = watchdog[0]
-                        if timer is not None:
-                            timer.cancel()
-                self._turn_reads = list(dict.fromkeys(turn_reads))
-                if cancel_event is not None and cancel_event.is_set():
-                    raise CodexTurnCancelled("Codex turn stopped by operator")
-                # Codex can emit error(400) followed by turn/completed with no
-                # assistant text. This is a *rejected request*, not an empty
-                # success; do not retry the unchanged unsupported model 5 times.
-                rejected = provider_request_rejection(terminal_error)
-                if rejected is not None:
-                    raise rejected
-                if approval_error:
-                    raise ToolApprovalUnavailable(approval_error)
-                # Once the inactivity watchdog has fired, this turn is a timeout
-                # even if handle.interrupt() causes the transport to emit a later
-                # turn/completed notification. Any assistant text/deltas collected
-                # before that interrupt are progress/partial output, never a final
-                # Agent result.
-                if watchdog_fired.is_set():
-                    raise TimeoutError(f"Codex turn inactivity watchdog timed out after {self._watchdog_seconds():g}s")
-                if turn_completed:
-                    if texts:
-                        return identifier, texts[-1]
-                    if delta_text:
-                        return identifier, "".join(delta_text)
-                    # `TurnHandle.stream()` yields the same notifications that
-                    # the SDK's `handle.run()` collector consumes.  Reuse that
-                    # collector after the stream has been drained so current
-                    # SDK ItemCompletedNotification instances are recognized
-                    # even when their wire shape is not covered by the
-                    # duck-typed extractor above.
-                    try:
-                        from openai_codex._run import _collect_turn_result  # type: ignore
-
-                        collected = _collect_turn_result(
-                            iter(streamed_events), turn_id=str(completed_turn_id or handle.id)
-                        )
-                        if collected.final_response:
-                            return identifier, collected.final_response
-                    except Exception:
-                        self._logger.debug(
-                            "official Codex turn-result recovery failed",
-                            exc_info=True,
-                        )
-                    # A few app-server transports emit the terminal turn
-                    # notification before the completed agent item reaches
-                    # the turn subscription.  The official SDK persists the
-                    # item in thread history, so read that history once before
-                    # declaring a successful turn response missing.
-                    read = getattr(thread, "read", None)
-                    if callable(read):
-                        # Some app-server transports publish turn/completed
-                        # before the completed item is visible to thread/read.
-                        # Give that persistence boundary a short bounded grace
-                        # period; otherwise a valid turn is misreported as the
-                        # TUI error "completed without a final response".
-                        recovered = None
-                        for recovery_attempt in range(self.COMPLETED_RESPONSE_RECOVERY_ATTEMPTS):
-                            try:
-                                recovered = extract_final_from_thread(
-                                    read(include_turns=True),
-                                    turn_id=completed_turn_id,
-                                )
-                            except Exception:
-                                recovered = None
-                            if recovered:
-                                return identifier, recovered
-                            if recovery_attempt + 1 < self.COMPLETED_RESPONSE_RECOVERY_ATTEMPTS:
-                                time.sleep(self.COMPLETED_RESPONSE_RECOVERY_DELAY_SECONDS)
-                    raise RuntimeError("Codex backend delivery error: turn completed without assistant final response")
-                if terminal_error:
-                    raise RuntimeError(terminal_error)
-                if texts:
-                    return identifier, texts[-1]
-                raise RuntimeError("Codex backend delivery error: turn ended without assistant final response")
-            except Exception as exc:
-                if isinstance(exc, CodexTurnCancelled):
-                    raise
-                last_error = exc
-                message = str(exc)
-                if isinstance(exc, CodexProviderRequestRejected):
-                    raise
-                if isinstance(exc, ProviderQuotaExhausted):
-                    raise
-                if is_provider_quota_exhausted(message):
-                    raise ProviderQuotaExhausted(
-                        message,
-                        provider=provider,
-                        account=self.thread_accounts.get(identifier or ""),
-                    ) from exc
-                watchdog_timeout = isinstance(exc, TimeoutError) and "inactivity watchdog" in message.lower()
-                retryable = is_transient_reconnect_error(message) or any(
-                    marker in message.lower()
-                    for marker in (
-                        "connection", "broken pipe", "eof", "timed out", "timeout",
-                        "app-server", "disconnected", "backend delivery error",
-                        "process is not running", "process closed stdout",
-                    )
-                )
-                if role == "budget_reviewer" and "turn completed without assistant final response" in message.lower():
-                    # A completed read-only review may have inspected substantial
-                    # evidence without producing its final JSON. Replaying the
-                    # entire archive on fresh turns wastes quota; ask the SAME
-                    # persisted thread to finalize once. Never infer approval.
-                    if budget_review_finalization_attempted:
-                        raise
-                    budget_review_finalization_attempted = True
-                    retry_payload = turn_input(
-                        role,
-                        "The prior read-only Budget Reviewer turn is complete but had no final "
-                        "JSON. Do not repeat any research or tools. From the material already "
-                        "inspected, return one decision JSON now with decision, reason, "
-                        "next_test, evidence_ids, progress_refs. If a defensible review "
-                        "cannot be completed from inspected evidence, say why instead of "
-                        "inventing a scientific finding or resource approval.",
-                        include_skills=False,
-                        task_config_path=self.task_config_path,
-                    )
-                if watchdog_timeout:
-                    # The interrupted server-side thread already retains the task,
-                    # tool calls and any workspace effects from the timed-out turn.
-                    # Resume that same thread with a minimal continuation signal
-                    # instead of replaying the full original task prompt.
-                    retry_payload = turn_input(
-                        role,
-                        "The previous turn was interrupted by the TheoryMaster inactivity watchdog. "
-                        "Continue the same assigned task from the current thread and workspace state. "
-                        "Do not restart or repeat work that is already complete. Inspect existing artifacts/results "
-                        "only as needed, then return the required stage output.",
-                        include_skills=False,
-                        task_config_path=self.task_config_path,
-                    )
-                if not retryable or attempt >= self.OUTER_TURN_RETRIES:
-                    raise
-                delay = self.OUTER_RETRY_DELAYS[min(attempt, len(self.OUTER_RETRY_DELAYS) - 1)]
-                if self.collector is not None:
-                    try:
-                        self.collector.on_codex(
-                            {"event": "LLM_RECONNECTING", "error": f"{message}; retry {attempt + 1}/{self.OUTER_TURN_RETRIES}",
-                             "retry_index": attempt + 1},
-                            role=role, thread_id=identifier or "",
-                        )
-                    except Exception:
-                        pass
-                if role == "research_chat" and callable(on_event):
-                    on_event({"type": "reconnecting", "kind": "connection", "status": "running",
-                              "label": "正在重连", "retry_index": attempt + 1,
-                              "retry_after": delay})
-                self._logger.warning(
-                    "Codex turn temporarily unavailable for role=%s; retry %d/%d in %ss: %s",
-                    role, attempt + 1, self.OUTER_TURN_RETRIES, delay, message,
-                )
-                # Close the old local app-server before resuming the same
-                # server-side thread. Every cached Thread is bound to this client,
-                # so invalidate all of them before closing it; keeping another
-                # role's wrapper would later send through the closed app-server.
-                old_client = self.client
-                self.client = None
-                self.client_account = None
-                self.threads.clear()
-                self._new_thread_ids.clear()
-                if old_client is not None:
-                    try:
-                        old_client.close()
-                    except Exception:
-                        self._logger.debug("failed to close Codex client during retry", exc_info=True)
-                if cancel_event is not None:
-                    if cancel_event.wait(delay):
-                        raise CodexTurnCancelled("Codex turn stopped during reconnect")
-                else:
-                    time.sleep(delay)
-        assert last_error is not None
-        raise last_error
+        return CodexTurnTransport(self).run(
+            role, payload, thread_id, model, provider, on_delta=on_delta,
+            cancel_event=cancel_event, on_event=on_event, on_handle=on_handle,
+            request_user_input=request_user_input,
+        )

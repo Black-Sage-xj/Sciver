@@ -1,4 +1,5 @@
 """State PAUSED exposes Resume and destructive Kill through confirmed operator."""
+import json
 import subprocess
 import unittest
 from unittest.mock import patch
@@ -112,6 +113,9 @@ class PausedStateResumeDialogTests(unittest.TestCase):
         self.assertIn('不会重复提交启动请求',page)
         self.assertEqual(soup.select_one('.tm-tui-screen')['data-runtime-verified'],'false')
         for script in soup.select('script'):
+            if script.get("type") == "application/json":
+                json.loads(script.get_text())
+                continue
             js=script.get_text()
             if not js.strip():
                 continue

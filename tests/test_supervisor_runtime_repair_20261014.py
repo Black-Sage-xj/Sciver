@@ -162,7 +162,7 @@ class RuntimeRepairTests(unittest.TestCase):
             self.assertEqual(result["action"], "hold")
             promote.assert_not_called()
 
-    def test_review_keeps_independent_protocol_guard_after_engine_patch(self):
+    def test_review_routes_repair_without_executing_an_edit(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             target, cycle, log, state = fixture(root)
@@ -176,7 +176,8 @@ class RuntimeRepairTests(unittest.TestCase):
                     backend=None, research_root=root/"task", cycle_dir=cycle,
                     state=state, state_path=state_path, incident_id="id-1")
             self.assertEqual(result["action"], "hold")
-            attempt.assert_called_once()
+            attempt.assert_not_called()
+            self.assertEqual(result["repair_route"], "isolated_runtime")
             self.assertEqual(state["protocol_health"], "violation")
             self.assertNotIn("supervisor_runtime_resume_count", state)
 

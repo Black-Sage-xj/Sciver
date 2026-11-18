@@ -54,8 +54,8 @@ def test_live_close_waits_for_exit_and_fences_resume(tmp_path, monkeypatch):
     spec = setup(tmp_path, 'RUNNING')
     launches = []
     live = [True]
-    monkeypatch.setattr(wr, 'process_identity_alive', lambda *a: live[0])
-    monkeypatch.setattr(wr, '_launch_detached_service', lambda *a, **kw: launches.append((a,kw)))
+    monkeypatch.setattr('theory_master.runtime_manager.process_identity_alive', lambda *a: live[0])
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service', lambda *a, **kw: launches.append((a,kw)))
     assert close_worker(spec, 'worker-2')['status'] == 'closing'
     assert len(launches) == 1
     assert 'theory_master.worker_close' in launches[0][0][0]
@@ -130,12 +130,12 @@ def test_capacity_reduction_replay_after_partial_close_is_idempotent(tmp_path, m
         if changes.get('dismissed'):
             raise OSError('simulated crash before hiding')
         return original(root,wid,**changes)
-    monkeypatch.setattr(wr,'save_worker',fail_hide)
+    monkeypatch.setattr('theory_master.worker_store.save_worker',fail_hide)
     with pytest.raises(OSError):
         close_worker(spec,'worker-2')
     assert read_mode(tmp_path)['desired_agents']==2
     assert not wr.read_worker(tmp_path,'worker-2').get('dismissed')
-    monkeypatch.setattr(wr,'save_worker',original)
+    monkeypatch.setattr('theory_master.worker_store.save_worker',original)
     assert close_worker(spec,'worker-2')['status']=='closed'
     assert read_mode(tmp_path)['desired_agents']==2
 
@@ -145,7 +145,7 @@ def test_close_fences_checkpoint_of_another_live_worker(tmp_path, monkeypatch):
     cycle=wr.read_worker(tmp_path,'worker-2')['current_cycle']
     state=tmp_path/cycle/'research_state.json'
     state.write_text(json.dumps({'worker_id':'worker-3','status':'active'}))
-    monkeypatch.setattr(wr,'process_identity_alive',lambda *args:True)
+    monkeypatch.setattr('theory_master.runtime_manager.process_identity_alive',lambda *args:True)
     with pytest.raises(ValueError,match='claim mismatch'):
         close_worker(spec,'worker-2')
     assert not (tmp_path/cycle/'recovery_control.json').exists()
@@ -180,7 +180,7 @@ def test_restart_with_changed_roster_keeps_remaining_cycle_budgets(tmp_path, mon
     spec.max_cycles=8
     from theory_master import specification, worker_supervisor_dispatch
     monkeypatch.setattr(specification.TaskSpec,'from_task_root',classmethod(lambda cls,path:spec))
-    monkeypatch.setattr(wr,'_master_complete',lambda *args,**kwargs:False)
+    monkeypatch.setattr('theory_master.worker_store._master_complete',lambda *args,**kwargs:False)
     monkeypatch.setattr(worker_supervisor_dispatch,'dispatch_pending',lambda *args:False)
     monkeypatch.setattr(wr.threading.Event,'wait',lambda *args:False)
     launched=[]
@@ -188,7 +188,7 @@ def test_restart_with_changed_roster_keeps_remaining_cycle_budgets(tmp_path, mon
         names=sorted(kwargs['eligible_worker_ids'])
         launched.extend(names)
         return {'started':[{'worker_id':wid} for wid in names]}
-    monkeypatch.setattr(wr,'schedule_once',dispatch)
+    monkeypatch.setattr('theory_master.worker_scheduler.schedule_once',dispatch)
     assert wr.scheduler_daemon(spec,2)==0
     assert launched.count('worker-1')==1
     assert launched.count('worker-3')==3
@@ -197,14 +197,14 @@ def test_restart_with_changed_roster_keeps_remaining_cycle_budgets(tmp_path, mon
 
 def test_close_launch_failure_remains_visible_and_retryable(tmp_path, monkeypatch):
     spec=setup(tmp_path,'RUNNING')
-    monkeypatch.setattr(wr,'process_identity_alive',lambda *args:True)
+    monkeypatch.setattr('theory_master.runtime_manager.process_identity_alive',lambda *args:True)
     def fail_launch(*args,**kwargs):
         raise RuntimeError('fixture service unavailable')
-    monkeypatch.setattr(wr,'_launch_detached_service',fail_launch)
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service',fail_launch)
     with pytest.raises(RuntimeError,match='service unavailable'):
         close_worker(spec,'worker-2')
     run={'research_root':str(tmp_path),'observer_id':'a'*16}
     assert registered_workers(run)[1]['status']=='CLOSE_FAILED'
     assert len(CycleClaims(tmp_path).list_claims())==1
-    monkeypatch.setattr(wr,'process_identity_alive',lambda *args:False)
+    monkeypatch.setattr('theory_master.runtime_manager.process_identity_alive',lambda *args:False)
     assert close_worker(spec,'worker-2')['status']=='closed'

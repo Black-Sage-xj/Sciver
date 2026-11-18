@@ -212,11 +212,11 @@ class SchedulerStallTests(unittest.TestCase):
             }))
             spec = SimpleNamespace(research_root=root, max_cycles=2)
             with patch.object(specification.TaskSpec, 'from_task_root', return_value=spec), \
-                 patch.object(worker_runtime, '_master_complete', return_value=False), \
+                 patch('theory_master.worker_store._master_complete', return_value=False), \
                  patch.object(worker_supervisor_dispatch, 'dispatch_pending', return_value=False), \
-                 patch.object(worker_runtime, 'schedule_once', return_value={'started': [], 'reason': 'no eligible idle Worker'}), \
-                 patch.object(worker_runtime, 'list_workers', return_value=[]), \
-                 patch.object(worker_runtime, 'SCHEDULER_NO_PROGRESS_GRACE_SECONDS', 0), \
+                 patch('theory_master.worker_scheduler.schedule_once', return_value={'started': [], 'reason': 'no eligible idle Worker'}), \
+                 patch('theory_master.worker_store.list_workers', return_value=[]), \
+                 patch('theory_master.worker_state.SCHEDULER_NO_PROGRESS_GRACE_SECONDS', 0), \
                  patch.object(worker_runtime.threading.Event, 'wait', return_value=False):
                 self.assertEqual(worker_runtime.scheduler_daemon(spec, 2), 2)
             saved = json.loads(meta.read_text())

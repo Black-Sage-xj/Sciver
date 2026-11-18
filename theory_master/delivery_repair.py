@@ -58,32 +58,32 @@ def _write_immutable(path: Path, payload: dict[str, Any]) -> None:
 def _report_versions(spec: Any, graph_path: Path) -> list[dict[str, str]]:
     """Only registered report links, never an unrestricted workspace scan."""
     from .science_graph_store import ScienceGraphStore
+    from .goal_materials import resolve_material
     with ScienceGraphStore(graph_path, readonly=True) as store:
         graph = store.graph_view()
     refs = {str(outcome[key]) for node in graph.get("nodes") or []
             for outcome in node.get("cycle_outcomes") or []
             for key in ("report_ref", "document_ref") if outcome.get(key)}
-    rows = []
-    for reference in sorted(refs):
-        path = Path(reference)
-        if not path.is_absolute():
-            path = Path(spec.branch_canvas).parent / path
-        row = {"reference": reference, "path": str(path.resolve())}
-        if path.is_file() and not path.is_symlink():
-            row.update(status="available", sha256=hashlib.sha256(path.read_bytes()).hexdigest())
-        else:
-            row["status"] = "missing"
-        rows.append(row)
-    return rows
+    return [resolve_material(spec, reference) for reference in sorted(refs)]
 
 
 def current_delivery_payload(spec: Any, graph_path: Path, cycle_dir: Path) -> dict[str, Any]:
     """Read the current delivery identity without creating any revision files."""
     from .delivery_materials import task_delivery_material_index
+    from .goal_materials import goal_material_sources
+    from .science_graph_store import ScienceGraphStore
+    from .scientific_model import load_from_paths
+    model = load_from_paths(Path(spec.research_root), Path(spec.document), goal_id=spec.goal_id)
+    material_index = task_delivery_material_index(Path(spec.research_root))
+    reports = _report_versions(spec, graph_path)
+    with ScienceGraphStore(graph_path, readonly=True) as store:
+        agent_view = store.agent_goal_completion_view()
     return {"schema": "theory-master/delivery-revision/v1", "cycle_id": cycle_dir.name,
             "science_digest": science_authority_digest(spec, graph_path),
-            "material_index": task_delivery_material_index(Path(spec.research_root)),
-            "report_versions": _report_versions(spec, graph_path)}
+            "scientific_model_sha256": hashlib.sha256(_canonical(model)).hexdigest(),
+            "material_index": material_index,
+            "report_versions": reports,
+            "goal_material_sources": goal_material_sources(spec, [agent_view, material_index, reports])}
 
 
 def freeze_delivery_revision(spec: Any, graph_path: Path, cycle_dir: Path, *,
@@ -154,15 +154,15 @@ def repair_delivery(workflow: Any, *, cycle: str | int | None = None,
         access = freeze_delivery_revision(spec, graph, candidate, require_unchanged_science=True)
         if not reassess:
             return {"cycle_id": candidate.name, "reassessed": False, **access}
-        workflow._bind_cycle(candidate, create=False)
-        workflow._restore_resumed_cycle_routes(state)
-        try:
-            result = workflow._run_goal_completion(state, {"verdict": "supported"}, delivery_repair=True)
-        except Exception:
-            # A Goal-delivery invocation does not reopen the committed scientific
-            # Cycle. Keep its completed invocation available for exact replay.
-            state.update(status="over", phase="complete", execution_active=False, resumable=False)
-            workflow._persist(state)
-            raise
+    workflow._bind_cycle(candidate, create=False)
+    workflow._restore_resumed_cycle_routes(state)
+    try:
+        result = workflow._run_goal_completion(state, {"verdict": "supported"}, delivery_repair=True)
+    except Exception:
+        # A Goal-delivery invocation does not reopen the committed scientific
+        # Cycle. Keep its completed invocation available for exact replay.
+        state.update(status="over", phase="complete", execution_active=False, resumable=False)
         workflow._persist(state)
-        return {"cycle_id": candidate.name, "reassessed": True, **access, "assessment": result}
+        raise
+    workflow._persist(state)
+    return {"cycle_id": candidate.name, "reassessed": True, **access, "assessment": result}

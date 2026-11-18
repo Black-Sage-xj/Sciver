@@ -338,7 +338,7 @@ def run_native_goal(thread: Any, objective: str, *,
         raise ValueError(
             f"native Goal objective exceeds Codex's {CODEX_GOAL_MAX_CHARS}-character limit: {len(objective)}"
         )
-    from openai_codex._goal import _GoalNotificationStream  # installed pinned SDK 0.155.1
+    from .codex_sdk_compat import goal_stream, goal_client
     from openai_codex.generated.v2_all import (
         TurnStartedNotification, TurnCompletedNotification, TurnStatus, ThreadGoalStatus,
     )
@@ -346,7 +346,7 @@ def run_native_goal(thread: Any, objective: str, *,
         _get, extract_agent_text, extract_final_from_turn, turn_id_of,
     )
 
-    client = thread._client
+    client = goal_client(thread)
     state, logical_turn_id = client.start_goal_operation(thread.id, objective)
     active_physical_turn = None
     boundary_cancel_requested = False
@@ -384,7 +384,7 @@ def run_native_goal(thread: Any, objective: str, *,
             active_physical_turn = None
         return event
 
-    stream = _GoalNotificationStream(
+    stream = goal_stream(
         state=state,
         next_notification=next_notification if on_turn_boundary is not None
                           else lambda: client.next_goal_notification(state),

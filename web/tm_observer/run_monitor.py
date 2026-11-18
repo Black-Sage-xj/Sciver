@@ -52,17 +52,9 @@ def tail_lines(run: dict[str, Any], name: str, *, limit: int = 100) -> list[str]
     try:
         if path.is_symlink() or not path.is_file():
             return []
-        # Read only the last 256 KiB; large historical transcripts are never
-        # loaded into the HTTP server's memory.
-        with path.open("rb") as handle:
-            handle.seek(0, 2)
-            length = handle.tell()
-            handle.seek(max(0, length - 262144))
-            chunk = handle.read(262144)
-        result = chunk.decode("utf-8", errors="replace").splitlines()
-        if length > 262144:
-            result = result[1:]
-        return [redact(line[:2000]) for line in result[-max(1, min(200, limit)):]]
+        from .bounded_log import tail_lines as bounded_tail
+        result = bounded_tail(path, limit=max(1, min(200, limit)))
+        return [redact(line[:2000]) for line in result]
     except (OSError, ValueError):
         return []
 

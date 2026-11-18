@@ -53,7 +53,7 @@ def test_quota_wait_reclassifies_stopped_fenced_cycle_without_losing_science(tmp
         "status": "FAILED", "execution_active": False,
         "recovery": original["recovery"],
     }))
-    with patch.object(runtime, "_checkpoint_matches_claim", return_value=True):
+    with patch('theory_master.worker_store._checkpoint_matches_claim', return_value=True):
         assert runtime._persist_verified_quota_wait(
             root, "worker-2", "184", {"cycle_id": "184"}, {"1": 123, "2": 456},
             "provider-delivery-failed-during-exhausted-quota")
@@ -74,10 +74,10 @@ def test_never_mask_running_or_unfenced_cycle(tmp_path):
     original = {"status": "active", "resumable": True, "execution_active": True}
     (cycle / "research_state.json").write_text(json.dumps(original))
     (cycle / "run_state.json").write_text(json.dumps({"status": "RUNNING"}))
-    with patch.object(runtime, "_checkpoint_matches_claim", return_value=True):
+    with patch('theory_master.worker_store._checkpoint_matches_claim', return_value=True):
         assert not runtime._persist_verified_quota_wait(
             root, "worker-1", "185", {}, {"1": 123, "2": 456}, "test")
-    with patch.object(runtime, "_checkpoint_matches_claim", return_value=False):
+    with patch('theory_master.worker_store._checkpoint_matches_claim', return_value=False):
         assert not runtime._persist_verified_quota_wait(
             root, "worker-1", "185", {}, {"1": 123, "2": 456}, "test")
     assert json.loads((cycle / "research_state.json").read_text()) == original

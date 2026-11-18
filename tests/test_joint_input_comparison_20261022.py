@@ -86,7 +86,12 @@ class JointInputComparison(unittest.TestCase):
             self.assertIn(candidate["decisive_test"], prompt)
             self.assertIn("without a material blocker", prompt)
             self.assertIn("check-later plan do not establish necessary eligibility", prompt)
-            self.assertIn("unavailable material history is a qualification gap", prompt)
+            self.assertIn("unavailable material history is a qualification gap", prompt.casefold())
+            # A declared input-failure exit cannot establish feasibility or
+            # turn an unperformed test into a scientific result.
+            self.assertIn("an input-failure exit does not establish availability", prompt)
+            self.assertIn("Do not qualify a test that cannot run under its own stated conditions", prompt)
+            self.assertIn("Missing means to run the test are operational, not scientific inconclusiveness", prompt)
 
     def test_new_scientific_results_are_not_required_to_establish_input_qualification(self):
         helper = input_fixtures.InputQualificationEvidence()

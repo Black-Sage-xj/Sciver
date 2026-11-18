@@ -214,7 +214,7 @@ def test_operator_state_changed_during_engineering_is_not_overwritten(stopped):
 def test_single_runner_peer_guard_prevents_engineering(stopped):
     from theory_master.supervisor import _handle_failed_state
     _, cycle, _, _ = stopped
-    with patch('theory_master.worker_runtime.list_workers', return_value=[{'process_alive': True}]), \
+    with patch('theory_master.worker_store.list_workers', return_value=[{'process_alive': True}]), \
          patch('theory_master.supervisor._supervisor_backend') as factory:
         assert not _handle_failed_state(cycle.parent, repair_enabled=True)
     factory.assert_not_called()

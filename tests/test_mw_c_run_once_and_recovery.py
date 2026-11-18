@@ -176,7 +176,7 @@ def paused_cycle(tmp_path: Path, *, state_status: str = "paused", worker_status:
 def test_resume_reissues_claim_for_same_cycle_and_h(tmp_path, monkeypatch):
     spec, root, claims, claim, cycle = paused_cycle(tmp_path)
     launched = []
-    monkeypatch.setattr(wr, "_launch_detached_service", lambda args, **kw: launched.append(args))
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service', lambda args, **kw: launched.append(args))
     result = wr.worker_action(spec, "worker-1", "resume")
     [live] = claims.list_claims()
     assert (result["cycle"], result["hypothesis_id"]) == (cycle, "H-0001")
@@ -196,7 +196,7 @@ def test_resume_after_goal_seal_is_refused_without_launch(tmp_path, monkeypatch)
     with ScienceGraphStore(tmp_graph(spec)) as store:
         store.seal_goal(goal_id="g", source_cycle="9", research_plan_sha256="0" * 64,
                         judge_receipt_ref=None, detail={})
-    monkeypatch.setattr(wr, "_launch_detached_service", lambda *a, **k: pytest.fail("launched"))
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service', lambda *a, **k: pytest.fail("launched"))
     with pytest.raises(ValueError, match="Goal already completed"):
         wr.worker_action(spec, "worker-1", "resume")
     assert claims.list_claims()[0]["claim_id"] == claim["claim_id"]

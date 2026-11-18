@@ -272,3 +272,41 @@ def test_readonly_peer_review_does_not_create_a_protocol_receipt(stopped):
     assert result['action'] == 'hold'
     validator.assert_not_called()
     assert receipts.RECEIPT_KEY not in state
+
+
+@pytest.mark.parametrize('broken', [None, 'factory', 'run', 'protocol'])
+def test_phase_owner_probe_requires_the_formal_transport_delegation(stopped, tmp_path, broken):
+    import shutil
+    from theory_master.supervisor_runtime_repair import _TESTS
+    engine = tmp_path / 'installed/theory_master'
+    engine.mkdir(parents=True)
+    (engine / '__init__.py').write_text('')
+    original = Path(receipts.__file__).resolve().parent
+    for name in ('native_goal.py', 'scientific_objective.py'):
+        shutil.copyfile(original / name, engine / name)
+    (engine / 'workflow_invocation.py').write_text(
+        'def call():\n    from .invocation_execution import InvocationSession\n    return InvocationSession().run()\n')
+    session = ('class InvocationSession:\n'
+               '    def __init__(self):\n'
+               '        from .invocation_transport import InvocationTransport\n'
+               '        self.transport = InvocationTransport(self)\n'
+               '    def run(self):\n'
+               '        self.transport._prepare_native_delivery()\n')
+    if broken == 'factory':
+        session = session.replace('InvocationTransport', 'UnrelatedTransport')
+    elif broken == 'run':
+        session = session.replace('self.transport._prepare_native_delivery()', 'pass')
+    (engine / 'invocation_execution.py').write_text(session)
+    key = 'other_protocol' if broken == 'protocol' else 'sdk_execution_limit_handoff'
+    (engine / 'invocation_transport.py').write_text(
+        'class InvocationTransport:\n    def _prepare_native_delivery(self):\n        return {"' + key + '": {}}\n')
+    (engine / 'codex_backend.py').write_text(
+        'def invoke_goal():\n    from .codex_goal_transport import NativeGoalRunner\n    return NativeGoalRunner().run()\n')
+    (engine / 'codex_goal_transport.py').write_text(
+        'class NativeGoalRunner:\n    def run(self):\n        return native.read_execution_limit_handoff()\n')
+    (engine.parent / 'tests').mkdir()
+    for name in _TESTS:
+        (engine.parent / 'tests' / name).write_text('def test_offline(): pass\n')
+    cycle, state = stopped
+    record = receipts.validate_existing_execution_limit_protocol(cycle, state, engine=engine)
+    assert (record is not None) == (broken is None)

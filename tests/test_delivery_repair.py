@@ -65,7 +65,9 @@ def test_unchanged_revision_reuses_assessment_without_new_science(tmp_path):
     with ScienceGraphStore(spec.graph_database, readonly=True) as store:
         assert len(store.goal_gate_history(cycle.name)) == 1
     access = backend.goal_context["delivery_material_access"]
-    assert access["revision_path"] == initial["revision_path"]
+    assert access["delivery_revision"] == initial["delivery_revision"]
+    assert Path(access["revision_path"]).is_relative_to(cycle / "goal_snapshots")
+    assert json.loads(Path(access["revision_path"]).read_text())["science_digest"] == before
 
 
 def test_report_repair_creates_new_revision_and_preserves_old_assessment(tmp_path):
@@ -180,8 +182,9 @@ def test_material_change_during_goal_call_cannot_seal_stale_revision(tmp_path):
 
     backend.pass_goal = True
     backend.invoke = mutate_during_goal
-    with pytest.raises(ValueError, match="delivery materials changed"):
-        repair_delivery(workflow, reassess=True)
+    stale = repair_delivery(workflow, reassess=True)
+    assert stale["assessment"]["assessment_status"] == "stale"
+    assert "changed during" in stale["assessment"]["reason"]
     with ScienceGraphStore(spec.graph_database, readonly=True) as store:
         assert store.goal_terminal() is None
         assert [row["verdict"] for row in store.goal_gate_history(cycle.name)] == ["not_passed"]

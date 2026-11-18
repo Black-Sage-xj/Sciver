@@ -53,8 +53,8 @@ def test_worker_console_passes_account_pin_to_initial_and_live_quota(tmp_path):
     run={"research_root":str(root),"observer_id":"a"*16,"cycle_dir":str(root/"2"),
          "cycle":"2","task_name":"Quota test","state":"PAUSED"}
     body=run_detail_body(run,worker_id="worker-2",quota_snapshot=SNAPSHOT)
-    assert "const workerQuotaAccount=\"account-2\"" in body
     doc=BeautifulSoup(body,"html.parser")
+    assert json.loads(doc.select_one("#tm-run-config").string)["pinnedAccount"] == "account-2"
     assert doc.select_one("[data-quota-account]").get_text(strip=True)=="Codex 2"
     assert "5 小时剩余：0%" in doc.select_one("[data-quota-value]").get_text(strip=True)
 

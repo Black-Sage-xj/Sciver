@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import select
@@ -8,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -80,7 +82,7 @@ def account_rate_limits(number: str, *, timeout_s: float = 8.0) -> dict[str, obj
     """
     if number not in ACCOUNT_NAMES:
         raise ValueError(f"unknown Codex account: {number}")
-    layout = ensure_layout()
+    layout = read_layout()
     auth = layout[number] / "auth.json"
     if not auth.is_file():
         return {"account": number, "ok": False, "error": "auth_missing", "queried_at": int(time.time())}
@@ -217,10 +219,67 @@ def _restart_direct_app_servers() -> tuple[int, ...]:
 def _copy_auth(source: Path, target: Path) -> bool:
     if not source.is_file():
         return False
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
-    target.chmod(0o600)
+    _write_auth(source.read_bytes(), target)
     return True
+
+
+def _write_auth(data: bytes, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix='.auth-', dir=target.parent)
+    try:
+        with os.fdopen(fd, 'wb') as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, target)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def _auth_identity_bytes(data: bytes) -> str | None:
+    try:
+        value = json.loads(data)
+        tokens = value.get("tokens") if isinstance(value, dict) else None
+        identity = tokens.get("account_id") if isinstance(tokens, dict) else None
+        return identity if isinstance(identity, str) and identity.strip() else None
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+
+def _auth_identity(path: Path) -> str | None:
+    try:
+        if not path.is_file() or path.stat().st_size > 1_048_576:
+            return None
+        return _auth_identity_bytes(path.read_bytes())
+    except OSError:
+        return None
+
+
+def _reconcile_auth_refresh(auth: Path, root: Path) -> None:
+    """Caller holds account_switch_lock; attribute one immutable byte snapshot."""
+    # Atomically detach the exact refreshed file. A later SDK replacement at
+    # auth remains intact; attribution and persistence use this captured file.
+    captured = auth.with_name(".auth-refresh-" + uuid.uuid4().hex + ".json")
+    os.rename(auth, captured)
+    with captured.open("rb") as source:
+        data = source.read(1_048_577)
+    if len(data) > 1_048_576:
+        raise RuntimeError("Refreshed Codex auth exceeds the supported size; captured file retained")
+    identity = _auth_identity_bytes(data)
+    matches = [root / name / "auth.json" for name in ACCOUNT_NAMES.values()
+               if identity is not None and _auth_identity(root / name / "auth.json") == identity]
+    if len(matches) == 1:
+        _write_auth(data, matches[0])
+    else:
+        # Preserve ambiguous/opaque refreshes for explicit identity repair.
+        directory = root / "unattributed-auth"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        directory.chmod(0o700)
+        target = directory / (hashlib.sha256(data).hexdigest() + ".json")
+        if not target.exists():
+            _write_auth(data, target)
+    captured.unlink()
 
 
 def _selector_number(current: Path) -> str | None:
@@ -326,9 +385,8 @@ def _ensure_runtime(root: Path, selected_number: str, legacy: Path) -> Path:
             auth.unlink()
     elif auth.exists():
         # A Codex refresh may replace a symlink atomically. Preserve that newer
-        # credential into the selected identity before restoring the selector link.
-        _copy_auth(auth, selected_home / "auth.json")
-        auth.unlink()
+        # credential into its recorded identity before restoring the selector link.
+        _reconcile_auth_refresh(auth, root)
     if not auth.exists() and not auth.is_symlink():
         auth.symlink_to(desired)
 
@@ -336,8 +394,18 @@ def _ensure_runtime(root: Path, selected_number: str, legacy: Path) -> Path:
     return home
 
 
-def ensure_layout() -> dict[str, Path]:
-    """Create identity-only accounts plus one shared TheoryMaster runtime home."""
+def read_layout() -> dict[str, Path]:
+    """Return configured paths without creating directories, links or credentials."""
+    root = account_root()
+    return {'root': root, **{number: root / name for number, name in ACCOUNT_NAMES.items()},
+            'current': root / 'current', 'daily_runtime': _legacy_home(), 'runtime': runtime_home()}
+
+
+def ensure_layout(*, _lock_held: bool = False) -> dict[str, Path]:
+    """Explicitly initialize/migrate runtime layout under the account mutation lock."""
+    if not _lock_held:
+        with account_switch_lock():
+            return ensure_layout(_lock_held=True)
     root = account_root()
     root.mkdir(parents=True, exist_ok=True)
     root.chmod(0o700)
@@ -375,8 +443,9 @@ def ensure_layout() -> dict[str, Path]:
     elif daily_auth.exists():
         if migration_marker.exists():
             # Recover an auth file atomically replaced by Codex token refresh.
-            _copy_auth(daily_auth, root / ACCOUNT_NAMES[selected] / "auth.json")
-        daily_auth.unlink()
+            _reconcile_auth_refresh(daily_auth, root)
+        else:
+            daily_auth.unlink()
     if not daily_auth.exists() and not daily_auth.is_symlink():
         daily_auth.symlink_to(desired_auth)
     migration_marker.touch(exist_ok=True)
@@ -389,7 +458,7 @@ def ensure_layout() -> dict[str, Path]:
 
 
 def selected_account() -> str | None:
-    layout = ensure_layout()
+    layout = read_layout()
     return _selector_number(layout["current"])
 
 
@@ -400,7 +469,7 @@ def use_account(number: str, *, restart_app: bool = True, _lock_held: bool = Fal
     if not _lock_held:
         with account_switch_lock():
             return use_account(number, restart_app=restart_app, _lock_held=True)
-    layout = ensure_layout()
+    layout = ensure_layout(_lock_held=True)
     if not (layout[number] / "auth.json").is_file():
         raise RuntimeError("target Codex account is not authenticated; selector unchanged")
     current = layout["current"]
@@ -418,7 +487,7 @@ def use_account(number: str, *, restart_app: bool = True, _lock_held: bool = Fal
 
 
 def account_status() -> dict[str, object]:
-    layout = ensure_layout()
+    layout = read_layout()
     selected = _selector_number(layout["current"])
     accounts: dict[str, dict[str, object]] = {}
     for number in ("1", "2"):

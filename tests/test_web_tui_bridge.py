@@ -178,7 +178,7 @@ class CanonicalTuiRendererTests(unittest.TestCase):
                           for role in MODEL_PROFILES['codex']}}
             (cycle / 'research_state.json').write_text(json.dumps(scientific), encoding='utf-8')
             save_worker_profile(root, 'worker-1', 'codex')
-            with patch('theory_master.worker_runtime.process_identity_alive', return_value=True):
+            with patch('theory_master.runtime_manager.process_identity_alive', return_value=True):
                 visible = project(root, cycle_dir=cycle, worker_id='worker-1')
             routes = visible['role_settings']
             self.assertEqual(routes['investigator']['model'], 'gpt-6-luna')
@@ -199,7 +199,7 @@ class CanonicalTuiRendererTests(unittest.TestCase):
             # immediately effective next-call selection, not a pending edit.
             scientific['active_invocation_id'] = None
             (cycle / 'research_state.json').write_text(json.dumps(scientific), encoding='utf-8')
-            with patch('theory_master.worker_runtime.process_identity_alive', return_value=True):
+            with patch('theory_master.runtime_manager.process_identity_alive', return_value=True):
                 after = project(root, cycle_dir=cycle, worker_id='worker-1')
             self.assertIsNone(after['role_settings']['investigator']['pending'])
             self.assertEqual(after['role_settings']['investigator']['model'], 'gpt-6-sol')
@@ -207,7 +207,7 @@ class CanonicalTuiRendererTests(unittest.TestCase):
             (worker / 'runtime.json').write_text(json.dumps(runtime), encoding='utf-8')
             scientific['active_invocation_id'] = 'inv-19-investigator-abcd'
             (cycle / 'research_state.json').write_text(json.dumps(scientific), encoding='utf-8')
-            with patch('theory_master.worker_runtime.process_identity_alive', return_value=False):
+            with patch('theory_master.runtime_manager.process_identity_alive', return_value=False):
                 paused = project(root, cycle_dir=cycle, worker_id='worker-1')
             self.assertIsNone(paused['role_settings']['investigator']['pending'])
             # SDK-confirmed Provider-thread deferral is a real limitation,
@@ -215,7 +215,7 @@ class CanonicalTuiRendererTests(unittest.TestCase):
             scientific['runtime_hot_route_deferred'] = {
                 'judge': {'reason': 'provider_change_requires_new_thread'}}
             (cycle / 'research_state.json').write_text(json.dumps(scientific), encoding='utf-8')
-            with patch('theory_master.worker_runtime.process_identity_alive', return_value=False):
+            with patch('theory_master.runtime_manager.process_identity_alive', return_value=False):
                 deferred = project(root, cycle_dir=cycle, worker_id='worker-1')
             self.assertEqual(deferred['role_settings']['judge']['pending_reason'],
                              'provider_deferred')

@@ -61,7 +61,7 @@ class TaskWideGoalTerminalTest(unittest.TestCase):
         self.cycle(1, self.passed(), {'verdict': 'passed'})
         self.cycle(2)
         with patch('theory_master.specification.TaskSpec.from_task_root', return_value=self.spec), \
-             patch('theory_master.worker_runtime.runtime_health', return_value={'active': False}):
+             patch('theory_master.runtime_manager.runtime_health', return_value={'active': False}):
             result = schedule_once(self.spec, resource_slots=2)
         self.assertEqual(result, {'started': [], 'reason': 'master_complete'})
 

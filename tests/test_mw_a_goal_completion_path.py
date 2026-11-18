@@ -1,4 +1,4 @@
-"""MW-A: Goal Judge runs under the exclusive barrier; SQLite seal precedes projection."""
+"""MW-A: frozen Goal Judge runs unlocked; validated SQLite seal precedes projection."""
 from __future__ import annotations
 
 import fcntl
@@ -39,7 +39,15 @@ def _barrier_mode(root: Path) -> str:
 class Harness(GoalCompletionMixin):
     def __init__(self, root: Path, verdict: str = "passed"):
         plan = root / "research_plan.md"
-        plan.write_text("# Goal\nFinal Gate\n", encoding="utf-8")
+        plan.write_text("# Goal\nFinal Gate\n\n# Scientific Model\n\nFixture model.\n", encoding="utf-8")
+        metadata = root / ".theory-master"
+        metadata.mkdir()
+        config = root / "theory-master.config.json"
+        config.write_text(json.dumps({"schema": "theory-master/system/v1", "embedded_state_format": 4,
+                                      "goal_id": "goal-1", "plan_path": str(plan)}))
+        (metadata / "task.json").write_text(json.dumps({"config_path": str(config)}))
+        from theory_master.scientific_model import initialize_state
+        initialize_state(root, goal_id="goal-1")
         canvas = root / "exploration.canvas"
         canvas.write_text('{"nodes":[],"edges":[]}', encoding="utf-8")
         self.spec = SimpleNamespace(research_root=root, document=plan, branch_canvas=canvas,
@@ -71,6 +79,10 @@ class Harness(GoalCompletionMixin):
     def _emit(self, state, kind, payload):
         self.events.append(kind)
 
+    def _check_recovery_control(self, state):
+        # This isolated Gate harness has no operator-control queue.
+        pass
+
     def _call(self, state, role, context, **_kw):
         self.calls.append({"role": role, "barrier": _barrier_mode(self.spec.research_root),
                            "sealed": goal_sealed(self.spec.research_root, self._graph_database_path())})
@@ -92,11 +104,11 @@ class GoalCompletionPathTest(unittest.TestCase):
         state = {"status": "over"}
         return state, harness._run_goal_completion(state, {"verdict": "supported"})
 
-    def test_judge_runs_under_exclusive_barrier_and_seal_precedes_projection(self):
+    def test_judge_runs_unlocked_and_seal_precedes_projection(self):
         harness = Harness(self.root)
         state, result = self.run_gate(harness)
         self.assertEqual(result["verdict"], "passed")
-        self.assertEqual([c["barrier"] for c in harness.calls], ["exclusive"])
+        self.assertEqual([c["barrier"] for c in harness.calls], ["free_or_shared"])
         self.assertIsNone(harness.calls[0]["sealed"])
         self.assertEqual(set(harness.order), {"projection:sealed"})
         self.assertEqual(_barrier_mode(self.root), "free_or_shared")
@@ -163,7 +175,7 @@ class GoalCompletionPathTest(unittest.TestCase):
         state, result = self.run_gate(harness)
         self.assertEqual(result["verdict"], "not_passed")
         self.assertEqual(state["goal_status"], "active")
-        self.assertEqual(harness.calls[0]["barrier"], "exclusive")
+        self.assertEqual(harness.calls[0]["barrier"], "free_or_shared")
         self.assertIsNone(goal_sealed(self.root, harness._graph_database_path()))
         self.assertEqual(harness.order, [])
 

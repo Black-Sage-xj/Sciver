@@ -30,8 +30,8 @@ def task(tmp_path: Path, hypotheses: int = 0):
 @pytest.fixture
 def launches(monkeypatch):
     calls = []
-    monkeypatch.setattr(wr, "_route_capacity", lambda spec, n: (n, [None] * n))
-    monkeypatch.setattr(wr, "_launch_detached_service", lambda args, **kw: calls.append(args))
+    monkeypatch.setattr('theory_master.worker_routes._route_capacity', lambda spec, n: (n, [None] * n))
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service', lambda args, **kw: calls.append(args))
     return calls
 
 
@@ -217,16 +217,16 @@ def test_daemon_ticks_recover_gate_and_ignore_preferred(tmp_path, monkeypatch):
     from theory_master import specification, worker_supervisor_dispatch
     spec = SimpleNamespace(research_root=root, max_cycles=1)
     monkeypatch.setattr(specification.TaskSpec, "from_task_root", classmethod(lambda cls, path: spec))
-    monkeypatch.setattr(wr, "_master_complete", lambda root, **kw: False)
+    monkeypatch.setattr('theory_master.worker_store._master_complete', lambda root, **kw: False)
     monkeypatch.setattr(worker_supervisor_dispatch, "dispatch_pending", lambda root: False)
     monkeypatch.setattr(wr.threading.Event, "wait", lambda self, n: False)
     ticks = []
-    monkeypatch.setattr(wr, "_recover_proposal_gate", lambda root: ticks.append(1) or None)
+    monkeypatch.setattr('theory_master.worker_scheduler._recover_proposal_gate', lambda root: ticks.append(1) or None)
     seen = []
     def fake_schedule(spec, *, resource_slots, eligible_worker_ids=None, **kwargs):
         seen.append(kwargs)
         return {"started": [{"worker_id": n} for n in sorted(eligible_worker_ids)]}
-    monkeypatch.setattr(wr, "schedule_once", fake_schedule)
+    monkeypatch.setattr('theory_master.worker_scheduler.schedule_once', fake_schedule)
     assert wr.scheduler_daemon(spec, 2, preferred="H-0007") == 0
     data = json.loads((root / ".theory-master" / "worker_scheduler.json").read_text())
     assert seen == [{}] and ticks
@@ -239,8 +239,8 @@ def test_daemon_stops_with_goal_completed_reason(tmp_path, monkeypatch):
     root = tmp_path / "research"
     root.mkdir()
     spec = SimpleNamespace(research_root=root, max_cycles=1)
-    monkeypatch.setattr(wr, "_master_complete", lambda root, **kw: True)
-    monkeypatch.setattr(wr, "schedule_once", lambda *a, **k: pytest.fail("no allocation after seal"))
+    monkeypatch.setattr('theory_master.worker_store._master_complete', lambda root, **kw: True)
+    monkeypatch.setattr('theory_master.worker_scheduler.schedule_once', lambda *a, **k: pytest.fail("no allocation after seal"))
     assert wr.scheduler_daemon(spec, 1) == 0
     data = json.loads((root / ".theory-master" / "worker_scheduler.json").read_text())
     assert data["status"] == "STOPPED" and data["stop_reason"] == "goal_completed"

@@ -47,9 +47,9 @@ def test_recovery_watcher_does_not_restart_same_failed_budget_boundary():
         spec = SimpleNamespace(research_root=root)
         worker = {"status": "NEEDS_ATTENTION", "current_cycle": "184", "account": "2"}
         with (patch("theory_master.quota_auto_adjust.quota_auto_adjust_enabled", return_value=True),
-              patch.object(runtime, "read_worker", return_value=worker),
-              patch.object(runtime, "worker_action", side_effect=AssertionError("resume forbidden")),
-              patch.object(runtime, "process_identity_alive", return_value=False),
+              patch('theory_master.worker_store.read_worker', return_value=worker),
+              patch('theory_master.worker_actions.worker_action', side_effect=AssertionError("resume forbidden")),
+              patch('theory_master.runtime_manager.process_identity_alive', return_value=False),
               patch("theory_master.codex_accounts.account_rate_limits", side_effect=AssertionError("quota probe forbidden"))):
             assert runtime.watch_worker_quota(spec, "worker-2") == 0
         notice = json.loads((root / ".theory-master/workers/worker-2/budget_review_recovery_exhausted.json").read_text())

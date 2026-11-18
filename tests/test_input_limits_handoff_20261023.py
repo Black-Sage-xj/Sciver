@@ -66,7 +66,7 @@ class InputLimitsHandoff(unittest.TestCase):
         helper = input_fixtures.InputQualificationEvidence()
         for prompt in helper.prompts("challenger", "candidate_review"):
             self.assertIn("Independently reconstruct the closest prior model/claim", prompt)
-            self.assertIn("unavailable material history is a qualification gap", prompt)
+            self.assertIn("unavailable material history is a qualification gap", prompt.casefold())
             self.assertIn("beyond declared parents and recent Cycles", prompt)
             self.assertIn("not whether the hypothesis is true", prompt)
 

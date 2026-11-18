@@ -185,8 +185,14 @@ class NativeGoalTests(TestCase):
             class Client:
                 def thread_goal_clear(self, thread_id):
                     messages.append(("clear",thread_id))
-            thread=SimpleNamespace(id="thread-one",_client=Client(),
-                                   run=lambda prompt: messages.append(("setup",prompt)))
+            class SetupHandle:
+                def stream(self):
+                    yield SimpleNamespace(method="turn/completed", payload=SimpleNamespace(
+                        turn=SimpleNamespace(id="setup-turn",status="completed",final_response="ready")))
+            def setup_turn(prompt):
+                messages.append(("setup",prompt))
+                return SetupHandle()
+            thread=SimpleNamespace(id="thread-one",_client=Client(),turn=setup_turn)
             backend=CodexBackend.__new__(CodexBackend)
             backend.threads={"thread-one":thread}
             backend.ensure_thread=MagicMock(return_value="thread-one")

@@ -175,9 +175,20 @@ class HistoricalReusePromptTests(unittest.TestCase):
             "preserve_research", "investigate", "integrate_literature", "judge_rework",
         } <= stages)
         self.assertNotIn("historical_reuse", stages)
-        invocation = (ROOT / "theory_master" / "workflow_invocation.py").read_text(encoding="utf-8")
-        self.assertIn('layout="v2"', invocation)
-        self.assertNotIn("restart_investigator_for_prompt", invocation)
+        # Check the execution registry and rendered boundaries instead of the
+        # former location of a layout literal in the invocation facade.
+        from theory_master.invocation_execution import NATIVE_INVESTIGATOR_STAGES
+        self.assertEqual(NATIVE_INVESTIGATOR_STAGES,
+                         {"investigate", "judge_rework", "integrate_literature"})
+        for stage in NATIVE_INVESTIGATOR_STAGES:
+            goal = investigator_goal(stage, {
+                "frozen_objective": LOCK,
+                "judge_objections": [{"requested_resolution": "Complete the frozen independent check"}],
+            }, layout="v2")
+            for frozen in LOCK.values():
+                self.assertIn(frozen, goal)
+            self.assertIn("Never self-terminate or request native blocked", goal)
+            self.assertIn("Native Goal completion does not replace independent Judge adjudication", goal)
 
 
 if __name__ == "__main__":

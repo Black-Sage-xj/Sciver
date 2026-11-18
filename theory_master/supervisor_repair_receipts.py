@@ -299,10 +299,42 @@ for layout in ('v1', 'v2'):
             goal = investigator_goal(stage, context, layout=layout, allow_setup_reference=True)
             assert EXECUTION_LIMIT_PROTOCOL_MARKER in goal
 root = pathlib.Path(sys.argv[1]) / 'theory_master'
-workflow = ast.parse((root / 'workflow_invocation.py').read_text())
-assert any(isinstance(n, ast.Constant) and n.value == 'sdk_execution_limit_handoff' for n in ast.walk(workflow))
-backend = ast.parse((root / 'codex_backend.py').read_text())
-assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'read_execution_limit_handoff' for n in ast.walk(backend))
+def parsed(name):
+    return ast.parse((root / name).read_text())
+def has_key(tree):
+    return any(isinstance(n, ast.Constant) and n.value == 'sdk_execution_limit_handoff' for n in ast.walk(tree))
+def delegates(tree, module, symbol):
+    return (any(isinstance(n, ast.ImportFrom) and n.level == 1 and n.module == module
+                and any(a.name == symbol for a in n.names) for n in ast.walk(tree))
+            and any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                    and n.func.id == symbol for n in ast.walk(tree)))
+def has_reader(tree):
+    return any(isinstance(n, ast.Call) and
+               ((isinstance(n.func, ast.Name) and n.func.id == 'read_execution_limit_handoff')
+                or (isinstance(n.func, ast.Attribute) and n.func.attr == 'read_execution_limit_handoff'))
+               for n in ast.walk(tree))
+workflow = parsed('workflow_invocation.py')
+if not has_key(workflow):
+    assert delegates(workflow, 'invocation_execution', 'InvocationSession')
+    execution = parsed('invocation_execution.py')
+    session = next(n for n in execution.body if isinstance(n, ast.ClassDef) and n.name == 'InvocationSession')
+    setup = next((n for n in session.body if isinstance(n, ast.FunctionDef) and n.name == '_prepare_native_delivery'), None)
+    if setup is None:
+        assert delegates(session, 'invocation_transport', 'InvocationTransport')
+        assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                   and n.func.attr == '_prepare_native_delivery'
+                   and isinstance(n.func.value, ast.Attribute) and n.func.value.attr == 'transport'
+                   for n in ast.walk(session))
+        transport = parsed('invocation_transport.py')
+        phase = next(n for n in transport.body if isinstance(n, ast.ClassDef) and n.name == 'InvocationTransport')
+        setup = next(n for n in phase.body if isinstance(n, ast.FunctionDef) and n.name == '_prepare_native_delivery')
+    assert has_key(setup)
+backend = parsed('codex_backend.py')
+if not has_reader(backend):
+    assert delegates(backend, 'codex_goal_transport', 'NativeGoalRunner')
+    transport = parsed('codex_goal_transport.py')
+    runner = next(n for n in transport.body if isinstance(n, ast.ClassDef) and n.name == 'NativeGoalRunner')
+    assert has_reader(runner)
 print(json.dumps({'marker': EXECUTION_LIMIT_PROTOCOL_MARKER, 'schema': EXECUTION_LIMIT_SCHEMA,
                   'fresh_protocol_probe': 'passed', 'resume_preparation': 'retained_thread_delivery_only'}))
 '''

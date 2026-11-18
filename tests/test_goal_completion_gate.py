@@ -155,7 +155,9 @@ class GoalCompletionGateTest(unittest.TestCase):
             self.assertEqual(len(list_cycle_dirs(spec.research_root, task_mode=True)), 1)
             self.assertEqual(set(backend.goal_context), {"research_plan_access", "agent_graph", "delivery_material_access"})
             self.assertTrue(Path(backend.goal_context["delivery_material_access"]["revision_path"]).is_file())
-            self.assertEqual(Path(backend.goal_context["research_plan_access"]["path"]), spec.document)
+            frozen_plan = Path(backend.goal_context["research_plan_access"]["path"])
+            self.assertNotEqual(frozen_plan, spec.document)
+            self.assertEqual(frozen_plan.read_bytes(), spec.document.read_bytes())
             self.assertGreater(backend.graph_hypotheses_at_gate, 0)
             gate_graph = backend.goal_context["agent_graph"]
             self.assertTrue(any(outcome["cycle"] == "1" and outcome["verdict"] == "supported"

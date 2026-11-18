@@ -35,8 +35,8 @@ def test_scheduler_rejects_wrong_python_before_claiming_science(monkeypatch, tmp
     config_path = root / 'theory-master.config.json'
     config_path.write_text('{}', encoding='utf-8')
     spec = SimpleNamespace(research_root=root, config_path=config_path)
-    monkeypatch.setattr(worker_runtime, 'runtime_health', lambda _: {'active': False})
-    monkeypatch.setattr(worker_runtime, 'scheduler_status', lambda _: {'process_alive': False})
+    monkeypatch.setattr('theory_master.runtime_manager.runtime_health', lambda _: {'active': False})
+    monkeypatch.setattr('theory_master.worker_scheduler.scheduler_status', lambda _: {'process_alive': False})
     provider = next(iter(ACCOUNT_PROVIDERS))
     monkeypatch.setattr(backends, 'resolve_routes', lambda **kwargs: {'research_lead': SimpleNamespace(provider=provider)})
     actual_find_spec = importlib.util.find_spec
@@ -57,6 +57,6 @@ def test_scheduler_configuration_blocks_launch_when_off(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match='OFF'):
         worker_runtime.start_scheduler(spec, slots=2)
     configure_mode(root, enabled=True, desired_agents=6)
-    monkeypatch.setattr(worker_runtime, 'runtime_health', lambda _: {'active': True})
+    monkeypatch.setattr('theory_master.runtime_manager.runtime_health', lambda _: {'active': True})
     with pytest.raises(ValueError, match='legacy Master'):
         worker_runtime.start_scheduler(spec, slots=6)

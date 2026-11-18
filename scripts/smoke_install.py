@@ -40,7 +40,9 @@ def main() -> None:
                     assert json.load(response)["ok"]
                 with urlopen(url, timeout=5) as response:
                     assert response.url.endswith('/research-chat/')
-                    assert 'data-setup-welcome' in response.read().decode('utf-8')
+                    page = response.read().decode('utf-8')
+                    assert 'data-research-direct' in page and 'data-research-prompt' in page
+                    assert '/research-chat/assets/research-chat.js' in page
                 with urlopen(url + "observer_state.json", timeout=10) as response:
                     assert any("test0" in str(run) for run in json.load(response)["runs"])
                 with urlopen(url + "research-chat/assets/research-chat.js", timeout=5) as response:

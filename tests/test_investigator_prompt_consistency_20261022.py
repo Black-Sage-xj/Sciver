@@ -180,9 +180,9 @@ class InvestigatorPromptConsistencyTests(unittest.TestCase):
             if event.get("event") == "AGENT_INPUT" and event.get("role") == "investigator"
         ]
         self.assertEqual(kinds, ["native_goal_setup_turn", "native_goal_objective"])
-        invocation = (ROOT / "theory_master" / "workflow_invocation.py").read_text(encoding="utf-8")
-        self.assertIn('"investigate", "judge_rework", "integrate_literature"', invocation)
-        self.assertIn('layout="v2"', invocation)
+        from theory_master.invocation_execution import NATIVE_INVESTIGATOR_STAGES
+        self.assertEqual(NATIVE_INVESTIGATOR_STAGES,
+                         {"investigate", "judge_rework", "integrate_literature"})
 
     def test_three_stages_keep_completion_boundaries(self):
         rework_request = "finish the exact missing comparison"
@@ -239,6 +239,9 @@ class InvestigatorPromptConsistencyTests(unittest.TestCase):
 
         def run_setup(prompt):
             runs.append(prompt)
+            event = SimpleNamespace(method="turn/completed", payload=SimpleNamespace(
+                turn=SimpleNamespace(id="setup-turn", status="completed", final_response="ready")))
+            return SimpleNamespace(stream=lambda: iter([event]), interrupt=lambda: None)
 
         def stop_after_wire(thread, objective, *, on_event=None):
             objectives.append(objective)
@@ -247,7 +250,7 @@ class InvestigatorPromptConsistencyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             backend = CodexBackend(Path(tmp))
             backend.cycle_id = "cycle-prompt"
-            thread = SimpleNamespace(id="inv-thread", run=run_setup, _client=SimpleNamespace())
+            thread = SimpleNamespace(id="inv-thread", turn=run_setup, _client=SimpleNamespace())
             client = mock.Mock()
             client.thread_start.return_value = thread
             client.thread_resume.return_value = thread

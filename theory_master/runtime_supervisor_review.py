@@ -156,7 +156,7 @@ def _recovered_capacity_thread_is_idle(research_root: Path, cycle_dir: Path,
                    and "thread must be idle before starting a goal: " + thread_id in error
                    for error in previous_failures):
             return False
-        from .worker_runtime import list_workers, worker_dir
+        from .worker_store import list_workers, worker_dir
         worker_id = str(state.get("worker_id") or "")
         workers = list_workers(research_root)
         owner = next((row for row in workers if row.get("worker_id") == worker_id), None)
@@ -168,7 +168,8 @@ def _recovered_capacity_thread_is_idle(research_root: Path, cycle_dir: Path,
         from openai_codex import Codex, CodexConfig
         with Codex(CodexConfig(env={"CODEX_HOME": str(private_home)})) as client:
             client.thread_resume(thread_id, include_turns=False)
-            thread = client._client.thread_read(thread_id).thread
+            from .codex_sdk_compat import read_thread
+            thread = read_thread(client, thread_id, include_turns=False).thread
             return (getattr(getattr(thread.status, "root", None), "type", None)
                     == "idle" and thread.id == thread_id)
     except (OSError, ValueError, RuntimeError, ImportError, AttributeError, TypeError) as exc:
@@ -264,7 +265,7 @@ def review_runtime_failure(
     # Engine faults with an attributable allowlisted traceback go to isolated
     # repair instead of the resume-only reviewer, regardless of whether the
     # generic ValueError mapper already marked protocol_health=violation.
-    from .supervisor_runtime_repair import repair_target, _log_for_repair, attempt_runtime_repair
+    from .supervisor_runtime_repair import repair_target, _log_for_repair
     repair_safe = resume_blocker({**state, "protocol_health": "valid"}, for_repair=True) is None
     target = (repair_target(_log_for_repair(research_root, log_path=log_path), state,
                             Path(__file__).resolve().parent)
@@ -294,11 +295,12 @@ def review_runtime_failure(
                   "repair_suggestion": ""}
         session.append("system", result["reason"])
     elif target is not None:
-        result = attempt_runtime_repair(
-            root=research_root, cycle_dir=cycle_dir, state=state,
-            state_path=state_path, session=session, model=model,
-            incident_id=incident_id, **({"log_path": log_path} if log_path is not None else {}),
-        )
+        # Triage supplies a deterministic route; the continuity owner alone
+        # executes a repair and independently revalidates before any resume.
+        result = {"action": "hold", "reason": "Attributable engine traceback requires isolated repair.",
+                  "diagnosis": str(target), "repair_route": "isolated_runtime",
+                  "repair_suggestion": "Repair the attributable allowlisted module in the isolated SDK pipeline."}
+        session.append("repair_handoff", json.dumps(result, ensure_ascii=False))
     elif blocker is not None:
         # A blocked plain resume can still be a repairable engineering fault.
         # Distinguish engineering work from unsafe scientific/ownership replay.

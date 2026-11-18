@@ -74,7 +74,7 @@ def test_worker_claims_block_upgrade(legacy):
     (guard / "branch_claims.json").write_text(json.dumps({
         "schema": "theory-master/branch-claims/v1", "claims": {"H-0001": {"worker_id": "worker-1"}},
     }))
-    with pytest.raises(RuntimeError, match="branch claims"):
+    with pytest.raises(RuntimeError, match="multi-Worker claims"):
         upgrade_task_graph(legacy)
     assert not (legacy.branch_canvas.parent / "science_graph.sqlite3").exists()
 

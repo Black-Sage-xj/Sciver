@@ -68,9 +68,9 @@ def test_frontier_claim_uses_hypothesis_identity_not_projection_nodes(tmp_path):
 def test_scheduler_scales_to_five_with_mocked_child(tmp_path, monkeypatch):
     cv = canvas(tmp_path, 7)
     from theory_master import worker_runtime as wr
-    monkeypatch.setattr(wr, '_route_capacity', lambda spec, n: (n, [None] * n))
+    monkeypatch.setattr('theory_master.worker_routes._route_capacity', lambda spec, n: (n, [None] * n))
     calls=[]
-    monkeypatch.setattr(wr, '_launch_detached_service',
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service',
                         lambda args, **kw: calls.append(args))
     spec = SimpleNamespace(research_root=tmp_path, branch_canvas=cv)
     result = schedule_once(spec, resource_slots=5)
@@ -85,7 +85,7 @@ def test_scheduler_scales_to_five_with_mocked_child(tmp_path, monkeypatch):
 def test_scheduler_refuses_existing_legacy_task(tmp_path, monkeypatch):
     from theory_master import worker_runtime as wr
     cv=canvas(tmp_path, 7)
-    monkeypatch.setattr(wr, 'runtime_health', lambda root: {'active': True})
+    monkeypatch.setattr('theory_master.runtime_manager.runtime_health', lambda root: {'active': True})
     result = schedule_once(SimpleNamespace(research_root=tmp_path, branch_canvas=cv), resource_slots=8)
     assert result['reason'] == 'legacy_runtime_active'
     assert list_workers(tmp_path) == []
@@ -148,10 +148,10 @@ def test_worker_process_full_cycle_boundary_mock(tmp_path, monkeypatch):
 def test_failed_child_start_releases_claim(tmp_path, monkeypatch):
     from theory_master import worker_runtime as wr
     cv = canvas(tmp_path, 2)
-    monkeypatch.setattr(wr, '_route_capacity', lambda spec, slots: (slots, [None] * slots))
+    monkeypatch.setattr('theory_master.worker_routes._route_capacity', lambda spec, slots: (slots, [None] * slots))
     def fail_spawn(*args, **kwargs):
         raise OSError('simulated launcher fault')
-    monkeypatch.setattr(wr, '_launch_detached_service', fail_spawn)
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service', fail_spawn)
     with pytest.raises(OSError, match='simulated'):
         schedule_once(SimpleNamespace(research_root=tmp_path, branch_canvas=cv), resource_slots=2)
     assert CycleClaims(tmp_path).list_claims() == []
@@ -161,11 +161,11 @@ def test_failed_child_start_releases_claim(tmp_path, monkeypatch):
 def test_fast_child_does_not_rewind_runtime(tmp_path, monkeypatch):
     from theory_master import worker_runtime as wr
     cv = canvas(tmp_path, 1)
-    monkeypatch.setattr(wr, '_route_capacity', lambda spec, slots: (slots, [None] * slots))
+    monkeypatch.setattr('theory_master.worker_routes._route_capacity', lambda spec, slots: (slots, [None] * slots))
     def fake_launch(args, **kwargs):
         worker = args[args.index('--worker') + 1]
         save_worker(tmp_path, worker, status='RUNNING', current_cycle='42')
-    monkeypatch.setattr(wr, '_launch_detached_service', fake_launch)
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service', fake_launch)
     response = schedule_once(SimpleNamespace(research_root=tmp_path, branch_canvas=cv), resource_slots=1)
     assert len(response['started']) == 1
     status = list_workers(tmp_path)[0]
@@ -263,7 +263,7 @@ def test_resume_rejects_checkpoint_whose_hypothesis_differs_from_cycle_claim(tmp
     save_worker(tmp_path, "worker-1", status="PAUSED", current_cycle=cycle,
                 claim_id=claim["claim_id"], epoch=claim["fencing_epoch"], pid=99999999)
     launched = []
-    monkeypatch.setattr("theory_master.worker_runtime._launch_detached_service", lambda *a, **k: launched.append(a))
+    monkeypatch.setattr("theory_master.worker_launch._launch_detached_service", lambda *a, **k: launched.append(a))
     with pytest.raises(ValueError, match="identity mismatch"):
         worker_action(SimpleNamespace(research_root=tmp_path, branch_canvas=cv), "worker-1", "resume")
     assert launched == []

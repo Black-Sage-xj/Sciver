@@ -71,6 +71,7 @@ def _inside(snapshot: Path, output: Path, goal_layout: str,
     _prepare_ephemeral_codex_home()
     from .backend_config import resolve_routes
     from .codex_backend import CodexBackend
+    from .codex_sdk_compat import clear_goal
     from .native_goal import investigator_goal, run_native_goal, read_goal_findings
     from openai_codex import Sandbox
 
@@ -191,7 +192,7 @@ def _inside(snapshot: Path, output: Path, goal_layout: str,
         result.update(goal_status=goal.status,physical_turns=goal.physical_turns,
                       tools_started=goal.tools_started)
         if goal.status=="complete":
-            thread._client.thread_goal_clear(thread.id)
+            clear_goal(thread)
             raw=read_goal_findings(goal,handoff)
             (output/"final_findings_raw.json").write_text(raw,encoding="utf-8")
             result["formatting_attempted"]=False

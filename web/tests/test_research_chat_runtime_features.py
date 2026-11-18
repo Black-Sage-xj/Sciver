@@ -450,7 +450,7 @@ def test_sdk_question_handler_restores_original_tool_approval_handler(tmp_path):
     replies = []
     class Handle:
         def stream(self):
-            yield SimpleNamespace(method="turn/completed", payload={"turn": {"id": "t", "final_response": "done"}})
+            yield SimpleNamespace(method="turn/completed", payload={"turn": {"id": "t", "status": "completed", "final_response": "done"}})
     class Thread:
         def turn(self, payload):
             replies.append(inner._approval_handler("item/tool/requestUserInput", {"questions": []}))

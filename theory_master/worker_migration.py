@@ -19,7 +19,7 @@ from .multi_worker import (
     timestamp, utcnow,
 )
 from .runtime_manager import process_identity_alive, runtime_health
-from .worker_runtime import list_workers, read_worker, save_worker
+from .worker_store import list_workers, read_worker, save_worker
 
 
 def _legacy_cycle(root: Path, worker_id: str, claim: dict[str, Any]) -> str | None:

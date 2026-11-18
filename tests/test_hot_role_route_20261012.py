@@ -1,7 +1,6 @@
 """Safety cases for operator model routes at the next SDK Agent boundary."""
 from __future__ import annotations
 
-import inspect
 import json
 import sys
 import tempfile
@@ -247,10 +246,36 @@ class HotRoleRouteTests(unittest.TestCase):
                              'explicit CLI recovery must override stored hot route')
 
     def test_invocation_checks_saved_route_only_after_reuse_and_before_model_capture(self):
-        source=inspect.getsource(InvocationMixin._call)
-        self.assertLess(source.index('if reused is not None'),source.index('self._apply_pending_task_route('))
-        self.assertLess(source.index('self._apply_pending_task_route('),source.index('route = self.routes[actual]'))
-        self.assertIn('self.backend.invoke',source)
+        from theory_master.invocation_execution import InvocationSession
+        with tempfile.TemporaryDirectory() as temp:
+            wf = self.setup_workflow(Path(temp))
+            saved = {"findings": [{"statement": "saved output"}]}
+            wf._check_recovery_control = Mock()
+            wf._reuse_committed_invocation = Mock(return_value=saved)
+            wf._finish_skill_memory = Mock()
+            wf._apply_pending_task_route = Mock()
+            wf.backend.invoke = Mock()
+            self.assertIs(wf._call({}, 'investigator', {}), saved)
+            wf._apply_pending_task_route.assert_not_called()
+            wf.backend.invoke.assert_not_called()
+
+            events = []
+            changed = RoleRoute('gpt-6.1-sol', 'CodexHTTPS', reasoning_effort='low')
+            def apply(state, role, thread):
+                events.append('route')
+                wf.routes[role] = changed
+            wf._apply_pending_task_route = apply
+            def invoke(role, prompt, thread, model, provider):
+                events.append('invoke')
+                self.assertEqual((model, provider), (changed.model, changed.provider))
+                return 'thread', '{}'
+            wf.backend.invoke.side_effect = invoke
+            session = InvocationSession(wf, {}, 'investigator', {}, None, False,
+                                        None, None, 'investigator', 'investigate', None, None, 'fixture')
+            session.preparation._prepare_thread()
+            self.assertIs(session.route, changed)
+            session.transport.invoke_with_audit('fixture', 'task')
+            self.assertEqual(events, ['route', 'invoke'])
 
     def test_presets_are_scientific_preferences_not_account_fallbacks(self):
         routes=build_model_profile('codex')

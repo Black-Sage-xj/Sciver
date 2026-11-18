@@ -144,14 +144,14 @@ def test_claims_block_legacy_runtime_start_and_do_not_leak_lock(tmp_path):
     from theory_master.runtime_manager import foreground_runtime, launch_managed_runtime
     manager = _make(tmp_path, 4)
     manager.claim("worker-1")
-    with pytest.raises(RuntimeError, match="branch claims"):
+    with pytest.raises(RuntimeError, match="multi-Worker claims"):
         with foreground_runtime(manager.root, master_id=1, operation="run"):
             pass
     # The failed foreground attempt must release the owner lock.
-    with pytest.raises(RuntimeError, match="branch claims"):
+    with pytest.raises(RuntimeError, match="multi-Worker claims"):
         with foreground_runtime(manager.root, master_id=1, operation="run"):
             pass
-    with pytest.raises(RuntimeError, match="branch claims"):
+    with pytest.raises(RuntimeError, match="multi-Worker claims"):
         launch_managed_runtime(SimpleNamespace(research_root=manager.root, master_id=1),
                                operation="run", identifier="1")
     assert manager.status()["claims"].get("H-0001") is not None
