@@ -22,7 +22,7 @@ def _harness_with_search_race() -> str:
         raise AssertionError('G6 harness completion marker changed')
     head, tail = base.rsplit(marker, 1)
     extra = r"""
-  const query=elements['ex-query'],box=elements['ex-results'],pending=[];
+  const query=elements['ex-query'],box=elem('ex-results'),pending=[];
   const descendants=node=>[node,...(node.children||[]).flatMap(descendants)];
   const nativeSetTimeout=ctx.setTimeout;
   ctx.setTimeout=(fn,delay)=>nativeSetTimeout(fn,delay===250?0:delay);

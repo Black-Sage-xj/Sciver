@@ -27,7 +27,7 @@ def test_loading_historical_markup_without_overlay_recovers():
     old = 'getElementById:elem,fullscreenElement:null'
     replacement = "getElementById:id=>id==='ex-compact-labels'?(elements[id]||null):elem(id),fullscreenElement:null"
     assert old in HARNESS
-    setup_point = "vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),ctx);"
+    setup_point = "const source=fs.readFileSync(process.argv[1],'utf8');"
     assert setup_point in HARNESS
     setup = r"""
 // Legacy markup has no #ex-compact-labels element. Keep normal DOM emulation

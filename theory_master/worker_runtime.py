@@ -652,9 +652,12 @@ def _route_capacity(spec: Any, slots: int) -> tuple[int, list[str | None]]:
 
 
 def _graph_path(spec: Any) -> Path:
+    if getattr(spec, "graph_database", None) is not None:
+        return Path(spec.graph_database).resolve()
     if getattr(spec, "branch_canvas", None) is None:
         raise ValueError("Task configuration must define a Canvas projection path")
-    return Path(spec.branch_canvas).with_name("science_graph.sqlite3")
+    from .notebook import graph_database_path
+    return graph_database_path(Path(spec.branch_canvas).resolve().parent)
 
 
 def _live_cycle_claims(root: Path) -> list[dict[str, Any]]:

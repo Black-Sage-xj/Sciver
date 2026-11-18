@@ -54,15 +54,14 @@ def test_existing_outcome_document_is_never_silently_overwritten(tmp_path: Path)
     doc = notes / "outcomes" / "11.md"
     doc.parent.mkdir(parents=True)
     doc.write_text("human annotation", encoding="utf-8")
-    with pytest.raises(ValueError, match="conflicts"):
-        write_outcome_document(notes, {
-            "id": "11-decision", "cycle_id": "11", "hypothesis_id": "H-0001",
-            "verdict": "open", "summary": "Unresolved",
-        })
+    write_outcome_document(notes, {
+        "id": "11-decision", "cycle_id": "11", "hypothesis_id": "H-0001",
+        "verdict": "open", "summary": "Unresolved",
+    })
     assert doc.read_text(encoding="utf-8") == "human annotation"
 
 
-def test_generated_outcome_documents_refresh_on_renderer_change_but_not_after_human_edits(tmp_path: Path):
+def test_published_markdown_stays_fixed_while_machine_archive_refreshes(tmp_path: Path):
     notes = tmp_path / "notes"
     outcome = {
         "id": "12-decision", "cycle_id": "12", "hypothesis_id": "H-0012",
@@ -80,17 +79,15 @@ def test_generated_outcome_documents_refresh_on_renderer_change_but_not_after_hu
     changed = {**outcome, "summary": "Updated scoped conclusion"}
     write_outcome_document(notes, changed, lock={"hypothesis": "Frozen claim", "scope": "Scope A"})
     refreshed = target.read_text(encoding="utf-8")
-    assert "Updated scoped conclusion" in refreshed
-    assert "Initial scoped conclusion" not in refreshed
+    assert refreshed == original_markdown
     assert "Updated scoped conclusion" in json_target.read_text(encoding="utf-8")
 
     target.write_text(refreshed + "\nHuman annotation: keep this note.\n", encoding="utf-8")
-    with pytest.raises(ValueError, match="conflicts"):
-        write_outcome_document(notes, {**changed, "summary": "Another revision"}, lock={"hypothesis": "Frozen claim", "scope": "Scope A"})
+    write_outcome_document(notes, {**changed, "summary": "Another revision"}, lock={"hypothesis": "Frozen claim", "scope": "Scope A"})
     assert "Human annotation: keep this note." in target.read_text(encoding="utf-8")
 
 
-def test_legacy_sdk_outcome_document_can_be_migrated_only_when_unedited(tmp_path: Path):
+def test_existing_markdown_is_preserved_without_format_migration(tmp_path: Path):
     notes = tmp_path / "notes"
     outcome = {
         "id": "13-decision", "cycle_id": "13", "hypothesis_id": "H-0013",
@@ -101,9 +98,10 @@ def test_legacy_sdk_outcome_document_can_be_migrated_only_when_unedited(tmp_path
     original_decision = "verdict: supported\nOriginal decision body"
     target = notes.parent / outcome_document_ref("13")
     target.parent.mkdir(parents=True)
-    target.write_text(_render_outcome_document_v1(outcome, lock=lock, original_decision=original_decision), encoding="utf-8")
+    original = _render_outcome_document_v1(outcome, lock=lock, original_decision=original_decision)
+    target.write_text(original, encoding="utf-8")
     write_outcome_document(notes, outcome, lock=lock, original_decision=original_decision)
-    assert "/v3 source:" in target.read_text(encoding="utf-8").splitlines()[0]
+    assert target.read_text(encoding="utf-8") == original
     assert (notes.parent / outcome_document_json_ref("13")).exists()
 
 

@@ -218,10 +218,15 @@ def test_one_Investigator_A_B_response_then_sdk_C_reuses_archive_without_more_mo
     text = note.read_text(encoding="utf-8")
     assert _stage_output()["observations"][0]["statement"] in text
     assert _stage_output()["unexecuted_test"] in text
-    node = next(n for n in json.loads(canvas.read_text())["nodes"]
+    projected = json.loads(canvas.read_text())
+    node = next(n for n in projected["nodes"]
                 if n["id"] == first["node_id"])
     assert _stage_output()["canvas_summary"] in node["text"]
-    assert "[[notes/scientific_reports/Cycle1-preserve_research.md|阅读研究报告]]" in node["text"]
+    report = next(n for n in projected["nodes"]
+                  if n.get("file") == "notes/scientific_reports/Cycle1-preserve_research.md")
+    assert report["type"] == "file"
+    assert any(edge["fromNode"] == node["id"] and edge["toNode"] == report["id"]
+               for edge in projected["edges"])
     again = run_preservation_stage(
         cycle_dir=cycle, canvas_path=canvas, backend=backend,
         model="fake", provider="fake", authorization="operator_approved",

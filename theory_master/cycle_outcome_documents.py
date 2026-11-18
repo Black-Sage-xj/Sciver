@@ -17,10 +17,6 @@ _MARKDOWN_GENERATOR = "theory-master/cycle-outcome"
 _MARKDOWN_VERSION = 3
 _JSON_GENERATOR = "theory-master/cycle-outcome-json"
 _JSON_VERSION = 2
-_V1_MARKER_RE = re.compile(r"^<!-- theory-master/cycle-outcome/source:([0-9a-f]{64}) -->$")
-_V2_MARKER_RE = re.compile(
-    r"^<!-- theory-master/cycle-outcome/v[23] source:([0-9a-f]{64}) render:([0-9a-f]{64}) -->$"
-)
 
 
 def outcome_document_ref(cycle_id: str) -> str:
@@ -79,10 +75,13 @@ def _render_outcome_body(
         lines.extend(["", "原始 Decision 的裁决类型为：" + ", ".join(
             f"`{value}`" for value in sorted(raw_verdicts) if value
         ) + "。数据库兼容字段不可替代原始类型。"])
+    context = outcome.get("report_context") or {}
+    from .research_transition import research_transition_text
+    if reasoning := research_transition_text(context.get("research_transition")):
+        lines.extend(["", reasoning])
     if guide := graph_summary_text(outcome):
         lines.extend(["", "## 本轮概览", "", guide])
     from .research_report import expand_documents, fold_legacy_summary
-    context = outcome.get("report_context") or {}
     body = fold_legacy_summary(str(context.get("body", outcome.get("summary")) or ""), has_guide=bool(outcome.get("graph_summary")))
     lines.extend(["", expand_documents(body, context.get("documents") or [])])
     lines.extend(["", '<details class="research-adjudication">',
@@ -210,15 +209,6 @@ def _render_outcome_document_v1(
     return "\n".join(lines)
 
 
-def _valid_v2_markdown(existing: str) -> bool:
-    first, separator, body = existing.partition("\n")
-    match = _V2_MARKER_RE.fullmatch(first)
-    if not separator or not match:
-        return False
-    actual = hashlib.sha256((body).encode("utf-8")).hexdigest()
-    return actual == match.group(2)
-
-
 def _valid_v2_json(existing: str) -> bool:
     try:
         document = json.loads(existing)
@@ -243,20 +233,6 @@ def _valid_v2_json(existing: str) -> bool:
     return isinstance(expected, str) and hashlib.sha256(canonical.encode("utf-8")).hexdigest() == expected
 
 
-def _can_refresh_markdown(
-    existing: str, content: str, outcome: dict[str, Any], *,
-    lock: dict[str, Any] | None, original_decision: str,
-) -> bool:
-    if existing == content or _valid_v2_markdown(existing):
-        return True
-    first = existing.splitlines()[0] if existing.splitlines() else ""
-    if _V1_MARKER_RE.fullmatch(first):
-        return existing == _render_outcome_document_v1(
-            outcome, lock=lock, original_decision=original_decision,
-        )
-    return False
-
-
 def _atomic_write(target: Path, content: str) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
@@ -275,29 +251,40 @@ def write_outcome_document(
     notes_root: Path, outcome: dict[str, Any], *,
     lock: dict[str, Any] | None = None, original_decision: str = "",
 ) -> Path:
-    ref = outcome_document_ref(str(outcome["cycle_id"]))
-    target = notes_root.parent / ref
-    json_target = notes_root.parent / outcome_document_json_ref(str(outcome["cycle_id"]))
-    content = render_outcome_document(outcome, lock=lock, original_decision=original_decision)
+    """Publish Markdown once, retaining later user edits and the original body."""
+    cycle_id = str(outcome["cycle_id"])
+    outcome_document_ref(cycle_id)  # Validate before constructing either path.
+    root = notes_root.resolve()
+    target = root / "outcomes" / f"{cycle_id}.md"
+    json_target = target.with_suffix(".json")
+    if not target.resolve().is_relative_to(root) or not json_target.resolve().is_relative_to(root):
+        raise ValueError("Cycle Outcome documents must remain inside their notes directory")
+    if target.is_symlink() or json_target.is_symlink():
+        raise ValueError("Cycle Outcome document destinations must not be symbolic links")
     json_content = render_outcome_json(outcome, lock=lock, original_decision=original_decision)
 
-    if target.exists():
-        existing = target.read_text(encoding="utf-8")
-        if not _can_refresh_markdown(
-            existing, content, outcome, lock=lock, original_decision=original_decision,
-        ):
-            raise ValueError(f"Cycle Outcome document conflicts with existing file: {target}")
+    if json_target.exists() and not target.is_file():
+        raise FileNotFoundError(f"Published Cycle Outcome Markdown is missing: {target}")
+    if target.exists() and not target.is_file():
+        raise ValueError(f"Cycle Outcome Markdown destination is not a file: {target}")
     if json_target.exists():
         existing_json = json_target.read_text(encoding="utf-8")
         if existing_json != json_content and not _valid_v2_json(existing_json):
             raise ValueError(f"Cycle Outcome JSON conflicts with existing file: {json_target}")
 
-    # Validate both destinations before replacing either one. A manual annotation
-    # is never overwritten merely because a source digest happens to match.
+    # The JSON archive is machine-owned. Its refresh must never replace or
+    # validate the user-editable Markdown body.
+    if not target.exists():
+        content = render_outcome_document(outcome, lock=lock, original_decision=original_decision)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with target.open("x", encoding="utf-8") as handle:
+                handle.write(content)
+        except FileExistsError:
+            if not target.is_file() or target.is_symlink():
+                raise ValueError(f"Cycle Outcome Markdown destination changed: {target}")
     if not json_target.exists() or json_target.read_text(encoding="utf-8") != json_content:
         _atomic_write(json_target, json_content)
-    if not target.exists() or target.read_text(encoding="utf-8") != content:
-        _atomic_write(target, content)
     return target
 
 
@@ -336,16 +323,15 @@ def backfill_outcome_documents(
                 if raw:
                     originals.append(json.loads(raw["raw_json"]).get("text", ""))
             original = "\n\n---\n\n".join(originals)
-            content = render_outcome_document(outcome, lock=lock, original_decision=original)
             json_content = render_outcome_json(outcome, lock=lock, original_decision=original)
-            target = notes_root.parent / ref
-            json_target = notes_root.parent / json_ref
+            target = notes_root / "outcomes" / f"{cycle_id}.md"
+            json_target = target.with_suffix(".json")
             conflict = lock_conflict
-            if target.exists() and not _can_refresh_markdown(
-                target.read_text(encoding="utf-8"), content, outcome,
-                lock=lock, original_decision=original,
-            ):
-                conflicts.append(f"{cycle_id}: human-edited or unrecognized Markdown at {target}")
+            if json_target.exists() and not target.is_file():
+                conflicts.append(f"{cycle_id}: published Markdown is missing at {target}")
+                conflict = True
+            if target.is_symlink() or json_target.is_symlink():
+                conflicts.append(f"{cycle_id}: document destination is a symbolic link")
                 conflict = True
             if json_target.exists():
                 existing_json = json_target.read_text(encoding="utf-8")

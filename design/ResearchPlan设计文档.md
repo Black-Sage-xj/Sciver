@@ -212,7 +212,7 @@ Scientific Model 不是 append-only 文档。研究认识发生变化时，应**
 | `Research Contract` | Human | 极低频 | 禁止 |
 | `Final Gate` | Human | 极低频 | 禁止 |
 | `Required Context` | Human / operator | 低频 | 默认禁止 |
-| `Scientific Model` | Research Lead 提议，SDK 校验并提交 | 可随 Cycle 变化 | 允许 |
+| `Scientific Model` | Research Lead 提议，SDK 校验并提交；Human 可经版本检查更正 | 可随 Cycle 变化 | 允许 |
 
 任何 Agent 都不得借 Scientific Model 更新顺便修改前四个字段。
 
@@ -367,8 +367,24 @@ replace
 - `model` 仅包含 Scientific Model；SDK 科学认识更新只增长 model 文本历史，不增长 plan 历史；
 - 网页分别显示两套版本、原因、范围内差异和文本；恢复只替换所选范围，并保留另一范围的最新内容。并发冲突按所选范围校验；
 - 旧 `research-plan-versions/history.jsonl` 和完整快照保留不改。首次受锁访问时，按历史顺序投影为 `plan-history.jsonl` 与 `model-history.jsonl`，各自只记录内容变化，并保留 `legacy_version`、原时间和原因；
-- 两套文本历史与机器 `scientific_model_state.json` 的科学版本号各有职责；不改机器版本、Cycle 归属或历史科学裁决。网页的 model_version 表示此处的 Scientific Model 文本历史编号；
+- 两套文本历史与机器 `scientific_model_state.json` 的版本号各有职责。网页的 `model_version` 表示 Scientific Model 文本历史编号；经受管接口的人工 Model 更正同时推进运行 CAS 版本，防止持有旧输入的 Cycle 静默覆盖。历史文本迁移不追认当时未登记的机器版本，也不改变历史科学裁决；
 - 保存相同内容不新增版本，直接文件修改仅在下次受管访问时记录，不能追认未观测到的中间编辑。
+
+### 9.2 人工修订与运行时版本保护
+
+Research Chat 将 Scientific Model 与目标/约束修改、下一轮猜想及运行控制分别列项。修订说明包含原内容的问题、具体更正、证据来源、适用范围和人的意图。新猜想或路线偏好不自动成为已证实认识；人工修订不修改 H、Outcome、Judge 或 Goal 记录。
+
+受管的人工编辑及仅恢复 `scope="model"` 使用同一模型提交锁，先核对所读 section revision 与规范任务绑定，再同步更新文本和运行 metadata。`scientific_model_version` 是运行 CAS 版本，`model_version` 是编辑历史编号；`scientific_model_source / scientific_model_status` 说明来源和人工修订身份。人工更正标为 `human_revision_not_evidence`，不冒充新的实验或裁决。相同内容不增长版本。
+
+人工与 SDK 模型更新遵循 `science_commit_barrier → model_commit_lock → plan_lock` 的锁顺序。提交前校验 Goal 封存及真实 metadata；规范 SDK 任务的缺失/损坏绑定或 metadata 必须报错，不能退回普通文本保存。没有运行绑定的独立 Markdown 文档编辑不虚构模型版本。
+
+人工修改先预留新的 CAS 版本，再暴露新文本，避免故障时让新文本仍持有旧版本。预留时保留原文本的来源，以 `human_revision_reservation` 标记目标哈希与未完成状态；文本替换成功才提交人工修订来源。若替换失败，可能留下一个未使用的版本号，必须明确报错“内容未保存、版本已预留”；不把旧内容记为一次已发生的人工更正。后续 Lead 正式综合清理仅属于当前人工修订的状态，历史仍保留。Worker 和单 Runner 的 synthesis 都携带实际读取的模型版本，冲突沿用待整合记录，不静默覆盖人工修订。当前冻结 Cycle 可能仍使用旧输入；更正回执应说明生效范围，而不宣称所有在途 Agent 已重新读取。
+
+### 9.3 下一轮猜想与稳定上下文
+
+单次人工猜想保存为规范图谱中的 External ResearchFocus 和投递事件，默认由下一次全新提案领取一次，不为此重写 Goal、Contract、Final Gate 或向 Required Context 追加临时控制历史。Required Context 继续承担稳定资料导航。
+
+历史版本保存在 Required Context 的结构化猜想不自动投递。没有新生命周期登记的旧规范 External 显示为 `reconciliation_required`；用户确认后显式重新登记为 pending。只保存 Plan、未完成图谱登记的历史部分操作也须核对和补齐。列表、队列位置和实际领取使用同一规则，不让隐藏旧命题抢在新请求之前。一次性投递与恢复的完整规则见 [SDK设计文档](./SDK设计文档.md)。
 
 
 ---

@@ -78,4 +78,7 @@ def project_node(raw: dict[str, Any]) -> dict[str, Any]:
         "timestamp": timestamp, "sortable_time": sortable_time,
         "cycle": cycle, "title": label, "source": header.get("source"),
         "content_type": header.get("content_type"),
+        "research_transition": (raw.get("research_transition")
+                                if science_type == "Hypothesis"
+                                and isinstance(raw.get("research_transition"), dict) else None),
     }

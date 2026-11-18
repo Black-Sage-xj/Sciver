@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import threading
@@ -77,6 +78,29 @@ def vault_root(search_root: Path, observer_id: str, state: dict[str, Any]) -> Pa
         or hashlib.sha256(str(research).encode("utf-8")).hexdigest()[:16] != observer_id
     ):
         raise ExplorerError("任务映射不安全", 403)
+    # Current task bindings explicitly separate the document vault from data.
+    # The indexed anchor remains stable when a user moves their notebook.
+    try:
+        from theory_master.notebook import notebook_config, configured_vault_root, graph_database_path
+        registered = notebook_config(root)
+        if registered and (registered[1].get("vault_root") or registered[1].get("graph_database")):
+            config_path, parsed = registered
+            if Path(parsed["research_root"]).resolve() != research:
+                raise ExplorerError("任务源文件与 Run 索引不一致", 409)
+            actual = configured_vault_root(parsed)
+            actual_binding = notebook_config(actual)
+            if not actual_binding or actual_binding[0] != config_path:
+                raise ExplorerError("笔记库登记不一致", 409)
+            canvas = Path(parsed["branch_canvas"])
+            database = graph_database_path(actual)
+            if (not canvas.is_absolute() or canvas.parent != actual or canvas.is_symlink()
+                    or database.is_symlink() or not database.is_file()):
+                raise ExplorerError("笔记库或科研图谱路径不安全", 403)
+            return actual
+    except ExplorerError:
+        raise
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ExplorerError("笔记库登记不可读取", 409) from exc
     canvas = root / "exploration.canvas"
     graph_database = root / "science_graph.sqlite3"
     if canvas.is_symlink() or graph_database.is_symlink():
@@ -263,8 +287,9 @@ def _sqlite_graph_projection(root: Path) -> dict[str, Any]:
         ScienceGraphStore, compact_external_summary, external_detail_ref,
     )
 
-    graph_file = root / "science_graph.sqlite3"
-    if not _inside(graph_file.resolve(), root):
+    from theory_master.notebook import graph_database_path, notebook_config
+    graph_file = graph_database_path(root)
+    if graph_file.is_symlink() or (not _inside(graph_file.resolve(), root) and not notebook_config(root)):
         raise ExplorerError("科研数据库路径不安全", 403)
     try:
         with ScienceGraphStore(graph_file, readonly=True) as store:
@@ -368,6 +393,7 @@ def _sqlite_graph_projection(root: Path) -> dict[str, Any]:
             "id": h["id"], "type": "text", "text": text,
             "outcome": h.get("outcome") if kind == "Hypothesis" else None,
             "hypothesis_summary": h.get("summary") if kind == "Hypothesis" else None,
+            "research_transition": h.get("research_transition") if kind == "Hypothesis" else None,
             "lineage_summary": source_role_text(h) if kind == "Hypothesis" else None,
             "dossier_ref": h.get("resolved_dossier_ref") if kind == "Hypothesis" else None,
             "unavailable_dossier_ref": h.get("unavailable_dossier_ref") if kind == "Hypothesis" else None,
@@ -405,8 +431,9 @@ def _sqlite_graph_projection(root: Path) -> dict[str, Any]:
 
 
 def load_canvas(root: Path) -> dict[str, Any]:
+    from theory_master.notebook import graph_database_path
     root = Path(root).resolve()
-    if (root / "science_graph.sqlite3").is_file():
+    if graph_database_path(root).is_file():
         return _sqlite_graph_projection(root)
     path = root / "exploration.canvas"
     # Defend against replacing the public Canvas with a symlink outside the vault.
@@ -422,13 +449,10 @@ def load_canvas(root: Path) -> dict[str, Any]:
 
 
 def document_paths(root: Path) -> dict[str, Path]:
-    """Closed allowlist: top-level research_plan.md plus selected Markdown subtrees."""
+    """Read visible Markdown anywhere in the registered notebook."""
     items: dict[str, Path] = {}
-    candidates = [root / "research_plan.md"]
-    for dirname in sorted(DOC_DIRS):
-        directory = root / dirname
-        if directory.is_dir() and _inside(directory.resolve(), root):
-            candidates.extend(sorted(directory.rglob("*.md")))
+    from theory_master.notebook import notebook_files
+    candidates = sorted(p for p in notebook_files(root) if p.suffix.lower() == ".md")
     for candidate in candidates:
         rel = candidate.relative_to(root)
         if any(part.startswith(".") for part in rel.parts) or len(items) >= MAX_DOCUMENT_COUNT:
@@ -571,7 +595,8 @@ def read_document(root: Path, path: str, offset: int = 0) -> dict[str, Any]:
     if path not in files:
         raise ExplorerError("未找到可公开阅读的 Markdown 文档", 404)
     file = files[path]
-    size = file.stat().st_size
+    source_stat = file.stat()
+    size = source_stat.st_size
     if offset > size:
         raise ExplorerError("文档读取偏移量超出范围", 400)
     try:
@@ -595,12 +620,23 @@ def read_document(root: Path, path: str, offset: int = 0) -> dict[str, Any]:
                             else:
                                 raise
             text = chunk.decode("utf-8")
+            stream.seek(0)
+            digest = hashlib.sha256()
+            for block in iter(lambda: stream.read(MAX_DOCUMENT_BYTES), b""):
+                digest.update(block)
+            def identity(value):
+                return (value.st_dev, value.st_ino, value.st_size,
+                        value.st_mtime_ns, value.st_ctime_ns)
+            if (identity(file.stat()) != identity(source_stat)
+                    or identity(os.fstat(stream.fileno())) != identity(source_stat)):
+                raise ExplorerError("科研文档在读取时发生变化，请重新打开", 409)
     except (OSError, UnicodeError) as exc:
         raise ExplorerError("无法读取科研文档", 422) from exc
     end = offset + len(chunk)
     return {
         "id": path, "title": _first_heading(text) or PurePosixPath(path).stem,
         "content": text, "next_offset": end if end < size else None,
+        "source_sha256": digest.hexdigest(),
         **_report_document_alias(root, path, offset),
     }
 
@@ -608,12 +644,14 @@ def read_document(root: Path, path: str, offset: int = 0) -> dict[str, Any]:
 def _report_document_alias(root: Path, path: str, offset: int) -> dict[str, str]:
     if offset:
         return {}
+    from theory_master.notebook import graph_database_path
     from theory_master.research_report import report_cycle_for_path
-    cycle = report_cycle_for_path(root / "science_graph.sqlite3", path)
+    cycle = report_cycle_for_path(graph_database_path(root), path)
     return {"report_cycle": cycle} if cycle else {}
 
 
 def _build_index_uncached(root: Path) -> dict[str, Any]:
+    from theory_master.notebook import graph_database_path
     root = Path(root).resolve()
     canvas = load_canvas(root)
     docs = document_paths(root)
@@ -693,7 +731,7 @@ def _build_index_uncached(root: Path) -> dict[str, Any]:
         if isinstance(e, dict) and e.get("fromNode") in valid and e.get("toNode") in valid
     ]
     return {
-        "canvas": ("science_graph.sqlite3" if (root / "science_graph.sqlite3").is_file()
+        "canvas": ("science_graph.sqlite3" if graph_database_path(root).is_file()
                    else "exploration.canvas"), "nodes": nodes, "edges": edges,
         "documents": document_index, "backlinks": backlinks, "references": references,
         "aliases": aliases,
@@ -720,7 +758,9 @@ def _node_search_content(node: dict[str, Any]) -> str:
 
 
 def _search_signature(root: Path, docs: dict[str, Path]) -> tuple[Any, ...]:
-    paths = [root / "science_graph.sqlite3", root / "science_graph.sqlite3-wal", root / "exploration.canvas"]
+    from theory_master.notebook import graph_database_path
+    graph = graph_database_path(root)
+    paths = [graph, graph.with_name(graph.name + "-wal"), root / "exploration.canvas"]
     signature: list[Any] = []
     for path in paths:
         try:

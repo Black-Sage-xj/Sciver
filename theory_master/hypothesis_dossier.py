@@ -1,13 +1,61 @@
 """Stable scientific Hypothesis dossier: SDK copies frozen text; Lead supplies display copy."""
 from __future__ import annotations
 
+import fcntl
+import json
 import re
 from pathlib import Path
+from typing import Any
 
 from .hypothesis_display import normalize_hypothesis_display
 
 
 DOSSIER_MARKER = "<!-- theory-master/hypothesis-dossier/v1 -->"
+
+
+def _append_publication(*, canvas_path: Path, target: Path, token: str,
+                        block: str, header: str | None = None) -> None:
+    """Append each published block once, even after its visible marker is edited."""
+    root = canvas_path.resolve().parent
+    if target.is_symlink() or not target.resolve().is_relative_to(root):
+        raise ValueError("Hypothesis dossier must remain inside its vault")
+    relative = target.resolve().relative_to(root).as_posix()
+    internal = root / ".theory-master"
+    if not internal.resolve().is_relative_to(root):
+        raise ValueError("Markdown publication metadata must remain inside its vault")
+    internal.mkdir(parents=True, exist_ok=True)
+    metadata = internal / "markdown-publications.json"
+    locking = internal / "markdown-publications.lock"
+    if metadata.is_symlink() or locking.is_symlink():
+        raise ValueError("Markdown publication metadata must not be a symbolic link")
+    with locking.open("a", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            saved = json.loads(metadata.read_text(encoding="utf-8")) if metadata.exists() else {"version": 1, "documents": {}}
+            documents = saved["documents"]
+            published = set(documents.get(relative, []))
+            if not target.is_file() and (published or header is None):
+                raise FileNotFoundError("Published Hypothesis dossier is missing: " + str(target))
+            if target.is_file():
+                existing = target.read_text(encoding="utf-8")
+                # A crash between appending a block and recording its token can
+                # be recovered without changing or repeating the visible body.
+                published.update(re.findall(r"(?m)^<!-- ((?:frozen|evidence|report)-cycle:[A-Za-z0-9_-]+) -->$", existing))
+            if token not in published:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists():
+                    with target.open("a", encoding="utf-8") as note:
+                        note.write("\n\n" + block + "\n")
+                else:
+                    with target.open("x", encoding="utf-8") as note:
+                        note.write((header or "") + "\n" + block + "\n")
+                published.add(token)
+            if documents.get(relative) != sorted(published):
+                from .cycle_outcome_documents import _atomic_write
+                documents[relative] = sorted(published)
+                _atomic_write(metadata, json.dumps(saved, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def write_hypothesis_dossier(
@@ -17,6 +65,7 @@ def write_hypothesis_dossier(
     evolution_operator: str = "", lineage_anchor_node_id: str = "",
     lineage_anchor_node_ids: list[str] | None = None,
     lineage_main_node_id: str = "", lineage_other_node_ids: list[str] | None = None,
+    research_transition: dict[str, Any] | None = None,
 ) -> str:
     """Create one vault-relative H dossier and append non-duplicated frozen Cycle snapshots."""
     if not re.fullmatch(r"H-\d{4,}", hypothesis_id):
@@ -65,76 +114,15 @@ def write_hypothesis_dossier(
         "- 派生类型：" + (evolution_operator or "（根 H / 未指定）"), "",
     ])
     target.parent.mkdir(parents=True, exist_ok=True)
+    from .research_transition import research_transition_text
     header = "\n".join([
         DOSSIER_MARKER, "# " + hypothesis_id + " · " + title, "",
         "> 长期假说档案。标题与摘要是节点导读；完整科学定义在冻结快照中，当前裁决状态以 SQLite 为准。", "",
         "### 节点摘要（锁定时生成）", "", summary, "",
+        *([research_transition_text(research_transition), ""] if research_transition else []),
     ])
-    if target.exists():
-        existing = target.read_text(encoding="utf-8")
-        if not existing.startswith(DOSSIER_MARKER):
-            raise ValueError("refusing to overwrite a non-SDK Hypothesis dossier: " + str(target))
-        migrated = existing.replace(
-            "> 以下科学文本由 SDK 原样复制，不经摘要模型重述；科学裁决与活动状态以 Canvas/运行记录为准。",
-            "> 以下科学文本由 SDK 原样复制，不经摘要模型重述；SQLite 是科学图谱权威，Canvas 仅为只读投影。",
-        )
-        # Update only the SDK-generated header. If a person has inserted extra
-        # material there, leave it intact rather than guessing which text is theirs.
-        first_snapshot = re.search(r"(?m)^<!-- frozen-cycle:", migrated)
-        if first_snapshot:
-            prefix = migrated[:first_snapshot.start()].rstrip("\n")
-            lines = prefix.splitlines()
-            heading_index = next((i for i, line in enumerate(lines) if line.startswith("### ")), -1)
-            header_is_sdk_owned = (
-                len(lines) >= 6 and lines[0] == DOSSIER_MARKER
-                and lines[1].startswith("# " + hypothesis_id + " · ")
-                and any(line.startswith("> 长期假说档案。") for line in lines[:5])
-                and heading_index >= 0
-                and lines[heading_index] in {"### Canvas 展示摘要（Lead 文案）", "### 节点摘要（锁定时生成）"}
-                and all(not line.strip() for line in lines[heading_index + 1:-1])
-            )
-            if header_is_sdk_owned:
-                migrated = header + "\n" + migrated[first_snapshot.start():]
-        # The current Cycle's SDK-owned source index is safe to refresh on retry.
-        if snapshot_marker in migrated:
-            start = migrated.index(snapshot_marker)
-            next_snapshot = re.search(r"(?m)^<!-- (?:frozen-cycle|evidence-cycle|report-cycle):", migrated[start + len(snapshot_marker):])
-            end = start + len(snapshot_marker) + next_snapshot.start() if next_snapshot else len(migrated)
-            prefix, cycle_block, suffix = migrated[:start], migrated[start:end], migrated[end:]
-            trailing_newlines = len(cycle_block) - len(cycle_block.rstrip("\n"))
-            cycle_lines = cycle_block.splitlines()
-            typed_text = "、".join(
-                f"{source_id}（{evolution_operator or 'unknown'}）" for source_id in source_ids
-            ) if source_ids else "（根节点；无上游 H）"
-            cycle_lines = [
-                ("- 上游锚点：" + parent_text) if line.startswith("- 上游锚点：") else
-                ("- 上游谱系：" + typed_text) if line.startswith("- 上游谱系：") else
-                ("- 派生类型：" + (evolution_operator or "（根 H / 未指定）")) if line.startswith("- 派生类型：") else line
-                for line in cycle_lines
-            ]
-            if source_ids and not any(line.startswith("- 上游谱系：") for line in cycle_lines):
-                anchor_index = next((i for i, line in enumerate(cycle_lines) if line.startswith("- 上游锚点：")), -1)
-                if anchor_index >= 0:
-                    cycle_lines.insert(anchor_index + 1, "- 上游谱系：" + typed_text)
-            if role_lines:
-                cycle_lines = [line for line in cycle_lines
-                               if not line.startswith(("- Main 来源", "- 其它来源"))]
-                anchor_index = next(i for i, line in enumerate(cycle_lines)
-                                    if line.startswith("- 上游锚点："))
-                cycle_lines[anchor_index:anchor_index] = role_lines
-            # splitlines() preserves one trailing empty element; subtract it when
-            # restoring the original newline count to keep retries byte-idempotent.
-            migrated = prefix + "\n".join(cycle_lines) + ("\n" * max(0, trailing_newlines - 1)) + suffix
-        if snapshot_marker not in migrated:
-            migrated = migrated.rstrip() + "\n\n" + block + "\n"
-        if migrated != existing:
-            target.write_text(migrated, encoding="utf-8")
-    else:
-        try:
-            with target.open("x", encoding="utf-8") as handle:
-                handle.write(header + "\n" + block + "\n")
-        except FileExistsError as exc:
-            raise RuntimeError("concurrent Hypothesis dossier creation") from exc
+    _append_publication(canvas_path=canvas_path, target=target,
+                        token="frozen-cycle:" + cycle_id, block=block, header=header)
     return rel
 
 
@@ -148,15 +136,12 @@ def append_hypothesis_evidence(*, canvas_path: Path, wikilink_stem: str, cycle_i
     target.relative_to(canvas_parent)
     if not target.is_file():
         raise ValueError("linked Hypothesis dossier is missing: " + str(target))
-    original = target.read_text(encoding="utf-8")
-    if not original.startswith(DOSSIER_MARKER):
-        raise ValueError("cannot modify a non-SDK dossier")
+    if not re.fullmatch(r"(?:cycle-)?\d+", cycle_id):
+        raise ValueError("dossier needs safe Cycle ID")
     marker = "<!-- evidence-cycle:" + cycle_id + " -->"
-    if marker in original:
-        return
-    with target.open("a", encoding="utf-8") as handle:
-        handle.write("\n" + marker + "\n### Cycle " + cycle_id + " · Evidence 引用索引\n\n")
-        handle.write("\n".join("- " + ref for ref in refs) + "\n")
+    _append_publication(canvas_path=canvas_path, target=target,
+        token="evidence-cycle:" + cycle_id,
+        block=marker + "\n### Cycle " + cycle_id + " · Evidence 引用索引\n\n" + "\n".join("- " + ref for ref in refs))
 
 
 def append_hypothesis_cycle_report(*, canvas_path: Path, notes_root: Path, hypothesis_id: str, cycle_id: str, note_path: Path) -> None:
@@ -173,10 +158,9 @@ def append_hypothesis_cycle_report(*, canvas_path: Path, notes_root: Path, hypot
     dossier = notes_root.resolve() / "hypotheses" / (hypothesis_id + ".md")
     if not dossier.is_file():
         return
-    existing = dossier.read_text(encoding="utf-8")
-    if not existing.startswith(DOSSIER_MARKER):
-        return
+    if not re.fullmatch(r"(?:cycle-)?\d+", cycle_id):
+        raise ValueError("dossier needs safe Cycle ID")
     marker = "<!-- report-cycle:" + cycle_id + " -->"
-    if marker not in existing:
-        with dossier.open("a", encoding="utf-8") as handle:
-            handle.write("\n" + marker + "\n### Cycle " + cycle_id + " · 人类可读报告\n\n[[" + report_stem + "]]\n")
+    _append_publication(canvas_path=canvas_path, target=dossier,
+        token="report-cycle:" + cycle_id,
+        block=marker + "\n### Cycle " + cycle_id + " · 人类可读报告\n\n[[" + report_stem + "]]")

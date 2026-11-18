@@ -119,6 +119,7 @@ class PendingConflictTest(unittest.TestCase):
         self.assertEqual(conflict["basis_version"], 0)
         self.assertEqual(conflict["current_version"], 1)
         self.assertIn("scientific_model.update_deferred", [kind for kind, _ in loser.events])
+
         registry = json.loads(pending_path(self.root).read_text(encoding="utf-8"))
         self.assertEqual(registry["schema"], "theory-master/scientific-model-pending/v1")
         (item,) = registry["items"]
@@ -132,6 +133,21 @@ class PendingConflictTest(unittest.TestCase):
         # Crash-safe replay of the conflicted Cycle does not duplicate the record.
         loser.synthesize()
         self.assertEqual(len(list_pending(self.root, status=None)), 1)
+
+    def test_legacy_runner_defers_old_synthesis_after_human_revision(self):
+        from theory_master.embedded_state import replace_summary
+        from theory_master.scientific_model import model_commit_lock, prepare_human_revision, finalize_human_revision
+
+        legacy = Harness(self.root, self.goal, "2", worker_id=None, lead=replace("Stale legacy synthesis."))
+        _stage_in(legacy)
+        with model_commit_lock(self.root):
+            human = prepare_human_revision(self.root, load(self.root), "Human revised scientific picture.", reason="correction")
+            replace_summary(Path(self.binding.config["plan_path"]), human["summary"])
+            finalize_human_revision(self.root, human)
+        state = legacy.synthesize()
+        self.assertEqual(load(self.root)["summary"], human["summary"])
+        self.assertEqual(state["scientific_model_update_status"], "deferred_conflict")
+        self.assertEqual(list_pending(self.root)[0]["base_version"], 0)
 
     def test_pending_is_injected_into_next_synthesis_context(self):
         self._conflict()

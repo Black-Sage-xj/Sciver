@@ -42,6 +42,7 @@ SDK 不依据自然语言、文件名或关键词代做科学判断。系统约�
 | Literature | 获取并核查外部学术来源 | 如实区分实际阅读层级，不把不可读来源当作已验证证据 |
 | Judge | 独立裁决本轮 H；必要时给出有界 objection；任务完成裁决 | 科学裁决不由预算或运行状态推导 |
 | Reporter | 完整报告的标题与正文 | 不改裁决、不选下一方向、不创建图谱科学对象 |
+| Research Chat | 与用户讨论证据和方向，执行明确批准的研究调整 | 独立工作区会话；使用 SDK 计划/图谱/运行接口，不代替资格审查或科学裁决 |
 | Supervisor | 故障诊断、受控工程修复与恢复验证 | 不改科研合同、Evidence 或科学裁决，不越过资源和所有权守卫 |
 | SDK | Stage 调度、合同闭合、身份、账本、持久化和投影 | 不选科学假设，不解释证据，不代签 verdict |
 
@@ -92,13 +93,39 @@ Lead 触发的文献检索材料存于当前 Cycle 的 `workspace/literature/sdk
       └─ not_passed → 按运行预算和调度进入下一 Cycle
 ```
 
+### 共同讨论与一次性人工方向
+
+Research Chat 使用独立身份、运行手册和五个按需技能解释进展、讨论问题、核对证据、规划下一步和执行干预。讨论形成具体行动时，末尾编号列出所需 Plan 更正、下一轮猜想、Scientific Model 修订、路径整理或运行操作，说明各项原因、当前工作影响和生效时点，再询问用户是否执行。接受可识别方案或明确指令授权该范围，不重复确认；单纯讨论、选择图谱对象和接受计划修改不自动授权科研启动。
+
+图谱节点、Cycle 结论和文档/报告选段可以作为来源加入聊天草稿，用户编辑后发送。服务端按规范任务边界读取当前来源，核对对象、章节、原文和版本；客户端标签不取得路径或科学权威。消息保存发送时的核验快照，历史快照不冒充当前事实。后续人类猜想可以携带相同已核验来源，保留讨论到新输入的追溯关系；来源引用不是 H→H 科学谱系或 Judge Evidence。
+
+新人工猜想的精确命题、判别检验、原因和来源记录在同一规范图谱的 External ResearchFocus。投递生命周期使用图谱事件，不维护第二套科学图谱：`pending → claimed → consumed`，未领取项可明确 `revoked / superseded`。`consumed` 只表示已交给某轮提案，不能推断资格、执行或结论。登记检查当前 Required Context revision，保留整份 Plan 原文；多个待投递项按登记顺序，回执给出队列位置。替换仅作用于明确指定的 pending 项。
+
+默认下一轮登记允许当前冻结 Cycle 继续运行。SDK 仅在全新的 `frontier_proposal` 领取一个待投递项，领取与 Cycle 绑定、快照先持久化，再进行 Lead 调用。同 Cycle 的重试、返工和崩溃恢复复用其快照，不在流程中途接收新方向；后续 Cycle 不重复领取。没有新生命周期的历史规范 External 显示为 `reconciliation_required`，不凭 Plan marker 自动执行；用户确认后重新登记为 pending。Plan-only 部分登记也不得静默执行。列表、队列位置与领取规则一致，已冻结命题和已有提案检查点保持原内容。
+
+Lead 收到人工精确命题、检验和来源后，仍遵守当前 Goal/Contract/Final Gate 和 Challenger 资格审查；不合格时报告冲突，不由 SDK 强制锁定 H。用户明确要求立即转向时，先使用运行控制安全停止并核实实际 Runner/Worker 状态，再登记即时请求；登记 API 不自动启动新工作。恢复旧冻结 Cycle 仍是继续原命题。Goal 封存后拒绝写入和新的领取。
+
+Chat 按用户接受的编号逐项核对 Plan/Model 版本、External/H/Cycle/Worker 及实际运行回执，区分已更改、待投递、已资格锁定、运行中、失败和部分完成。规范存储成功但显示投影失败时保留已成功结果并报告待修复投影，不重复登记新猜想。Model 的人工修订与并发保护见 [ResearchPlan设计文档](./ResearchPlan设计文档.md)。
+
+正式立项前的两类问题形成与 Literature 流程见 [项目筹备与前置文献调研](./项目筹备与前置文献调研.md)。筹备与已有项目 Chat 可调用共享 `literature_service`，使用独立 Literature 会话、现有身份、技能、Stage 和 Contract，执行“发现 → 重要来源选读 → 正文物化 → 阅读比较 → 按缺口补查”。重点来源由 Literature 的领域输出和阅读顺序确定；SDK 处理网络、持久化和资源上限。默认最多 2 轮、6 个核心来源获取尝试，未解决的来源缺口在达到上限后暂停；恢复保留已完成获取与阅读。该作业不创建科学 Cycle、不修改 Research Plan 或 Scientific Model、不登记裁决 Evidence。模型作业回执与检索回执分别记录。
+
+PDF 转换通过共享 `document_conversion` 组件执行，新安装默认关闭。在 `/settings` 显式选择本地 Marker 或在线 MinerU；Marker 仅使用配置路径或服务 PATH 上的 `marker_single`，不假定个人环境。MinerU 使用私有配置（0600）或 `MINERU_API_KEY`，执行转换时上传 PDF；Token 只发往配置的 API origin，预签名上传和结果下载不附加 Token。配置通过 revision 比较保存，默认位于 `$XDG_CONFIG_HOME/sciver/document-conversion.json`（否则 `~/.config/sciver/document-conversion.json`），`SCIVER_DOCUMENT_CONVERSION_CONFIG` 可覆盖。个人主机启用状态不改变发布默认值。
+
+转换保留原 PDF 路径及 SHA、Markdown、图片、版面元数据和页数范围；默认最多前 20 页，0 为所有可处理页。资料可读、Literature 阅读、引用定位和科学主张核验分开记录；部分页数不可称为全文已核验。无法转换仍可获取题录、摘要与可访问的 HTML 正文。MinerU 远端作业持久化，恢复优先沿用原任务，含糊的提交结果不自动重新提交。工程行为以确定性和模拟测试检查，不据此宣称真实模型质量或在线 API 已验证。
+
 ### 资格审查与锁定
 
 候选携带科学命题、范围、选题理由、Goal 推进和 `decisive_test`；候选 ID、H ID 和工作流字段由 SDK 管理。新派生 H 必须有合法科学来源和有类型的 H→H 谱系，首个 root H 除外。科学身份不依赖文本相似度。
 
+Lead 在生成新候选时提交 `transition.prior_gap` 与 `transition.current_change` 两段短说明，分别解释来源研究已知什么、留下什么关键问题，以及本候选针对该问题具体改变什么；复用 `why_now` 和 `goal_advance` 说明现在研究的理由与 Goal 推进。根 H 从任务原题的未知出发；前序已支持、被反驳、已裁决但未决或尚未裁决，须如实区分。来源取决于科学谱系，不按 Cycle 编号相邻推断。即使仅有一个合格候选，也不能以“唯一合格”替代科学动机。说明只解释选题，不增补或替代冻结科学正文、资格结论和 Judge 裁决。
+
 Challenger 审查必须绑定被审候选的完整科学内容。`revise` 后只允许一次有界修复，并须由 Challenger 独立确认。`cannot_repair` 或未确认的修复不能被 SDK 升格为 qualified；恢复不能沿用已改变对象的旧审查。新的 Qualification attempt 保留前次拒绝反馈，反馈不自动成为新候选的当前 verdict。
 
 Lock 原子登记 H identity，冻结 `id / hypothesis / scope / decisive_test` 及来源。当前 Cycle criteria 只生成一个 `C-1` 机器引用锚点，内容来自同一个 `decisive_test`；不另造科学目标或证据任务队列。Lock 后不换命题、估计对象或允许输入；改变科学目标应进入新候选流程。
+
+SDK 同时冻结选中候选的承接说明、`why_now / goal_advance`、main/other 来源及锁定时的 Outcome 引用，保存到 SQLite 与 H 档案。图谱节点、Agent 读取和本轮主报告复用该记录；展示阶段与 Reporter 不重新编写选题因果。锁定后来源新增的结论不回写为当时的动机。旧 checkpoint 没有这些字段时继续读取已有记录，缺失项标明未记录，不调用模型补写。
+
+H 档案发布前，将同份来源快照持久化到 `hypothesis_lock.research_transition` 检查点。若文件发布后 SQLite 事务回滚，恢复沿用检查点快照；已提交的 SQLite 记录也须与该快照一致。只追加的档案不因恢复期间来源新增结论而改写。
 
 ### Investigation、Evidence 与裁决
 
@@ -122,7 +149,7 @@ Judge 在现有 rationale/requested_resolution 中说明所缺的必要冻结前
 
 Reporter 通过 `title/summary` 交付报告标题与完整 Markdown 正文，`summary` 承载全文。SDK 将同一科学叙事保存为报告笔记和对应 Cycle Outcome 的标题、正文，不创建独立 Decision 图节点。SQLite 的 H / External、H→H 谱系与 Cycle Outcome 由 SDK 持久化；Canvas 是确定性展示投影。
 
-Reporter 的 `report` v5 正文依次组织为问题与必要条件、主要结果、解释与限制。SDK 在唯一主报告开头复用 `graph_summary`，加入折叠的正式 Judge 记录与复现索引，不再生成第二份人类阅读报告。主要结果按科学问题组织，相关已有图片嵌入对应论证位置并附解释性图注，已确认的数值可整理为精简对照表。补充 Markdown/章节可使用 `![[path.md#Section|Label]]`；SDK 保存来源哈希与所选文本，正文保持必要论证。纯理论结果无需装饰性图片或空表格。必要限定保留在影响解读的位置，完整限制集中说明。
+Reporter 的 `report` v5 正文依次组织为问题与必要条件、主要结果、解释与限制。SDK 在唯一主报告开头先呈现冻结的研究承接说明，再复用 `graph_summary`，加入折叠的正式 Judge 记录与复现索引，不再生成第二份人类阅读报告。主要结果按科学问题组织，相关已有图片嵌入对应论证位置并附解释性图注，已确认的数值可整理为精简对照表。补充 Markdown/章节可使用 `![[path.md#Section|Label]]`；SDK 保存来源哈希与所选文本，正文保持必要论证。纯理论结果无需装饰性图片或空表格。必要限定保留在影响解读的位置，完整限制集中说明。
 
 SDK 仅向 Reporter 提供从可用于本轮报告的 Evidence 投影出的 `report_materials`，列明原始引用、文件类型、可用状态和图片入口；范围与限制继续由 `evidence_scope_digest` 承载。只读查看这些素材用于理解已有图片或转录已确立数值，不授予重新分析数据、增加证据或改变裁决的权限。SDK 不读取原始数组来推导新结果，不依据文件名决定科学相关性。
 
@@ -182,7 +209,7 @@ Task 有稳定整数 ID，Cycle 在 Task 内独立递增。新任务的 Research
 
 事务顺序为：终局 Judge → Scientific Synthesis → Scientific Model commit → Frontier / report / Outcome 和展示投影。各层可幂等恢复，下游失败不重做上游科学判断。
 
-Reporter `report` v5 分别返回研究正文 `summary` 与唯一概览 `graph_summary`。导览以本轮结论、关键依据、必要适用范围及本节点未决问题组织阅读上下文，不产生科学裁决、前沿状态或下一轮计划。SDK 原样保存正文、导览和固定版本补充材料 `report_context` 到 Cycle Outcome 的 `source_json`，装配 `notes/outcomes/<Cycle>.md`；概览不是正文前缀截取。Web 与 Agent 的 `report-read` 使用同一装配和章节索引。历史 Outcome、缓存旧报告和冻结命题保留原内容，不因合同升级而新增模型调用或回填科学解释。
+Reporter `report` v5 分别返回研究正文 `summary` 与唯一概览 `graph_summary`。导览以本轮结论、关键依据、必要适用范围及本节点未决问题组织阅读上下文，不产生科学裁决、前沿状态或下一轮计划。SDK 原样保存正文、导览、冻结的研究承接记录和固定版本补充材料 `report_context` 到 Cycle Outcome 的 `source_json`，装配 `notes/outcomes/<Cycle>.md`；概览不是正文前缀截取。Web 与 Agent 的 `report-read` 使用同一装配和章节索引。历史 Outcome、缓存旧报告和冻结命题保留原内容，不因合同升级而新增模型调用或回填科学解释。
 
 transport timeout、inactivity watchdog 和进程异常属于调用恢复。中途 progress、delta 或 interrupt 引发的完成事件不能冒充合法 final output。恢复同一 thread 时给最小 continuation；只有合法最终输出才能进入合同闭合与 Evidence 登记。
 
@@ -214,6 +241,14 @@ Supervisor 对已授权任务持续持有恢复或等待责任。故障先登记
 
 人工暂停、终止、Goal 完成、真实预算限制、Claim 冲突及缺少安全检查点不能被自动恢复绕过。无法安全继续时保存负责人、等待原因、下一动作和检查时间，并如实展示。
 
+### 静默技能维护
+
+`skill_evolution` 是独立的轨迹方法存储与维护模块，不拥有科学状态写权限。用户在任务设置中开启后，Investigator / Literature 可以在正常调用的工作目录生成可选旁路经验；科学交付 JSON 保持原合同。SDK 在科学调用 committed 后处理旁路，检查格式、来源路径、内容摘要和精确 base_version，保存不可变技能包及提请。维护失败只保留本地诊断，不触发科研重试、独立学习 Agent、模型评分、效果评测或额外 Cycle。
+
+每个逻辑调用固定一个习得技能清单；所有重试和 Resume 继续原绑定，新版本只在后续安全调用采用。兼容线程的 developer contract 允许 SDK 注入版本化的 task-level 扩展，名称、描述和路径按需披露，正文不例行预加载。旧线程保留原白名单。系统 Skill 与手动声明的任务 Skill 保持原目录；后台维护只写独立习得技能库。
+
+用户开关在执行边界热读；关闭和发布共享偏好锁，关闭后停止新建与修订，保留已采用版本。SQLite 事务协调同机 Worker 的提请、活动索引和事件 outbox。重要事件引用确切提请及前后版本；它属于 record_only 里程碑，不伪造运行故障或科学 verdict。任务级、通用技能和官方 fixture 的隔离规则见 [使用说明](../docs/skill-evolution.zh-CN.md)。
+
 ## 8. 工程维护边界
 
 SDK 按编排、角色调用、合同、Registry、状态恢复、transport、投影与 UI 分模块。稳定入口可保留轻量兼容 façade；新增逻辑进入对应职责模块。同一机器概念只有一个权威 registry / policy，副作用与可重建投影分开。
@@ -221,3 +256,6 @@ SDK 按编排、角色调用、合同、Registry、状态恢复、transport、�
 系统修改先确定当前机制、目的和不变量，再同步对应权威设计与实现。修改原因、逐文件说明和验证证据写入 Git 与修改登记；静态可验收事项登记 TMC，必须未来真实科研 Cycle 观察的事项登记 TMA。具体流程由 `tm-change` / `tm-audit-review` 技能及相应 CLI 维护。
 
 文档持续维护现行规则：原位更新对应章节，专题内容链接权威规范，历史方案与验收流水交给版本和审计记录。SDK 主文档不追加日期补丁、任务科研案例或测试报告。
+
+
+独立 Literature 作业的新检索规划、证据分层和 Research Chat 后台等待见 [Literature 工作流](../docs/literature-workflow.zh-CN.md)。正式 Cycle 继续使用现有 Stage/Contract；独立规划记录不构成科学 Evidence。

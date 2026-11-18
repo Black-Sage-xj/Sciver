@@ -49,7 +49,7 @@ class ExplorerFrontierJumpTests(unittest.TestCase):
   );
   edges.push({id:'DH70',fromNode:'D',toNode:'H-0070'},
              {id:'DH89',fromNode:'D',toNode:'H-0089'});
-  await elements['ex-refresh'].onclick();await tick();await tick();
+  await ctx.window.testReloadIndex();await tick();await tick();
   latestGraph.events['node:click']({target:{id:'H-0060'}});await tick();await tick();
   assertFullGraph();
   latestGraph.events['edge:pointerover']({target:{id:'AC'},originalEvent:{clientX:400,clientY:200}});
@@ -83,7 +83,7 @@ class ExplorerFrontierJumpTests(unittest.TestCase):
     def test_without_active_frontier_complete_graph_still_expands_and_fits(self):
         self._run(r"""
   nodes.forEach(n=>{if(n.semantic?.frontier_status==='active')n.semantic.frontier_status='parked'});
-  await elements['ex-refresh'].onclick();await tick();await tick();
+  await ctx.window.testReloadIndex();await tick();await tick();
   latestGraph.events['node:click']({target:{id:'B'}});await tick();await tick();
   latestGraph.events['edge:pointerover']({target:{id:'AC'},originalEvent:{clientX:400,clientY:200}});
   await elements['ex-edge-menu-action'].onclick();await tick();

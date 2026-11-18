@@ -4,12 +4,17 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && node scripts/normalize-font-assets.mjs",
     "typecheck": "tsc --noEmit",
-    "test:markdown": "node scripts/test-markdown-rendering.mjs"
+    "test:markdown": "node scripts/test-markdown-rendering.mjs && node scripts/test-chat-links.mjs && node scripts/test-chat-drafts.mjs && node scripts/test-model-catalog.mjs && node scripts/test-research-sources.mjs",
+    "test:features": "node scripts/test-chat-features.mjs && node scripts/test-rich-content.mjs",
+    "test:browser": "python scripts/test-chat-browser.py",
+    "test:http-browser": "python scripts/test-chat-http-browser.py",
+    "test:design-browser": "python scripts/test-chat-design-browser.py"
   },
   "dependencies": {
     "@assistant-ui/react": "0.15.29",
+    "highlight.js": "11.12.0",
     "katex": "0.16.47",
     "lucide-react": "1.59.0",
     "react": "19.3.1",

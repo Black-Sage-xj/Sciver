@@ -276,7 +276,7 @@ class OperationalGuardrailTest(unittest.TestCase):
                 output_dir = Path(command[command.index("--output-dir") + 1])
                 output_dir.mkdir(parents=True, exist_ok=True)
                 if command[1].endswith("lit_retrieve.py"):
-                    self.assertEqual(command[command.index("--query") + 1], "The effect of network flaws on the elastic properties of vulcanizates")
+                    self.assertEqual(command[command.index("--query") + 1], "10.1002/pol.1960.1204314219")
                     (output_dir / "papers.json").write_text(json.dumps([{
                         "title": "The effect of network flaws on the elastic properties of vulcanizates",
                         "authors": ["J. Scanlan"],
@@ -306,7 +306,7 @@ class OperationalGuardrailTest(unittest.TestCase):
                 },
             }, workspace, runner=runner)
             self.assertEqual(result["discovery_mode"], "source_lock")
-            self.assertEqual(result["query_variants"], ["The effect of network flaws on the elastic properties of vulcanizates"])
+            self.assertEqual(result["query_variants"], ["10.1002/pol.1960.1204314219"])
             papers = json.loads(Path(result["papers_json"]).read_text(encoding="utf-8"))
             self.assertEqual(papers[0]["doi"], "10.1002/pol.1960.1204314219")
             self.assertTrue(papers[0]["source_locked"])

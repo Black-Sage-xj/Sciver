@@ -209,6 +209,8 @@ class CodexBackend:
             from .supervisor_intervention import DEFAULT_REASONING_EFFORT, SUPERVISOR_ROLES
             effort = DEFAULT_REASONING_EFFORT if role in SUPERVISOR_ROLES else None
         config: dict[str, Any] = {}
+        if role == "research_chat":
+            config["model_reasoning_summary"] = "auto"
         if provider in ACCOUNT_PROVIDERS:
             # Preserve the historical account-backed default when a route does
             # not explicitly pin reasoning effort.
@@ -1089,7 +1091,10 @@ class CodexBackend:
 
     def invoke(self, role: str, prompt: str, thread_id: str | None, model: str, provider: str,
                *, on_delta: Any | None = None,
-               cancel_event: threading.Event | None = None) -> tuple[str, str]:
+               cancel_event: threading.Event | None = None,
+               on_event: Any | None = None, on_handle: Any | None = None,
+               input_images: list[str] | None = None,
+               request_user_input: Any | None = None) -> tuple[str, str]:
         from theory_master.observability.codex_events import (
             extract_agent_delta,
             extract_agent_text,
@@ -1106,6 +1111,10 @@ class CodexBackend:
         # during this invocation, so that path is also a first turn.
         include_skills = thread_id is None or thread_id in self._new_thread_ids
         payload = turn_input(role, prompt, include_skills=include_skills, task_config_path=self.task_config_path)
+        if input_images:
+            from openai_codex import LocalImageInput, TextInput
+            payload = ([TextInput(text=payload)] if isinstance(payload, str) else list(payload)) + [
+                LocalImageInput(path=path) for path in input_images]
         if thread_id:
             self._new_thread_ids.discard(thread_id)
         identifier = thread_id
@@ -1123,7 +1132,30 @@ class CodexBackend:
                     return identifier, getattr(result, "final_response", "") or ""
                 turn_payload = retry_payload if retry_payload is not None else payload
                 retry_payload = None
-                handle = thread.turn(turn_payload)
+                # Interactive callbacks are opt-in for the operator chat. The
+                # scientific collector and approval decisions retain their own
+                # projection and handler.
+                inner = getattr(self.client, "_client", None)
+                original_handler = getattr(inner, "_approval_handler", None)
+                waiting_input = threading.Event()
+                def interactive_request(method, params):
+                    if role == "research_chat" and method.endswith("/requestUserInput") and callable(request_user_input):
+                        waiting_input.set()
+                        try:
+                            return request_user_input(params or {})
+                        finally:
+                            waiting_input.clear()
+                    return original_handler(method, params) if callable(original_handler) else {}
+                if inner is not None and callable(request_user_input) and role == "research_chat":
+                    inner._approval_handler = interactive_request
+                try:
+                    handle = thread.turn(turn_payload)
+                except Exception:
+                    if inner is not None and callable(original_handler):
+                        inner._approval_handler = original_handler
+                    raise
+                if callable(on_handle):
+                    on_handle(handle)
                 texts: list[str] = []
                 delta_text: list[str] = []
                 streamed_events: list[Any] = []
@@ -1158,6 +1190,13 @@ class CodexBackend:
                     # scheduling race.
                     with watchdog_lock:
                         if turn_completed:
+                            return
+                        if waiting_input.is_set():
+                            # A human choosing an option is not a dead stream.
+                            timer = threading.Timer(self._watchdog_seconds(), _watchdog_interrupt)
+                            timer.daemon = True
+                            watchdog[0] = timer
+                            timer.start()
                             return
                         watchdog_fired.set()
                     try:
@@ -1198,6 +1237,11 @@ class CodexBackend:
                             mapped = map_notification(event, role=role, thread_id=identifier)
                         except Exception:
                             mapped = None
+                        if role == "research_chat" and callable(on_event):
+                            from theory_master.observability.codex_events import map_chat_notification
+                            visible = map_chat_notification(event)
+                            if visible:
+                                on_event(visible)
                         if mapped:
                             turn_reads.extend(paths_from_event(mapped))
                         if mapped and mapped.get("event", "").startswith("COMPACTION_"):
@@ -1258,6 +1302,10 @@ class CodexBackend:
                             with watchdog_lock:
                                 turn_completed = True
                 finally:
+                    if inner is not None and callable(original_handler):
+                        inner._approval_handler = original_handler
+                    if callable(on_handle):
+                        on_handle(None)
                     cancel_watch_done.set()
                     cancel_watch.join(timeout=0.2)
                     with watchdog_lock:
@@ -1406,6 +1454,10 @@ class CodexBackend:
                         )
                     except Exception:
                         pass
+                if role == "research_chat" and callable(on_event):
+                    on_event({"type": "reconnecting", "kind": "connection", "status": "running",
+                              "label": "正在重连", "retry_index": attempt + 1,
+                              "retry_after": delay})
                 self._logger.warning(
                     "Codex turn temporarily unavailable for role=%s; retry %d/%d in %ss: %s",
                     role, attempt + 1, self.OUTER_TURN_RETRIES, delay, message,
@@ -1424,6 +1476,10 @@ class CodexBackend:
                         old_client.close()
                     except Exception:
                         self._logger.debug("failed to close Codex client during retry", exc_info=True)
-                time.sleep(delay)
+                if cancel_event is not None:
+                    if cancel_event.wait(delay):
+                        raise CodexTurnCancelled("Codex turn stopped during reconnect")
+                else:
+                    time.sleep(delay)
         assert last_error is not None
         raise last_error

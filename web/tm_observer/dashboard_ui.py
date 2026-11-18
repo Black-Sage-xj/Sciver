@@ -1201,15 +1201,15 @@ _VIEWS = (
     ("settings", "Settings", "/settings/"),
 )
 _SUBTITLES = {
-    "research_chat": "与正在运行的科研项目对话，预览并确认研究方向操作",
+    "research_chat": "讨论研究问题，审阅并执行具体研究方案",
     "run": "任务列表与实时科研监控",
-    "console": "当前任务的只读科研控制台",
+    "console": "当前任务的科研状态、证据与运行控制",
     "research_plan": "查看与编辑当前任务的长期科学计划",
     "explorer": "",
     "workflow": "Research workflow, agent stages and scientific contracts",
     "architecture": "System components and dependencies",
     "services": "Codex account quotas and controls",
-    "settings": "Workspace 设置与任务级自动审计选项",
+    "settings": "Workspace 外观、PDF 转换与任务设置",
 }
 
 

@@ -109,7 +109,7 @@ class TheoryMasterTest(unittest.TestCase):
             runs = resumable_runs(root)
             self.assertEqual(runs, [])
             self.assertEqual(spec_from_resume_identifier('tm-0007-test-goal', root).goal_id, spec.goal_id)
-            self.assertTrue((spec.branch_canvas.parent / 'science_graph.sqlite3').is_file())
+            self.assertTrue(spec.graph_database.is_file())
 
     def test_unregistered_legacy_run_cannot_bootstrap_a_new_task_on_resume(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -380,7 +380,7 @@ class TheoryMasterTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             spec, _ = self.make(root)
-            database = spec.branch_canvas.parent / "science_graph.sqlite3"
+            database = spec.graph_database
             with ScienceGraphStore(database) as store:
                 store.add_hypothesis("H-0090", title="Frontier", summary="SQLite claim")
                 store.append_outcome(outcome_id="outcome-h90", hypothesis_id="H-0090", cycle_id="90", verdict="open")
@@ -433,7 +433,9 @@ class TheoryMasterTest(unittest.TestCase):
         spec.config_path.write_text(json.dumps(config), encoding='utf-8')
         spec = TaskSpec.from_config(spec.config_path)
         spec.branch_canvas.write_text(json.dumps({'nodes':[{'id':'human','type':'text','text':'keep me','x':9,'y':8,'width':1,'height':1}],'edges':[]}), encoding='utf-8')
-        with ScienceGraphStore(spec.branch_canvas.parent / "science_graph.sqlite3"):
+        self.assertIsNotNone(spec.graph_database)
+        self.assertTrue(spec.graph_database.is_file())
+        with ScienceGraphStore(spec.graph_database, readonly=True):
             pass
         return spec, FakeBackend(reworks)
 
@@ -483,6 +485,11 @@ class TheoryMasterTest(unittest.TestCase):
                         ),
                         "scope": "the same scientific scope, refined for DT-B" if continuing_same_h else "the same scientific scope",
                         "why_now": "the next bounded discriminant is executable",
+                        "transition": {
+                            "prior_gap": ("The first bounded adjudication leaves the next discriminant unresolved."
+                                          if continuing_same_h else "The Goal leaves this scientific claim unresolved."),
+                            "current_change": "Test the next bounded discriminant within the declared scope.",
+                        },
                         "goal_advance": "accumulate decisive evidence for the same scientific claim",
                         "decisive_test": decisive_test,
                         **self._fake_sqlite_lineage(context),
@@ -517,7 +524,7 @@ class TheoryMasterTest(unittest.TestCase):
             self.assertEqual(second["hypothesis_lock"]["hypothesis"], "the same scientific claim, refined for the second bounded adjudication")
             self.assertEqual(first["branches"][-1]["status"], "milestone_advanced")
             self.assertEqual(second["branches"][-1]["status"], "supported")
-            with ScienceGraphStore(spec.branch_canvas.parent / "science_graph.sqlite3", readonly=True) as store:
+            with ScienceGraphStore(spec.graph_database, readonly=True) as store:
                 self.assertEqual({row["id"] for row in store.graph_view()["nodes"] if row.get("type") == "Hypothesis"}, {"H-0001", "H-0002"})
 
             canvas = json.loads(spec.branch_canvas.read_text(encoding="utf-8"))
@@ -554,7 +561,7 @@ class TheoryMasterTest(unittest.TestCase):
             self.assertNotIn('tm-v2-next-action', ids)
             self.assertNotIn('tm-v2-current-gate', ids)
             self.assertTrue((cycle / 'run_report.md').is_file())
-            with ScienceGraphStore(spec.branch_canvas.parent / 'science_graph.sqlite3', readonly=True) as store:
+            with ScienceGraphStore(spec.graph_database, readonly=True) as store:
                 graph = store.graph_view()
                 self.assertEqual([node['id'] for node in graph['nodes'] if node.get('type') == 'Hypothesis'], ['H-0001'])
                 self.assertEqual(graph['nodes'][0]['type'], 'Hypothesis')
@@ -613,7 +620,7 @@ class TheoryMasterTest(unittest.TestCase):
             self.assertNotIn("judge", backend.roles)
             self.assertEqual(len(list_cycle_dirs(spec.research_root)), 1)
             cycle = latest_cycle_dir(spec.research_root)
-            with ScienceGraphStore(spec.branch_canvas.parent / "science_graph.sqlite3", readonly=True) as store:
+            with ScienceGraphStore(spec.graph_database, readonly=True) as store:
                 graph = store.graph_view()
                 self.assertIn(state["hypothesis_lock"]["id"], {
                     str(node.get("id")) for node in graph["nodes"] if node.get("type") == "Hypothesis"
@@ -882,7 +889,7 @@ class TheoryMasterTest(unittest.TestCase):
             self.assertTrue(note.is_file())
             projection = json.loads(spec.branch_canvas.read_text(encoding='utf-8'))
             self.assertFalse(any(re.fullmatch(r'\d+-decision', str(node.get('id', ''))) for node in projection['nodes']))
-            with ScienceGraphStore(spec.branch_canvas.parent / 'science_graph.sqlite3', readonly=True) as store:
+            with ScienceGraphStore(spec.graph_database, readonly=True) as store:
                 outcome = store.db.execute("SELECT verdict,report_ref FROM outcomes WHERE hypothesis_id=?", (state['hypothesis_lock']['id'],)).fetchone()
                 self.assertIsNotNone(outcome)
                 self.assertEqual(outcome['verdict'], 'open')
@@ -1510,7 +1517,7 @@ class TheoryMasterTest(unittest.TestCase):
             workflow = Workflow(spec, backend)
             state = workflow.initialize()
             # Compatibility fixture: resume one persisted pre-vNext qualification working set.
-            with ScienceGraphStore(spec.branch_canvas.parent / "science_graph.sqlite3") as store:
+            with ScienceGraphStore(spec.graph_database) as store:
                 store.add_hypothesis("H-0001", title="Registered source", summary="Existing source H")
             original = {
                 "id": "cand-original", "title": "original", "hypothesis": "original H",
@@ -2292,7 +2299,7 @@ class TheoryMasterTest(unittest.TestCase):
             final_state = json.loads((cycle / "research_state.json").read_text(encoding="utf-8"))
             self.assertEqual(final_state["scientific_verdict"], "supported")
             from theory_master.science_graph_store import ScienceGraphStore
-            with ScienceGraphStore(spec.branch_canvas.with_name("science_graph.sqlite3"), readonly=True) as store:
+            with ScienceGraphStore(spec.graph_database, readonly=True) as store:
                 h_id = str((final_state.get("hypothesis_lock") or {}).get("id") or "")
                 outcomes = store.cycle_history(h_id)
                 current_outcome = next(row for row in outcomes if row.get("cycle_id") == cycle.name)

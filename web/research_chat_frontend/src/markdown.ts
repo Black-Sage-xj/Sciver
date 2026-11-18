@@ -4,6 +4,26 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 
 export const remarkPlugins: NonNullable<Options['remarkPlugins']> = [remarkGfm, remarkMath];
+
+/** Keep CJK edge punctuation visible while giving CommonMark valid boundaries. */
+function normalizeCjkStrong(text: string, protectedPrefix: string): string {
+  const cjk = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+  return text.replace(/(?<![\\*])\*\*([^*\n]+?)(?<!\\)\*\*(?!\*)/g, (whole, content: string, offset: number) => {
+    const linePrefix = text.slice(text.lastIndexOf('\n', offset) + 1, offset);
+    if (!cjk.test(content) || /[\[\]<>`\\]/.test(content) || content.includes(protectedPrefix)
+        || /^\s|\s$/.test(content) || /^(?: {4}|\t)/.test(linePrefix)
+        || /(?:https?:\/\/|www\.)\S*$/i.test(linePrefix)) return whole;
+    const leading = content.match(/^[“‘「『（【《〈]+/u)?.[0] || '';
+    const trailing = content.match(/[，。！？：；、”’」』）】》〉]+$/u)?.[0] || '';
+    const moveLeading = leading && cjk.test(text[offset - 1] || '');
+    const moveTrailing = trailing && cjk.test(text[offset + whole.length] || '');
+    if (!moveLeading && !moveTrailing) return whole;
+    const core = content.slice(moveLeading ? leading.length : 0,
+      moveTrailing ? content.length - trailing.length : content.length);
+    if (!core || !cjk.test(core)) return whole;
+    return `${moveLeading ? leading : ''}**${core}**${moveTrailing ? trailing : ''}`;
+  });
+}
 export const rehypePlugins: NonNullable<Options['rehypePlugins']> = [[rehypeKatex, { throwOnError: false }]];
 
 /**
@@ -32,6 +52,9 @@ export function normalizeMathDelimiters(source: string): string {
     let chunk = plain.replace(/(`+)([\s\S]*?)\1(?!`)/g, (codeSpan) => stashCode(codeSpan));
     chunk = chunk.replace(/(?<!\\)\\\[([\s\S]*?)(?<!\\)\\\]/g, (_match, expression: string) => `\n$$\n${expression.trim()}\n$$\n`);
     chunk = chunk.replace(/(?<!\\)\\\(([\s\S]+?)(?<!\\)\\\)/g, (_match, expression: string) => `$${expression}$`);
+    // Protect already-normalized math before adapting Markdown emphasis.
+    chunk = chunk.replace(/(?<!\\)\$\$[\s\S]*?(?<!\\)\$\$|(?<!\\)\$(?!\$)(?:\\.|[^$\n\\])+(?<!\\)\$(?!\$)/g, (math) => stashCode(math));
+    chunk = normalizeCjkStrong(chunk, tokenPrefix);
     output += chunk;
     plain = '';
   };

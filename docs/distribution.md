@@ -3,6 +3,11 @@
 The SDK and observer require Python 3.12 or newer. The SDK uses the standard
 library TOML reader, and the observer uses Python 3.12 f-string syntax.
 The observer wheel depends on the matching `sciver` SDK version.
+Additional runtime dependencies are recorded in each wheel's metadata. The
+current Web source requires Pillow and pypdf for research attachments; when
+distributing newly built wheels offline, include their compatible dependency
+wheels in the same reviewed directory. Follow a published release's own
+installation manifest for its exact package set.
 
 ## Install a reviewed release
 
@@ -41,21 +46,42 @@ installation with the minimum supported interpreter:
 python3.12 scripts/check_distribution.py --work-dir /tmp/sciver-release-check
 ```
 
-The check disables package indexes, builds both wheels, installs them into a
-fresh virtual environment, and runs from a directory outside the checkout with
-a blank HOME. It checks CLI help, bundled Test0 hashes, two independently
+By default, the check first uses the outer Python's normal pip configuration to
+download binary wheels for non-SDK runtime dependencies declared by
+`web/pyproject.toml`, including their required dependencies. This preparation
+step needs package-index access; it reports requirements, exit status and wheel
+filenames without printing index credentials. Both Sciver wheels are then
+built with package indexes disabled and installed with `--no-index` into a
+fresh virtual environment. All installed checks run outside the checkout with
+a blank HOME. The check verifies CLI help, bundled Test0 hashes, two independently
 prepared Test0 tasks with empty scientific state, isolated post-run grading,
 observer discovery, prepared-task Goal content, consoles, empty graph APIs,
 Web startup, main navigation, JavaScript, CSS and font endpoints. It also runs
 the installed `sciver smoke` command. It uses no model calls. `result.json`
-records commands, installed module paths and HTTP
-results; `server.log` contains the temporary server output. The server is stopped
+records commands, dependency preparation, installed dependency versions, module
+paths and HTTP results. Its `artifacts` field contains only the two Sciver
+wheels; third-party runtime wheels are listed separately in
+`dependency_artifacts`. `server.log` contains the temporary server output. The server is stopped
 before the check returns. Use a new `--work-dir` for each run.
+
+For a fully offline check, supply a reviewed local directory containing all
+compatible runtime dependency wheels, including transitive dependencies:
+
+```bash
+python3.12 scripts/check_distribution.py --work-dir /tmp/sciver-release-check-offline \
+  --dependency-wheels /absolute/path/to/reviewed-runtime-wheels
+```
+
+The local mode resolves and copies only the required binary wheels with
+`--no-index --find-links`; missing or incompatible wheels fail before the
+isolated installation. Local pip, setuptools and wheel must already be
+available for building. Neither mode starts model calls or logs in to a model
+provider.
 
 The independent **Sciver standalone distribution** GitHub Actions workflow runs
 this check on Python 3.12 and 3.13 for pushes, pull requests and manual dispatch.
-It installs only local build tools, then installs the generated wheels without
-package-index access. Each job retains `result.json` and `server.log`; it needs
+It installs build tools and prepares binary runtime dependencies, then builds
+and installs the generated wheels without package-index access. Each job retains `result.json` and `server.log`; it needs
 no model credentials and does not publish packages.
 
 Repeated builds recreate only each backend's owned package output under

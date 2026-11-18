@@ -13,6 +13,7 @@ from unittest import mock
 from theory_master.__main__ import project_control, spec_from_resume_identifier, spec_from_task, spec_from_tui_identifier
 from theory_master.specification import TaskSpec, list_cycle_dirs
 from theory_master.core import FakeBackend, Workflow
+from theory_master.notebook import graph_database_path
 from theory_master.observability.collector import Collector
 from theory_master.task import SYSTEM_CONFIG_NAME, TaskBinding, bootstrap, load_discovered
 
@@ -36,12 +37,15 @@ class SystemConfigMigrationTest(unittest.TestCase):
             self.assertEqual(binding.note_area, workspace)
             self.assertIsNone(binding.legacy_research_root)
             self.assertIsNone(binding.benchmark_root)
-            workspace_names = {p.name for p in workspace.iterdir()
-                               if not p.name.startswith("science_graph.sqlite3-")}
+            workspace_names = {p.name for p in workspace.iterdir()}
             self.assertEqual(workspace_names,
-                             {"research_plan.md", SYSTEM_CONFIG_NAME, "science_graph.sqlite3",
+                             {"research_plan.md", SYSTEM_CONFIG_NAME,
                               "exploration.canvas", "notes", ".theory-master"})
-            self.assertTrue((workspace / "science_graph.sqlite3").is_file())
+            database = graph_database_path(workspace)
+            self.assertEqual(database, Path(binding.config["graph_database"]))
+            self.assertEqual(database.parent, binding.research_root)
+            self.assertTrue(database.is_file())
+            self.assertFalse(database.is_relative_to(workspace))
             self.assertEqual(list(workspace.glob("*.canvas")), [workspace / "exploration.canvas"])
             self.assertEqual(TaskBinding.load(workspace).task_root, binding.task_root)
             self.assertEqual(TaskBinding.load(binding.task_root).config_path, config)
@@ -49,6 +53,7 @@ class SystemConfigMigrationTest(unittest.TestCase):
             self.assertEqual(Path(payload["plan_path"]).parent, workspace)
             self.assertEqual(Path(payload["branch_canvas"]).parent, workspace)
             self.assertEqual(Path(payload["notes_dir"]).parent, workspace)
+            self.assertEqual(Path(payload["graph_database"]), database)
             self.assertEqual(payload["schema"], "theory-master/system/v1")
             self.assertEqual(payload["path_model"], "theory-master/task-path/v2")
             self.assertEqual(Path(payload["task_home"]), workspace)
@@ -123,13 +128,16 @@ class SystemConfigMigrationTest(unittest.TestCase):
             self.assertEqual(Path(config["plan_path"]), plan)
             self.assertEqual(Path(config["branch_canvas"]), workspace / "exploration.canvas")
             self.assertTrue((workspace / "exploration.canvas").is_file())
-            database = workspace / "science_graph.sqlite3"
+            database = graph_database_path(workspace)
+            self.assertEqual(database, Path(config["graph_database"]))
             self.assertTrue(database.is_file())
+            before = {p: p.read_bytes() for p in (plan, binding.config_path, binding.branch_canvas)}
             database.unlink()  # simulate an unmigrated Canvas-only workspace
             with self.assertRaisesRegex(FileNotFoundError, "canonical science_graph.sqlite3 is required"):
                 TaskSpec.load(plan)
-            self.assertTrue((workspace / "exploration.canvas").is_file())
+            self.assertEqual({p: p.read_bytes() for p in before}, before)
             self.assertFalse(database.exists())
+            self.assertFalse((workspace / "science_graph.sqlite3").exists())
 
     def test_legacy_v2_plan_is_rejected_without_migration(self):
         with tempfile.TemporaryDirectory() as temp:

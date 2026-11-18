@@ -111,11 +111,14 @@ class GoalCompletionPathTest(unittest.TestCase):
         canvas = json.loads(harness.branch_canvas.read_text(encoding="utf-8"))
         self.assertIn("nodes", canvas)
         self.assertIn("goal.completed", harness.events)
+        self.assertNotIn("goal_projection_warnings", state)
+        self.assertNotIn("goal.projection_failed", harness.events)
         self.assertIsNotNone(harness._latest_goal_completion_state())
 
     def test_projection_failure_keeps_seal_and_records_retryable_warning(self):
         harness = Harness(self.root)
-        with patch("theory_master.science_canvas_export.canvas_projection",
+        previous_canvas = harness.branch_canvas.read_bytes()
+        with patch("theory_master.vault_canvas.vault_canvas_projection",
                    side_effect=OSError("disk full")):
             state, result = self.run_gate(harness)
         self.assertEqual(result["verdict"], "passed")
@@ -124,9 +127,18 @@ class GoalCompletionPathTest(unittest.TestCase):
         self.assertTrue(warning["retryable"])
         self.assertIn("disk full", warning["error"])
         self.assertIn("goal.projection_failed", harness.events)
-        self.assertIsNotNone(goal_sealed(self.root, harness._graph_database_path()))
-        # Retrying the projection later succeeds without re-sealing.
+        seal = goal_sealed(self.root, harness._graph_database_path())
+        self.assertIsNotNone(seal)
+        self.assertEqual(harness.branch_canvas.read_bytes(), previous_canvas)
+        from theory_master.vault_canvas import canvas_status
+        self.assertEqual(canvas_status(harness._graph_database_path())[0]["status"], "pending")
+        receipt = (harness.cycle_dir / "goal_completion_out.json").read_bytes()
+        # Retrying the projection later succeeds without re-sealing or re-judging.
         harness._close_open_frontier_tips()
+        self.assertEqual(canvas_status(harness._graph_database_path())[0]["status"], "ready")
+        self.assertEqual(goal_sealed(self.root, harness._graph_database_path()), seal)
+        self.assertEqual((harness.cycle_dir / "goal_completion_out.json").read_bytes(), receipt)
+        self.assertEqual(len(harness.calls), 1)
 
     def test_already_sealed_goal_returns_passed_without_judge(self):
         harness = Harness(self.root)

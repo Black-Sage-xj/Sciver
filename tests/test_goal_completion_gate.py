@@ -156,6 +156,10 @@ class GoalCompletionGateTest(unittest.TestCase):
             self.assertEqual(set(backend.goal_context), {"research_plan_access", "agent_graph"})
             self.assertEqual(Path(backend.goal_context["research_plan_access"]["path"]), spec.document)
             self.assertGreater(backend.graph_hypotheses_at_gate, 0)
+            gate_graph = backend.goal_context["agent_graph"]
+            self.assertTrue(any(outcome["cycle"] == "1" and outcome["verdict"] == "supported"
+                                for row in gate_graph["hypotheses"]
+                                for outcome in row["recent_cycle_outcomes"]))
             self.assertNotIn("canvas_access", backend.goal_context)
             self.assertIn("Goal, Research Contract, Final Gate and Required Context", backend.goal_prompt)
             self.assertIn("A supported H or Cycle does not by itself establish Goal completion", backend.goal_prompt)
@@ -165,12 +169,26 @@ class GoalCompletionGateTest(unittest.TestCase):
             self.assertGreaterEqual(len(backend.judge_threads), 2)
             self.assertNotEqual(backend.judge_threads[-2], backend.judge_threads[-1])
             canvas = json.loads(spec.branch_canvas.read_text(encoding="utf-8"))
-            self.assertTrue(all(node.get("id", "").startswith(("H-", "external-"))
-                                for node in canvas.get("nodes") or []))
             from theory_master.science_graph_store import ScienceGraphStore
-            with ScienceGraphStore(spec.branch_canvas.with_name("science_graph.sqlite3"), readonly=True) as store:
-                outcomes = [row for node in store.graph_view()["nodes"] if node["type"] == "Hypothesis"
+            with ScienceGraphStore(spec.graph_database, readonly=True) as store:
+                graph = store.graph_view()
+                scientific_ids = {node["id"] for node in graph["nodes"]}
+                self.assertTrue(all(ident.startswith(("H-", "external-")) for ident in scientific_ids))
+                document_nodes = [node for node in canvas["nodes"] if node["id"].startswith("document-")]
+                self.assertEqual({node["id"] for node in canvas["nodes"]} -
+                                 {node["id"] for node in document_nodes}, scientific_ids)
+                outcomes = [row for node in graph["nodes"] if node["type"] == "Hypothesis"
                             for row in node.get("cycle_outcomes") or []]
+                source_refs = {str(row.get(key) or "") for row in outcomes
+                               for key in ("document_ref", "report_ref") if row.get(key)}
+                self.assertTrue(document_nodes)
+                for node in document_nodes:
+                    self.assertEqual(node["type"], "file")
+                    self.assertIn(node["file"], source_refs)
+                    self.assertFalse(Path(node["file"]).is_absolute())
+                    self.assertTrue((spec.branch_canvas.parent / node["file"]).is_file())
+                    self.assertTrue(any(edge["fromNode"] in scientific_ids and edge["toNode"] == node["id"]
+                                        for edge in canvas["edges"]))
                 self.assertTrue(any(row.get("id") == "cycle-outcome-1" for row in outcomes))
                 self.assertEqual(outcomes[0]["goal_gate"], {
                     "verdict": "passed",
@@ -226,7 +244,7 @@ class GoalCompletionGateTest(unittest.TestCase):
             self.assertIn("goal.not_completed", events)
             self.assertNotIn("remaining_goal_gap", events)
             from theory_master.science_graph_store import ScienceGraphStore
-            with ScienceGraphStore(spec.branch_canvas.with_name("science_graph.sqlite3"), readonly=True) as store:
+            with ScienceGraphStore(spec.graph_database, readonly=True) as store:
                 graph = store.graph_view()
                 outcome = next(row for node in graph["nodes"] if node["type"] == "Hypothesis"
                                for row in node.get("cycle_outcomes") or [])

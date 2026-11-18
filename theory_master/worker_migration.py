@@ -148,7 +148,9 @@ def adopt_stopped_cycle(spec: Any, cycle_id: str, *, snapshot: Path,
     prior_account = state.get("runtime_codex_account")
     if prior_account is not None and str(prior_account) not in {"1", "2"}:
         raise ValueError("unsupported frozen Codex identity; cannot resume")
-    graph_path = Path(spec.branch_canvas).resolve().with_name("science_graph.sqlite3")
+    from .notebook import graph_database_path
+    graph_path = (Path(spec.graph_database).resolve() if getattr(spec, "graph_database", None)
+                  else graph_database_path(Path(spec.branch_canvas).resolve().parent))
     if not graph_path.is_file():
         raise FileNotFoundError(f"canonical SQLite graph required for Worker adoption: {graph_path}")
     claims = BranchClaims(root, graph_path)

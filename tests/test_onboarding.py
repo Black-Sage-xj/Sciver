@@ -17,6 +17,8 @@ class OnboardingTests(unittest.TestCase):
             with mock.patch("theory_master.codex_backend.CodexBackend.__init__", side_effect=AssertionError("no models")):
                 first = prepare_test0(workspace)
                 self.assertEqual(json.loads(first.config_path.read_text())["max_cycles"], 1)
+                self.assertTrue(Path(first.config["graph_database"]).is_file())
+                self.assertFalse((first.task_home / "science_graph.sqlite3").exists())
                 before = first.config_path.read_bytes()
                 second = prepare_test0(workspace)
             self.assertNotEqual(first.config_path, second.config_path)

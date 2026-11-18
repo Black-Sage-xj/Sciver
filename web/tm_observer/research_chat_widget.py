@@ -7,7 +7,9 @@ WIDGET_STYLE = """<style>
 #sciver-chat-widget{font:13px/1.5 system-ui,sans-serif;color:#f4f4f5}
 #sciver-chat-widget [hidden]{display:none!important}
 .sc-chat-launcher{position:fixed;right:24px;bottom:22px;z-index:85;display:grid;place-items:center;width:52px;height:52px;padding:0;border:1px solid #516985;border-radius:17px;background:#07162f;box-shadow:0 6px 24px #0006;cursor:pointer;transition:transform .15s,border-color .15s}
-.sc-chat-launcher:hover{transform:translateY(-2px);border-color:#a8cfff}
+.sc-chat-launcher{touch-action:none;user-select:none}
+.sc-chat-launcher:hover{border-color:#a8cfff}
+.sc-chat-launcher[data-dragging="true"]{cursor:grabbing}
 .sc-chat-launcher img{width:42px;height:42px;border-radius:12px}
 .sc-chat-launcher-label{position:absolute;right:64px;padding:6px 10px;white-space:nowrap;border:1px solid #3c4350;border-radius:8px;background:#181b23;color:#f4f4f5;font-size:12px;opacity:0;pointer-events:none}
 .sc-chat-launcher:hover .sc-chat-launcher-label,.sc-chat-launcher:focus-visible .sc-chat-launcher-label{opacity:1}

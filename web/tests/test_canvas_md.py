@@ -23,7 +23,7 @@ from tm_observer.web import ThreadingHTTPServer, make_handler
 
 
 class CanvasMDTests(unittest.TestCase):
-    def test_unified_cycle_report_is_read_only_and_old_document_links_resolve(self):
+    def test_unified_cycle_report_reads_the_unique_file_and_keeps_database_verdict(self):
         from theory_master.science_graph_store import ScienceGraphStore
         database = self.notebook / "science_graph.sqlite3"
         body = "## Main results\nA specific bounded result.\n\n## Interpretation\nNecessary limitations."
@@ -31,8 +31,10 @@ class CanvasMDTests(unittest.TestCase):
             store.add_hypothesis("H-0042")
             store.append_outcome(outcome_id="old-1", hypothesis_id="H-0042", cycle_id="1",
                 verdict="supported", title="One research report", summary=body,
-                judge_rationale="A frozen comparison", report_ref="notes/detail", record_only=True,
+                judge_rationale="A frozen comparison", report_ref="notes/detail.md", record_only=True,
                 report_context={"schema": "theory-master/research-report/v1", "body": body, "documents": []})
+        note = self.notebook / "notes/detail.md"
+        note.write_text("# User-edited report\n\n" + body + "\n\nA user correction: verdict: rejected.\n", encoding="utf-8")
         before = database.read_bytes(), (self.notebook / "notes/detail.md").read_bytes()
         route = f"/api/canvas-md/tasks/{self.ident}/report"
         raw, status = canvas_md_get(route, "cycle=1", self.repo, self.state)
@@ -41,8 +43,11 @@ class CanvasMDTests(unittest.TestCase):
         self.assertNotIn("report_context", build_index(self.notebook)["nodes"][0]["semantic"]["cycle_outcomes"][0])
         self.assertEqual(report["title"], "One research report")
         self.assertEqual(report["content"].count("A specific bounded result."), 1)
-        self.assertIn('class="research-adjudication"', report["content"])
-        self.assertIn("A frozen comparison", report["content"])
+        self.assertEqual(report["content"], note.read_text(encoding="utf-8"))
+        self.assertNotIn("A frozen comparison", report["content"])
+        self.assertEqual(report["source_sha256"], hashlib.sha256(note.read_bytes()).hexdigest())
+        self.assertEqual(report["judge_verdict"], "supported")
+        self.assertEqual(report["adjudication_status"], "adjudicated")
         selected, _ = canvas_md_get(route, "cycle=1&section=main-results", self.repo, self.state)
         self.assertIn("A specific bounded result.", json.loads(selected)["content"])
         self.assertNotIn("Necessary limitations", json.loads(selected)["content"])
@@ -340,6 +345,7 @@ console.log('trackpad pan/pinch assertions passed');
         (task / "exploration.canvas").write_text('{"nodes":[],"edges":[]}', encoding="utf-8")
         config = task / "theory-master.config.json"
         config.write_text(json.dumps({
+            "schema": "theory-master/system/v1",
             "task_home": str(task), "research_root": str(self.research),
             "branch_canvas": str(task / "exploration.canvas"),
         }), encoding="utf-8")

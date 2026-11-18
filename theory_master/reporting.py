@@ -160,6 +160,7 @@ class ReportingMixin:
             ).fetchone() is None:
                 raise ValueError(f"Reporter source H is missing from canonical SQLite graph: {source_id}")
             committed_report = store.cycle_evaluation(cycle_ref)
+            research_transition = store.research_transition(source_id)
             if committed_report and committed_report.get("hypothesis_id") != source_id:
                 raise ValueError("Committed report belongs to a different Hypothesis")
 
@@ -222,6 +223,7 @@ class ReportingMixin:
                 "documents": snapshot_documents(summary,
                     task_root=self.branch_canvas.resolve().parent if self.branch_canvas else notes_dir.parent,
                     note_path=note, materials=materials),
+                **({"research_transition": research_transition} if research_transition else {}),
             }
         else:
             state["cycle_outcome_record"] = committed_report

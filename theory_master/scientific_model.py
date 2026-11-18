@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -27,6 +28,27 @@ _MODEL_FIELDS = {
     "schema", "version", "updated_from_cycle", "goal_id", "summary", "provenance",
 }
 _META_FIELDS = _MODEL_FIELDS - {"summary"}
+_MODEL_LOCKS = threading.local()
+
+
+@contextmanager
+def model_commit_lock(research_root: Path) -> Iterator[None]:
+    """Serialize SDK and human edits, including their Plan and metadata writes."""
+    path = Path(research_root).resolve() / ".theory-master" / "scientific_model_commit.lock"
+    held = getattr(_MODEL_LOCKS, "held", {})
+    _MODEL_LOCKS.held = held
+    key = str(path)
+    if held.get(key) == os.getpid():
+        yield
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a+", encoding="utf-8") as stream:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+        held[key] = os.getpid()
+        try:
+            yield
+        finally:
+            held.pop(key, None)
 
 
 def _normalize_summary(value: Any) -> str:
@@ -167,9 +189,49 @@ def load(root: Path, *, goal_id: str = "") -> dict[str, Any]:
     plan, configured_goal_id, research_root = _authoritative_plan(root)
     if goal_id and goal_id != configured_goal_id:
         raise ValueError("Scientific Model requested goal_id does not match task config")
-    model = load_from_paths(research_root, plan, goal_id=configured_goal_id)
-    _repair_history(research_root, model)
-    return model
+    with model_commit_lock(research_root):
+        model = load_from_paths(research_root, plan, goal_id=configured_goal_id)
+        reservation = model["provenance"].get("human_revision_reservation")
+        if (isinstance(reservation, dict)
+                and reservation.get("target_sha256") == hashlib.sha256(model["summary"].encode("utf-8")).hexdigest()):
+            # Recover a crash after the text replacement but before attribution.
+            model["provenance"].pop("human_revision_reservation", None)
+            model["provenance"].update(created_by="human", correction_reason=reservation["reason"],
+                                        scientific_status="human_revision_not_evidence")
+            finalize_human_revision(research_root, model)
+        _repair_history(research_root, model)
+        return model
+
+
+def prepare_human_revision(root: Path, current: dict[str, Any], summary: str,
+                           *, reason: str) -> dict[str, Any]:
+    """Under model/Plan locks, reserve the new version before exposing new text.
+
+    A crash may reserve an unused version, but can never expose human text with
+    the old CAS version. Callers repair history after the Plan replacement.
+    """
+    updated = {**deepcopy(current), "summary": _normalize_summary(summary)}
+    if updated["summary"] == current["summary"]:
+        return updated
+    updated.update(version=int(current["version"]) + 1, updated_from_cycle=None)
+    updated["provenance"].update(created_by="human", correction_reason=reason,
+                                  scientific_status="human_revision_not_evidence")
+    updated["provenance"].pop("human_revision_reservation", None)
+    validate_model(updated)
+    reserved = {**deepcopy(current), "version": updated["version"], "updated_from_cycle": None}
+    reserved["provenance"]["human_revision_reservation"] = {
+        "status": "reserved", "reason": reason,
+        "target_sha256": hashlib.sha256(updated["summary"].encode("utf-8")).hexdigest(),
+    }
+    atomic(state_path(root), json.dumps(_metadata(reserved), ensure_ascii=False, indent=2) + "\n")
+    return updated
+
+
+def finalize_human_revision(root: Path, model: dict[str, Any]) -> None:
+    """Only publish human attribution after the authoritative text was replaced."""
+    validate_model(model)
+    atomic(state_path(root), json.dumps(_metadata(model), ensure_ascii=False, indent=2) + "\n")
+    _repair_history(root, model)
 
 
 def _history_payload(model: dict[str, Any]) -> str:
@@ -227,9 +289,10 @@ def save(root: Path, model: dict[str, Any]) -> None:
     plan, goal_id, research_root = _authoritative_plan(root)
     if model.get("goal_id") != goal_id:
         raise ValueError("Scientific Model goal_id does not match task config")
-    replace_summary(plan, model["summary"], reason=f"科研 Cycle {model.get('updated_from_cycle') or 'unknown'} 更新 Scientific Model：持久科学认识变化")
-    atomic(state_path(research_root), json.dumps(_metadata(model), ensure_ascii=False, indent=2) + "\n")
-    _repair_history(research_root, model)
+    with model_commit_lock(research_root):
+        replace_summary(plan, model["summary"], reason=f"科研 Cycle {model.get('updated_from_cycle') or 'unknown'} 更新 Scientific Model：持久科学认识变化")
+        atomic(state_path(research_root), json.dumps(_metadata(model), ensure_ascii=False, indent=2) + "\n")
+        _repair_history(research_root, model)
 
 
 def preview_authored_model(
@@ -255,6 +318,8 @@ def preview_authored_model(
     if normalized == authored_content(current):
         return deepcopy(current)
     source_cycles = list(current["provenance"].get("source_cycles", []))
+    provenance = {key: value for key, value in current["provenance"].items()
+                  if key not in {"correction_reason", "scientific_status", "human_revision_reservation"}}
     updated = {
         "schema": SCIENTIFIC_MODEL_SCHEMA,
         "version": int(current["version"]) + 1,
@@ -262,7 +327,7 @@ def preview_authored_model(
         "goal_id": current["goal_id"],
         **normalized,
         "provenance": {
-            **current["provenance"],
+            **provenance,
             "created_by": "research_lead",
             "source_cycles": [*source_cycles, cycle_id],
         },
@@ -318,18 +383,10 @@ def commit_authored_model(
     with barrier:
         if graph_path is not None:
             assert_goal_open(research_root, Path(graph_path))
-        if expected_version is None:
+        research_root = _authoritative_plan(root)[2]
+        with model_commit_lock(research_root):
             current = load(root)
-            updated = preview_authored_model(current, content, cycle_id=cycle_id, action=action)
-            if updated != current:
-                save(root, updated)
-            return updated
-        lock_path = Path(root).resolve() / ".theory-master" / "scientific_model_commit.lock"
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(lock_path, "a+", encoding="utf-8") as fp:
-            fcntl.flock(fp.fileno(), fcntl.LOCK_EX)
-            current = load(root)
-            if int(current["version"]) != int(expected_version) and action != "keep":
+            if expected_version is not None and int(current["version"]) != int(expected_version) and action != "keep":
                 if _already_committed_by(current, content, cycle_id=cycle_id, action=action):
                     return current
                 raise ScientificModelVersionConflict(

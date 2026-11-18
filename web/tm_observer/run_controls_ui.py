@@ -286,6 +286,8 @@ def _settings_sources(run: dict[str, Any]) -> tuple[tuple[Any, ...], dict[str, A
          supervisor_enabled_for(run, state), "hot", "supervisor"),
         ("cycle_audit", "自动审计", "在 Cycle 结束（OVER、COMPLETE）或 NEEDS_ATTENTION 后，可另启独立 Codex 检查科研过程和系统表现，会额外消耗模型额度。审计不替代 Judge 的科学判定。此项在下一次 Run/Resume 采用。",
          bool(flags.get("cycle_audit", state.get("cycle_audit_actions_enabled"))), "flag", "cycle_audit"),
+        ("skill_learning", "Skill 自提升优化", "从正常科研轨迹中静默沉淀、复用和修订方法。只增加少量归纳文本，不另启模型、效果评测或科研 Cycle。变更自动登记提请和重要事件。关闭后停止新建和修订，已采用的技能版本保留。",
+         bool(flags.get("skill_learning", False)), "flag", None),
         ("quota_auto_adjust", "额度自调", "Supervisor 在后台监测 Codex 账号额度，并在阈值条件满足或账号真正耗尽时尝试安全切换与恢复。关闭后停止新的自动切换检查。开关保存后当前任务的下一次额度检查生效，不会使用重置卡，也不打断当前模型 Turn。",
          bool(state.get("quota_auto_adjust_enabled")), "hot", None),
     )
@@ -319,7 +321,16 @@ def settings_panel(run: dict[str, Any], *, audit_only: bool = False) -> str:
     toggles = []
     details = []
     audit_menu = ""
+    learning_panel = ""
     for key, label, description, enabled, mode, aux in sources:
+        if key == "skill_learning":
+            if audit_only:
+                learning_panel = (
+                    '<section class="tm-skill-learning-setting"><h3>' + _e(label) + '</h3><p>'
+                    + _e(description) + '</p>' + _switch_control(key, label, enabled, mode)
+                    + '<span>后续安全科研调用生效 · 默认关闭</span></section>'
+                )
+            continue
         if key not in {"quota_auto_adjust", "cycle_audit"}:
             caption = " · 默认" if mode == "flag" and key not in flags else ""
             status = "已配置开启" if enabled else "已配置关闭" if mode == "flag" else "关闭"
@@ -381,7 +392,7 @@ def settings_panel(run: dict[str, Any], *, audit_only: bool = False) -> str:
             details.append(item + '</section>')
     if audit_only:
         return ('<section class="tm-settings-audit" id="tm-web-settings"'
-                ' aria-label="自动审计设置">' + audit_menu
+                ' aria-label="科研后台设置">' + audit_menu + learning_panel
                 + '<p class="tm-setting-feedback" role="status" aria-live="polite"></p>'
                 '</section>')
     return (

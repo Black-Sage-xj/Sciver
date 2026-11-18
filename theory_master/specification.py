@@ -237,6 +237,7 @@ class TaskSpec:
     task_home: Path | None = None
     legacy_research_root: Path | None = None
     benchmark_dir: Path | None = None
+    graph_database: Path | None = None
     # Explicit logical Cycle ID used only by isolated checkpoint replay.
     replay_cycle_id: str | None = None
 
@@ -325,6 +326,7 @@ class TaskSpec:
                    task_home=task_home,
                    legacy_research_root=legacy_research_root,
                    benchmark_dir=absolute(config["benchmark_root"], "benchmark_root") if config.get("benchmark_root") else None,
+                   graph_database=absolute(config.get("graph_database") or branch.parent / "science_graph.sqlite3", "graph_database"),
                    )
         from .role_registry import ROLES
         from .skills import role_skills
@@ -344,7 +346,8 @@ class TaskSpec:
             raise ValueError("task configuration must define a Canvas projection path")
         if self.notes_mirror_dir is None or not self.notes_mirror_dir.is_dir():
             raise ValueError("notes directory is missing")
-        graph_path = self.branch_canvas.resolve().parent / "science_graph.sqlite3"
+        from .notebook import graph_database_path
+        graph_path = self.graph_database or graph_database_path(self.branch_canvas.resolve().parent)
         if not graph_path.is_file():
             raise FileNotFoundError(
                 f"canonical science_graph.sqlite3 is required: {graph_path}; "

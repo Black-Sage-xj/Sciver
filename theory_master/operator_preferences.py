@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import json
+import fcntl
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from .runtime import atomic
 
 FILE = "web-operator-preferences.json"
-BOOL_KEYS = {"error_repair", "cycle_audit"}
+BOOL_KEYS = {"error_repair", "cycle_audit", "skill_learning"}
 MODEL_KEYS = {"supervisor", "attention_review", "cycle_audit"}
 MODEL_ALLOWLIST = {"gpt-6-luna", "gpt-6-sol", "gpt-6.1-sol"}
 
@@ -30,7 +32,28 @@ def read(root: Path) -> dict[str, Any]:
         raise ValueError("invalid task preference models")
     return {"flags": flags, "models": models}
 
+@contextmanager
+def preference_lock(root: Path):
+    parent = Path(root) / ".theory-master"
+    if not parent.is_dir() or parent.is_symlink():
+        raise ValueError("missing task registry")
+    path = parent / (FILE + ".lock")
+    if path.is_symlink():
+        raise ValueError("linked task preference lock")
+    with path.open("a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def write(root: Path, *, kind: str, key: str, value: Any) -> dict[str, Any]:
+    with preference_lock(root):
+        return _write(root, kind=kind, key=key, value=value)
+
+
+def _write(root: Path, *, kind: str, key: str, value: Any) -> dict[str, Any]:
     if kind == "flag":
         if key not in BOOL_KEYS or type(value) is not bool:
             raise ValueError("invalid launch preference flag")

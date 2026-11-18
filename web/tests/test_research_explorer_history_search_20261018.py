@@ -61,7 +61,7 @@ class ExplorerHistorySearchRegressionTests(unittest.TestCase):
 
     def test_late_search_response_cannot_replace_newer_query(self):
         self._run(r"""
-  const query=elements['ex-query'],box=elements['ex-results'],pending=[];
+  const query=elements['ex-query'],box=elem('ex-results'),pending=[];
   const descendants=element=>[element,...(element.children||[]).flatMap(descendants)];
   const resultText=()=>descendants(box).map(child=>String(child.textContent||'')).join(' ');
   const nativeSetTimeout=ctx.setTimeout;

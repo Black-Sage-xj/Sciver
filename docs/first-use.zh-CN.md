@@ -52,6 +52,10 @@ sciver run 0
 
 ## 创建自己的课题
 
+网页用户可直接打开 `/research-chat/?new=1`，在“创建新项目”选择“已有明确问题”或“从兴趣或现象开始”。先与 Sciver 讨论、查阅资料，按需要生成并修改计划，再点击“审阅计划并创建项目”。可以先保存未完成的草稿；确认创建后会获得正式项目链接，科研尚未启动。发送筹备聊天消息使用已配置的模型账号。问题需要文献时，Chat 可在你的请求范围内调用现有 Literature Agent，复用其身份、技能和输出合同；独立模型会话完成发现、选读、比较及按缺口补查。默认最多 2 轮、6 个核心来源获取尝试；问题未解决时保留资料并暂停，同一作业恢复会复用已完成工作。交互详情见[科研协同指南](research-chat-collaboration.zh-CN.md)。
+
+也可以通过终端创建：
+
 创建独立任务目录并编写计划。下面四个一级标题必须按此顺序出现，`sciver new` 会添加由 SDK 维护的 Scientific Model。开始真实科研前，将示例段落替换为具体目标、研究范围、允许的资源、完成标准及可用输入。
 
 ```bash
@@ -85,3 +89,13 @@ sciver new "$SCIVER_WORKSPACE/my-topic/research_plan.md"
 - 缺少登录：安装 Codex 可执行程序，完成 `login-1`，选择账号 `1`，再次检查 `status`。不要把凭据粘贴到聊天或提交 Git。
 - 计划格式错误：按顺序使用 `# Goal`、`# Research Contract`、`# Final Gate`、`# Required Context`，每段内容不能为空。初始化后保留生成的 `# Scientific Model` 作为最后一段。
 - Test0 准备失败：检查错误信息、目录权限和 `sciver test --list`。显式指定的目标目录必须为空；使用 `--root` 会自动分配全新实例目录。
+
+
+## 可选 PDF 转换
+
+新安装默认**关闭** PDF 转换。在 **Settings（`/settings`）→ PDF 转换** 中，为运行 Sciver 的主机选择能力：
+
+- **本地 Marker**：明确配置可执行文件路径，或将 `marker_single` 放入服务进程的 `PATH`。Sciver 不假定个人环境路径、不自动安装 Marker；本机启用不会改变产品默认值。
+- **在线 MinerU**：填写 API Token，或给服务进程设置 `MINERU_API_KEY`。转换时会上传 PDF。Token 保存在服务器私有配置（0600）或环境变量中，读取设置只显示是否已配置。
+
+设置默认保存在 `$XDG_CONFIG_HOME/sciver/document-conversion.json`，未设置 XDG 时使用 `~/.config/sciver/document-conversion.json`；可用 `SCIVER_DOCUMENT_CONVERSION_CONFIG` 指定位置。修改对后续转换生效。关闭转换仍可检索题录、摘要及可访问的 HTML 正文。默认处理前 20 页，填 0 表示所有可处理页；前 N 页不代表整篇论文已核验。原 PDF、转换文本、图片与版面文件保留用于核查，转换成功不会自动变成已验证的科学主张。确定性测试与模拟后端验收工程链路，真实模型调研质量及在线转换尚未验证。

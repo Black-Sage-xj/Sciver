@@ -12,6 +12,7 @@ import os
 import re
 import stat
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from .research_plan_history import capture_current, compare, content, plan_lock, record, versions, project, merge, SCOPES
@@ -157,7 +158,7 @@ def history_plan(search_root: Path, run: dict[str, Any], version: int | None = N
         return result
 
 
-def _write_updated(path: Path, before: os.stat_result, updated: str) -> None:
+def _write_updated(path: Path, before: os.stat_result, updated: str, *, before_replace=None) -> None:
     if len(updated.encode("utf-8")) > LIMIT_BYTES:
         raise ResearchPlanError("更新后的 Research Plan 超过大小限制", 413)
     _parse(updated)
@@ -176,10 +177,56 @@ def _write_updated(path: Path, before: os.stat_result, updated: str) -> None:
             os.fsync(out.fileno())
         if not unchanged():
             raise ResearchPlanError("Research Plan 在保存过程中发生变化，请重试", 409)
+        if before_replace is not None:
+            before_replace()
         os.replace(temporary, path)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+@contextmanager
+def _edit_guard(path: Path, run: dict, *, model_edit: bool):
+    """Real task bindings must use runtime CAS metadata; bare Markdown may edit alone."""
+    from theory_master.goal_terminal import assert_goal_open, science_commit_barrier
+    from theory_master.scientific_model import model_commit_lock, _authoritative_plan
+
+    config_path = path.parent / "theory-master.config.json"
+    if not config_path.exists():
+        # The standalone Markdown viewer has no SDK runtime or scientific model.
+        marker = json.loads((path.parent / ".theory-master" / "task.json").read_text(encoding="utf-8"))
+        if Path(run["research_root"]).resolve() != path.parent or marker.get("schema") == "theory-master/task/v2":
+            raise ResearchPlanError("缺少科研任务配置，无法安全保存", 409)
+        yield None
+        return
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    if not config.get("goal_id"):
+        raise ResearchPlanError("Scientific Model 运行元数据绑定无效，请先修复任务", 409)
+    root = Path(run["research_root"]).resolve()
+    try:
+        bound_plan, goal_id, bound_root = _authoritative_plan(root)
+        if bound_plan != path or bound_root != root:
+            raise ValueError("Scientific Model task binding changed")
+    except (KeyError, ValueError, RuntimeError, OSError) as exc:
+        raise ResearchPlanError("Scientific Model 运行元数据绑定无效，请先修复任务", 409) from exc
+    graph = Path(config.get("graph_database") or Path(config["branch_canvas"]).with_name("science_graph.sqlite3"))
+    with science_commit_barrier(root, "shared"):
+        from theory_master.science_graph_store import ScienceGraphStore
+        try:
+            if not graph.is_absolute() or graph.is_symlink() or not graph.is_file() or graph != graph.resolve():
+                raise ValueError("missing or unsafe canonical graph")
+            with ScienceGraphStore(graph, readonly=True) as store:
+                store.goal_terminal()
+        except (ValueError, OSError) as exc:
+            raise ResearchPlanError("规范科研图谱不可用，无法确认 Goal 状态；未保存", 409) from exc
+        assert_goal_open(root, graph)
+        with model_commit_lock(root):
+            from theory_master.scientific_model import load as load_scientific_model
+            try:
+                load_scientific_model(root, goal_id=goal_id)
+            except (ValueError, OSError) as exc:
+                raise ResearchPlanError("Scientific Model 运行元数据无效，请先修复任务", 409) from exc
+            yield (root, goal_id)
 
 
 def save_section(search_root: Path, run: dict[str, Any], payload: Any) -> dict[str, Any]:
@@ -211,7 +258,8 @@ def save_section(search_root: Path, run: dict[str, Any], payload: Any) -> dict[s
                 or len(value) > MAX_SECTION_CHARS):
             raise ResearchPlanError("字段名称或长度无效")
     path = _file(search_root, run)
-    with plan_lock(path):
+    model_edit = (scope == "model") if restore else name == "Scientific Model"
+    with _edit_guard(path, run, model_edit=model_edit) as model_binding, plan_lock(path):
         path = _file(search_root, run)
         before = path.stat()
         raw = _read(path)
@@ -242,6 +290,44 @@ def save_section(search_root: Path, run: dict[str, Any], payload: Any) -> dict[s
             section, source = name, "web-edit"
         if updated == raw:
             return _response(run, raw, current["version"], current["model_version"])
-        _write_updated(path, before, updated)
+        human_model = None
+        prepare_revision = None
+        if model_edit and model_binding is not None:
+            from theory_master.embedded_state import parse as parse_model
+            from theory_master.scientific_model import load_from_paths, prepare_human_revision
+
+            root, goal_id = model_binding
+            try:
+                previous = load_from_paths(root, path, goal_id=goal_id)
+                summary = parse_model(updated).summary
+                # Validate before reserving a runtime version or changing bytes.
+                from theory_master.scientific_model import validate_model
+                validate_model({**previous, "summary": summary})
+            except (ValueError, OSError) as exc:
+                raise ResearchPlanError(str(exc), 409) from exc
+            def prepare_revision():
+                nonlocal human_model
+                human_model = prepare_human_revision(root, previous, summary, reason=reason)
+        try:
+            _write_updated(path, before, updated, before_replace=prepare_revision)
+        except OSError as exc:
+            if human_model is not None:
+                raise ResearchPlanError(
+                    f"内容未保存；Scientific Model v{human_model['version']} 已预留以阻止旧科研进程覆盖，请刷新后重试", 409
+                ) from exc
+            raise
+        if human_model is not None:
+            from theory_master.scientific_model import finalize_human_revision
+            try:
+                finalize_human_revision(model_binding[0], human_model)
+            except (OSError, ValueError, RuntimeError) as exc:
+                raise ResearchPlanError(
+                    f"内容已保存；Scientific Model v{human_model['version']} 来源或历史尚待恢复，请刷新核对后重试", 409
+                ) from exc
         row = record(path, updated, reason=reason, source=source, section=section)
-        return _response(run, updated, row["version"], row["model_version"])
+        response = _response(run, updated, row["version"], row["model_version"])
+        if human_model is not None:
+            response["scientific_model_version"] = human_model["version"]
+            response["scientific_model_source"] = human_model["provenance"].get("created_by")
+            response["scientific_model_status"] = "human_revision_not_evidence"
+        return response

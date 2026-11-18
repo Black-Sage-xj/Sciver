@@ -2,12 +2,84 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 from urllib.request import urlopen
 
 from tm_observer.dashboard_ui import dashboard_shell
 from tm_observer.research_chat import create, snapshot
 from tm_observer.research_chat_ui import embedded_page
 from tm_observer.web import StateCache, ThreadingHTTPServer, make_handler
+
+
+def test_launcher_drag_and_nearby_open_in_browser():
+    from playwright.sync_api import sync_playwright
+    from tm_observer.research_chat_widget import WIDGET_STYLE, widget_html
+
+    script = Path(__file__).parents[1] / 'tm_observer' / 'research_chat_widget.js'
+    page_html = '<!doctype html>' + WIDGET_STYLE + '<body>' + widget_html() + '</body>'
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        page = browser.new_page(viewport={'width': 1280, 'height': 900})
+        def respond(route):
+            if route.request.url.endswith('/widget.js'):
+                route.fulfill(body=script.read_text(), content_type='application/javascript')
+            elif route.request.url.endswith('/fixture'):
+                route.fulfill(body=page_html, content_type='text/html')
+            else:
+                route.fulfill(body='<body></body>', content_type='text/html')
+        page.route('http://widget.test/**', respond)
+        page.goto('http://widget.test/fixture')
+        launcher = page.locator('#sc-chat-launcher')
+        panel = page.locator('#sc-chat-panel')
+
+        def drag_to(x, y):
+            box = launcher.bounding_box()
+            page.mouse.move(box['x'] + box['width']/2, box['y'] + box['height']/2)
+            page.mouse.down()
+            page.mouse.move(x, y, steps=8)
+            page.mouse.up()
+
+        def assert_nearby():
+            a, b = launcher.bounding_box(), panel.bounding_box()
+            assert 0 <= b['x'] <= 1280 - b['width']
+            assert 0 <= b['y'] <= 900 - b['height']
+            # Either horizontal or vertical edges are separated by the anchor gap.
+            gaps = [abs(b['x'] + b['width'] + 12 - a['x']),
+                    abs(a['x'] + a['width'] + 12 - b['x']),
+                    abs(b['y'] + b['height'] + 12 - a['y']),
+                    abs(a['y'] + a['height'] + 12 - b['y'])]
+            assert min(gaps) < 1
+
+        drag_to(100, 120)
+        assert panel.is_hidden(), 'Dragging must not open chat'
+        launcher.click()
+        assert panel.is_visible()
+        assert_nearby()
+        page.locator('#sc-chat-minimize').click()
+        drag_to(1180, 760)
+        assert panel.is_hidden()
+        launcher.click()
+        assert_nearby()
+        page.locator('#sc-chat-minimize').click()
+        position = launcher.bounding_box()
+        page.reload()
+        assert launcher.bounding_box() == position
+        launcher.focus()
+        page.keyboard.press('Enter')
+        assert panel.is_visible(), 'Keyboard activation must still open chat'
+        drag_to(-100, -100)
+        assert launcher.bounding_box()['x'] == 12
+        assert launcher.bounding_box()['y'] == 12
+        assert_nearby()
+        page.set_viewport_size({'width': 390, 'height': 640})
+        drag_to(1000, 1000)
+        box = launcher.bounding_box()
+        assert box['x'] + box['width'] <= 390
+        assert box['y'] + box['height'] <= 640
+        page.locator('#sc-chat-minimize').click()
+        launcher.click()
+        assert panel.bounding_box()['width'] <= 390
+        browser.close()
 
 
 def test_launcher_is_lazy_and_task_aware_without_recursing_into_chat():
@@ -35,7 +107,7 @@ def test_embedded_chat_preserves_pending_actions_and_escaped_task_context():
         def handle_starttag(self, tag, attrs):
             if tag == 'section':
                 values = dict(attrs)
-                if values.get('class') == 'tm-research-chat':
+                if 'tm-research-chat' in values.get('class', '').split():
                     self.chat = values
     parsed = Sections()
     parsed.feed(page)

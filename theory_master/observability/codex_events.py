@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from types import SimpleNamespace
 
 from theory_master.observability.costs import USAGE_KEYS
 
@@ -477,4 +478,83 @@ def map_notification(event: Any, *, role: str | None = None, thread_id: str | No
     if method in {"item/started", "item/completed"}:
         # Reasoning and unrecognized item types stay out of the human transcript.
         return None
+    return None
+
+
+def map_chat_notification(event: Any) -> dict[str, Any] | None:
+    """Public chat progress, separate from the scientific audit collector.
+
+    Only provider-supplied reasoning summaries are exposed. Raw reasoning and
+    command stdout never become chat content through this projection.
+    """
+    method = str(_get(event, "method") or "")
+    payload = _get(event, "payload", "params")
+    if payload is not None and _get(payload, "params") is not None:
+        payload = _get(payload, "params")
+    item = item_root(payload)
+    kind = _norm_type(_get(item, "type"))
+    item_id = str(_get(payload, "item_id", "itemId") or _get(item, "id") or "")
+    base = {"method": method, "item_id": item_id, "turn_id": turn_id_of(payload)}
+    if method in {"item/reasoning/summaryTextDelta", "item/reasoning/summaryPartAdded"}:
+        delta = _get(payload, "delta", "text")
+        if not delta:
+            return None
+        return {**base, "type": "reasoning_summary", "kind": "reasoning", "status": "running",
+                "label": "思考摘要", "text": str(delta), "delta": True}
+    if method == "item/completed" and kind == "reasoning":
+        summary = _get(item, "summary")
+        text = "\n".join(str(_get(part, "text") or part) for part in summary or [])
+        return {**base, "type": "reasoning_summary", "kind": "reasoning", "status": "complete",
+                "label": "思考摘要", "text": text}
+    if method in {"item/started", "item/completed"} and kind in {
+            "commandexecution", "filechange", "mcptoolcall", "websearch", "toolcall", "imageview"}:
+        label = extract_command(payload) if kind == "commandexecution" else (
+            extract_path(payload) if kind in {"filechange", "imageview"} else
+            str(_get(item, "tool", "name", "query") or kind))
+        status = _get(item, "status")
+        failed = (_get(item, "error") or _norm_type(getattr(status, "value", status)) in {"failed", "declined", "cancelled"}
+                  or _get(item, "exit_code", "exitCode") not in {None, 0})
+        return {**base, "type": "tool", "kind": "tool", "tool": kind,
+                "label": str(label or kind)[:1000],
+                "status": "running" if method == "item/started" else "error" if failed else "complete",
+                "duration_ms": _get(item, "duration_ms", "durationMs")}
+    if method in {"turn/plan/updated", "item/plan/delta"} or (kind == "plan" and method in {"item/started", "item/completed"}):
+        plan = _get(payload, "plan") or _get(item, "text") or _get(payload, "delta")
+        if hasattr(plan, "model_dump"):
+            plan = plan.model_dump(mode="json")
+        if isinstance(plan, list):
+            plan = [entry.model_dump(mode="json") if hasattr(entry, "model_dump") else entry for entry in plan]
+        return {**base, "type": "plan", "kind": "plan", "label": "执行计划",
+                "status": "complete" if method == "item/completed" else "running", "plan": plan,
+                "text": plan if isinstance(plan, str) else "", "delta": method.endswith("/delta")}
+    if method == "item/completed" and kind == "agentmessage":
+        questions = _get(item, "questions") or []
+        if questions:
+            return {**base, "id": item_id + "-questions", "request_id": item_id + "-questions",
+                    "type": "question", "kind": "question", "status": "running", "label": "等待选择", "async": True,
+                    "questions": [{"id": f"q-{index}", "question": str(_get(question, "title") or ""),
+                        "options": [{"label": str(option), "description": ""} for option in _get(question, "options") or []]}
+                        for index, question in enumerate(questions)]}
+        phase = _get(item, "phase")
+        return {**base, "type": "message", "kind": "message", "status": "complete",
+                "label": "回复", "text": extract_agent_text(payload) or "",
+                "phase": getattr(phase, "value", phase)}
+    mapped = map_notification(SimpleNamespace(method=method, payload=payload))
+    if not mapped:
+        return None
+    name = mapped.get("event")
+    if name == "TOKEN_USAGE":
+        return {**base, **mapped, "type": "usage", "kind": "usage", "label": "用量", "status": "complete"}
+    if name in {"LLM_RECONNECTING", "COMPACTION_STARTED", "COMPACTION_COMPLETED", "COMPACTION_FAILED"}:
+        return {**base, **mapped, "type": "reconnecting" if name == "LLM_RECONNECTING" else "context",
+                "kind": "connection" if name == "LLM_RECONNECTING" else "context",
+                "label": "正在重连" if name == "LLM_RECONNECTING" else "上下文整理",
+                "status": "running" if name.endswith("STARTED") or name == "LLM_RECONNECTING" else "error" if name.endswith("FAILED") else "complete"}
+    if name in {"LLM_TURN_STARTED", "LLM_TURN_COMPLETED", "LLM_TURN_FAILED", "LLM_FAILED"}:
+        turn = _get(payload, "turn")
+        return {**base, **mapped, "type": "turn", "kind": "turn", "label": "回复",
+                "status": "running" if name == "LLM_TURN_STARTED" else "error" if mapped.get("error") else "complete",
+                "native_started_at": _get(turn, "started_at", "startedAt"),
+                "native_completed_at": _get(turn, "completed_at", "completedAt"),
+                "native_duration_ms": _get(turn, "duration_ms", "durationMs")}
     return None

@@ -64,7 +64,7 @@ def test_one_report_reuses_overview_and_freezes_supplement(tmp_path: Path):
     assert "Unrelated material" not in frozen["content"]
     reporter._commit_cycle_science(state, database, tmp_path / "exploration.canvas", state["cycle_outcome_record"], None)
     exported = json.loads((tmp_path / "exploration.canvas").read_text())
-    assert "report_context" not in exported["nodes"][0]["cycle_outcomes"][0]
+    assert '"report_context"' not in json.dumps(exported)
     saved = (notes / "outcomes/1.md").read_text()
     assert saved.count(GUIDE["conclusion"]) == 1
     assert 'class="research-supplement"' in saved
@@ -105,7 +105,7 @@ def test_supplements_are_explicit_bounded_and_ignore_literal_code(tmp_path: Path
         secret.unlink()
 
 
-def test_legacy_report_alias_preserves_originals_and_has_no_second_body(tmp_path: Path):
+def test_report_uses_the_original_markdown_body_without_composing_a_second_body(tmp_path: Path):
     database = tmp_path / "science_graph.sqlite3"
     old = tmp_path / "notes" / "old.md"
     old.parent.mkdir()
@@ -114,11 +114,11 @@ def test_legacy_report_alias_preserves_originals_and_has_no_second_body(tmp_path
     with ScienceGraphStore(database) as store:
         store.add_hypothesis("H-0001")
         store.append_outcome(outcome_id="old", hypothesis_id="H-0001", cycle_id="1", verdict="open",
-                             summary=body, graph_summary=GUIDE, report_ref="notes/old", record_only=True)
+                             summary=body, graph_summary=GUIDE, report_ref="notes/old.md", record_only=True)
     before = database.read_bytes(), old.read_bytes()
     report = load_report(database, "1")
     assert report["content"].count("Original full scientific body.") == 1
-    assert 'class="research-legacy-summary"' in report["content"]
+    assert report["content"] == old.read_text()
     assert "Original data pointers" in report["content"]
     assert report_cycle_for_path(database, "notes/old.md") == "1"
     assert (database.read_bytes(), old.read_bytes()) == before
@@ -131,6 +131,9 @@ def test_section_ids_ignore_fences_and_disambiguate_repeated_titles():
 
 def test_unadjudicated_report_never_acquires_judge_verdict(tmp_path: Path):
     database = tmp_path / "science_graph.sqlite3"
+    note = tmp_path / "notes/preserved.md"
+    note.parent.mkdir()
+    note.write_text("# 阶段性研究记录 · 未裁决\nUnfinished research")
     with ScienceGraphStore(database) as store:
         store.add_hypothesis("H-0001")
         store.register_cycle_hypothesis(cycle_id="1", hypothesis_id="H-0001")

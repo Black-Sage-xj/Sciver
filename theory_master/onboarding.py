@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from .regression_cases import create_test_instance
-from .task import TaskBinding, ensure_runtime_outside_package, summary
+from .task import TaskBinding, absolute, ensure_runtime_outside_package, summary
 
 
 def default_workspace() -> Path:
@@ -18,11 +18,11 @@ def default_workspace() -> Path:
 def prepare_test0(workspace: Path) -> TaskBinding:
     workspace = ensure_runtime_outside_package(workspace.expanduser().resolve())
     binding, _ = create_test_instance(instances_root=workspace / "test-instances", start=False)
-    root = binding.task_home
     config = json.loads(binding.config_path.read_text(encoding="utf-8"))
     config["max_cycles"] = 1
     binding.config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    with sqlite3.connect((root / "science_graph.sqlite3").as_uri() + "?mode=ro", uri=True) as database:
+    graph_path = absolute(config.get("graph_database") or binding.branch_canvas.with_name("science_graph.sqlite3"), "graph_database")
+    with sqlite3.connect(graph_path.as_uri() + "?mode=ro", uri=True) as database:
         if database.execute("PRAGMA integrity_check").fetchone() != ("ok",):
             raise ValueError("Test0 scientific graph failed SQLite integrity check")
     print("Test0 offline checks passed: dataset checksum, task configuration, SQLite graph.", flush=True)

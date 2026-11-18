@@ -247,7 +247,7 @@ class RoleContractTest(unittest.TestCase):
         self.assertIn("required for resolved:", repair.prompt_projection())
         self.assertIn("required only for cannot_repair:", repair.prompt_projection())
 
-        self.assertLess(len(frontier_projection), 1800)
+        self.assertLess(len(frontier_projection), 2200)
         self.assertLess(len(challenger.prompt_projection()), 450)
         self.assertLess(len(repair.prompt_projection()), 900)
         self.assertLess(len(role_contract("research_lead", phase="hypothesis_display").prompt_projection()), 700)
@@ -270,6 +270,7 @@ class RoleContractTest(unittest.TestCase):
             "hypothesis": "bounded test hypothesis",
             "scope": "fixed scientific scope",
             "why_now": "a discriminating check is feasible",
+            "transition": {"prior_gap": "The Goal leaves this relation unresolved.", "current_change": "Test the bounded relation."},
             "goal_advance": "advance G1",
             "decisive_test": "DT-lineage",
         }
@@ -373,12 +374,14 @@ class RoleContractTest(unittest.TestCase):
         self.assertIn("The SDK owns H identity", frontier_prompt)
         proposal = {"candidates": [{"hypothesis": "h", "scope": "fixed scientific scope",
                                     "why_now": "w", "goal_advance": "advance G1",
+                                    "transition": {"prior_gap": "The Goal leaves H unresolved.", "current_change": "Test H directly."},
                                     "decisive_test": "t"}]}
         frontier.validate(proposal, {})
         frontier.validate({**proposal, "needs_literature": False}, {})
         continuation = {"candidates": [{
             "hypothesis": "same H, stated with refined wording", "scope": "a refined in-scope boundary",
             "why_now": "a second bounded test is now feasible",
+            "transition": {"prior_gap": "The boundary remains unresolved.", "current_change": "Test the refined boundary."},
             "goal_advance": "advance the same H",
             "decisive_test": "DT-B",
         }]}
@@ -696,6 +699,7 @@ class RoleContractTest(unittest.TestCase):
         contract = role_contract("research_lead", phase="frontier_proposal")
         output = {"candidates": [{"hypothesis": "h", "scope": "fixed scientific scope",
                                    "why_now": "new field",
+                                   "transition": {"prior_gap": "The relation remains unresolved.", "current_change": "Test the relation with a discriminating observation."},
                                    "goal_advance": "advance the scientific question",
                                    "decisive_test": "a discriminating observation"}]}
         contract.validate(output, {})

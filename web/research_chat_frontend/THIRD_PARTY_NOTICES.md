@@ -8,6 +8,7 @@ The Research Chat frontend bundles these open-source packages. Versions are pinn
 - [`remark-math`](https://github.com/remarkjs/remark-math) and [`rehype-katex`](https://github.com/remarkjs/remark-math) — MIT License; they parse LaTeX delimiters and render math with KaTeX.
 - [`katex`](https://github.com/KaTeX/KaTeX) — MIT License; version pinned in `package.json`.
 - [`lucide-react`](https://github.com/lucide-icons/lucide) — ISC License.
+- [`highlight.js`](https://github.com/highlightjs/highlight.js) — BSD-3-Clause License; syntax highlighting. Full notice: `web/tm_observer/vendor/highlight-LICENSE.txt`.
 - [`vite`](https://github.com/vitejs/vite) and [`@vitejs/plugin-react`](https://github.com/vitejs/vite-plugin-react) — MIT License.
 - [`typescript`](https://github.com/microsoft/TypeScript) — Apache License 2.0.
 

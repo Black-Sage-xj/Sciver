@@ -289,20 +289,19 @@ class GoalCompletionMixin:
         graph_path = self._graph_database_path()
         from .goal_terminal import goal_sealed
         from .science_graph_store import GOAL_CLOSE_REASON, ScienceGraphStore
-        from .science_canvas_export import canvas_projection
+        from .vault_canvas import refresh_registered_canvases
         closed: list[str] = []
         if goal_sealed(self.spec.research_root, graph_path) is None:
             with ScienceGraphStore(graph_path) as writable:
                 closed = writable.close_all_frontiers_for_goal(reason=GOAL_CLOSE_REASON)
-        with ScienceGraphStore(graph_path, readonly=True) as store:
-            projected = canvas_projection(store)
-            if canvas_path is not None:
-                from .science_canvas_export import write_external_detail_documents
-                write_external_detail_documents(
-                    store, notes_root=canvas_path.resolve().parent / "notes"
-                )
         if canvas_path is not None:
-            write_json(canvas_path, projected)
+            projections = refresh_registered_canvases(graph_path)
+            pending = [row for row in projections if row.get("status") == "pending"]
+            if pending:
+                # The renderer preserves the committed graph and returns failures
+                # as receipts. Surface them to the Goal's retryable warning path.
+                errors = "; ".join(str(row.get("error") or "Canvas refresh pending") for row in pending)
+                raise OSError(f"Canvas projection pending: {errors}")
         return list(dict.fromkeys(closed))
 
     def _render_canvas(self, state: dict[str, Any]) -> None:

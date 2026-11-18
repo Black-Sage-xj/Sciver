@@ -125,8 +125,12 @@ def test_pubmed_metadata_via_faked_xml(monkeypatch):
 
 def test_marker_arguments_are_bounded_and_local(monkeypatch, tmp_path):
     mod = _module("pdf_to_markdown")
+    from theory_master import document_conversion as conversion
+    monkeypatch.setenv("SCIVER_DOCUMENT_CONVERSION_CONFIG", str(tmp_path / "conversion-settings.json"))
+    conversion.save_settings({"expected_revision": "0", "enabled": True})
     marker = tmp_path / "marker_single"
     marker.write_text("stub")
+    marker.chmod(0o700)
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     def fake_run(cmd, **kwargs):
@@ -137,7 +141,7 @@ def test_marker_arguments_are_bounded_and_local(monkeypatch, tmp_path):
         dest.mkdir(parents=True, exist_ok=True)
         (dest / "paper.md").write_text("converted full text")
         return type("P", (), {"returncode": 0, "stderr": "", "stdout": ""})()
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(conversion.subprocess, "run", fake_run)
     result = mod.convert_pdf_to_markdown(pdf, tmp_path / "converted", marker_bin=str(marker), max_pages=3)
     assert result.read_text() == "converted full text"
 
@@ -336,14 +340,18 @@ def test_reading_candidate_fallback_keeps_failed_pdf_unverified(monkeypatch, tmp
 
 def test_pdf_converter_rejects_stale_markdown_after_failed_attempt(monkeypatch, tmp_path):
     mod = _module("pdf_to_markdown")
+    from theory_master import document_conversion as conversion
+    monkeypatch.setenv("SCIVER_DOCUMENT_CONVERSION_CONFIG", str(tmp_path / "conversion-settings.json"))
+    conversion.save_settings({"expected_revision": "0", "enabled": True})
     marker = tmp_path / "marker_single"
     marker.write_text("stub")
+    marker.chmod(0o700)
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     dest = tmp_path / "converted"
     dest.mkdir()
     (dest / "paper.md").write_text("stale previous output")
-    monkeypatch.setattr(mod.subprocess, "run", lambda *args, **kwargs:
+    monkeypatch.setattr(conversion.subprocess, "run", lambda *args, **kwargs:
                         type("P", (), {"returncode": 0, "stderr": "", "stdout": ""})())
     import pytest
     with pytest.raises(RuntimeError, match="nonempty Markdown"):
@@ -373,14 +381,18 @@ def test_metadata_json_cannot_masquerade_as_primary_article(monkeypatch, tmp_pat
 
 def test_marker_timeout_preserves_unverified_status(monkeypatch, tmp_path):
     mod = _module("pdf_to_markdown")
+    from theory_master import document_conversion as conversion
+    monkeypatch.setenv("SCIVER_DOCUMENT_CONVERSION_CONFIG", str(tmp_path / "conversion-settings.json"))
+    conversion.save_settings({"expected_revision": "0", "enabled": True})
     marker = tmp_path / "marker_single"
     marker.write_text("stub")
+    marker.chmod(0o700)
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     import subprocess
     def timeout(*args, **kwargs):
         raise subprocess.TimeoutExpired(args[0], 240)
-    monkeypatch.setattr(mod.subprocess, "run", timeout)
+    monkeypatch.setattr(conversion.subprocess, "run", timeout)
     import pytest
     with pytest.raises(RuntimeError, match="timed out"):
         mod.convert_pdf_to_markdown(pdf, tmp_path / "converted", marker_bin=str(marker))
@@ -419,12 +431,15 @@ def test_title_only_without_year_or_authors_is_not_identity_evidence():
     assert len(mod.rank_and_dedupe([unknown, known], "Same title", None, None)) == 2
 
 
-def test_marker_adapter_invokes_real_local_subprocess(tmp_path):
+def test_marker_adapter_invokes_real_local_subprocess(monkeypatch, tmp_path):
     import os
     import pytest
     if os.name != "posix":
         pytest.skip("POSIX executable integration smoke")
     mod = _module("pdf_to_markdown")
+    from theory_master import document_conversion as conversion
+    monkeypatch.setenv("SCIVER_DOCUMENT_CONVERSION_CONFIG", str(tmp_path / "conversion-settings.json"))
+    conversion.save_settings({"expected_revision": "0", "enabled": True})
     marker = tmp_path / "marker_single"
     marker.write_text(
         "#!/usr/bin/env python3\n"

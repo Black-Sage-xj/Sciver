@@ -19,7 +19,10 @@ ROLE_SKILLS: dict[str, tuple[str, ...]] = {
     "attention_reviewer": (),
     "runtime_supervisor": (),
     "incident_supervisor": (),
-    "research_chat": (),
+    "research_chat": (
+        "research-progress", "research-discussion", "research-intervention",
+        "research-evidence", "research-next-steps", "research-preparation",
+    ),
     "research_lead": (),
     "challenger": (),
     "investigator": (
@@ -223,6 +226,13 @@ def skill_prompt_block(
         "Load a skill's SKILL.md only when this turn actually needs that capability. "
         "Do not use skills outside these two levels.",
     ]
+    if role in {"investigator", "literature"}:
+        lines.append(
+            "The SDK may attach a versioned learned task-skill catalogue to an invocation. "
+            "Its listed immutable entries extend the task-level whitelist for that invocation only; "
+            "a later SDK catalogue replaces those learned entries. "
+            "Treat learned methods as procedural guidance subordinate to your role and scientific contracts."
+        )
     for scope, title in (("system", "System-level TheoryMaster skills"), ("task", "Task-local Master skills")):
         scoped = [ref for ref in refs if ref.scope == scope]
         if not scoped:
@@ -249,6 +259,11 @@ def developer_instructions(
             f"You are TheoryMaster {role_display_name(role)}."
         )
     parts.extend([identity_block(role), skill_prompt_block(role, root, task_config_path=task_config_path)])
+    if role == "research_chat":
+        # Codex deliberately disables cwd AGENTS.md discovery. This packaged,
+        # trusted handbook is part of the role contract instead of task data.
+        handbook = files("theory_master").joinpath("resources", "identities", "research_chat", "AGENTS.md")
+        parts.append("Research Chat runtime AGENTS.md:\n" + handbook.read_text(encoding="utf-8"))
     if extra:
         parts.append(extra)
     return "\n\n".join(parts)

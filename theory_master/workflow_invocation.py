@@ -465,6 +465,7 @@ class InvocationMixin:
             output_key=output_key, context=context,
         )
         if reused is not None:
+            self._finish_skill_memory(state, actual, str(state.get("last_invocation_id") or ""))
             return reused
         from .goal_terminal import GoalSealedError, assert_goal_open
         try:
@@ -696,6 +697,36 @@ class InvocationMixin:
                 stage, prompt_context, layout="v2", allow_setup_reference=True,
             )
         invocation_id = f"inv-{self.cycle_dir.name}-{role}-{uuid.uuid4().hex[:12]}"
+        from .skill_evolution.runtime import safely as skill_memory, prompt as skill_memory_prompt
+        capable_threads = state.setdefault("skill_memory_capable_threads", [])
+        if actual in {"investigator", "literature"} and thread_id is None and identifier not in capable_threads:
+            capable_threads.append(identifier)
+        skill_binding = skill_memory(
+            "prepare", root=self.spec.research_root, config_path=self.spec.config_path,
+            cycle_dir=self.cycle_dir, workspace=self.cycle_workspace, role=actual,
+            logical_key=logical_key,
+            query=self.spec.goal[:4000] + " " + self.spec.contract[:2000] + " " + stage,
+            allow_catalogue=identifier in capable_threads,
+        )
+        skill_note_path = self._skill_memory_note_path(actual, invocation_id)
+        skill_versions = state.setdefault("skill_memory_catalogues", {})
+        skill_protocols = state.setdefault("skill_memory_protocol_threads", [])
+        skill_flags = state.setdefault("skill_memory_learning_flags", {})
+        skill_addendum = skill_memory_prompt(
+            skill_binding, note_path=skill_note_path, previous_catalogue=skill_versions.get(identifier),
+            protocol_seen=identifier in skill_protocols,
+            previous_learning=skill_flags.get(identifier),
+        )
+        if skill_binding:
+            state.setdefault("skill_memory_bindings", {})[invocation_id] = skill_binding["binding_path"]
+        if self.collector is not None:
+            from .skills import SkillRef
+            self.collector.learned_skill_refs = tuple(
+                SkillRef("learned-" + row["name"], "learned-" + row["name"], row["description"],
+                         Path(row["path"]), row["name"], "task")
+                for row in skill_binding.get("skills", [])
+            )
+            self.collector.skill_evolution_invocation_id = invocation_id
         predecessor_id = str(state.get("active_invocation_id") or "") if state.get("recovery", {}).get("action") == "resume" else ""
         predecessor = invocation_ledger.latest(predecessor_id) if predecessor_id else None
         if predecessor and predecessor.get("state") not in {"completed", "failed", "cancelled", "quarantined", "interrupted", "superseded"}:
@@ -728,6 +759,7 @@ class InvocationMixin:
                 role=role, stage=stage, contract_ref=contract.ref,
                 contract_schema=contract.prompt_projection(prompt_context), context=prompt_context,
             ) if continuation else new_thread_prompt
+            prompt += skill_addendum
         if native_preflight_goal is None and state.get("recovery", {}).get("action") == "resume":
             if (state.get("recovery", {}).get("qualification_restart")
                     and actual == "research_lead" and stage == "frontier_proposal"):
@@ -784,6 +816,9 @@ class InvocationMixin:
             "identities": [path.name for path in identity_files(role)],
             "skills": [ref.directory for ref in role_skills(actual, task_config_path=self.spec.config_path)],
             "skill_scopes": {ref.directory: ref.scope for ref in role_skills(actual, task_config_path=self.spec.config_path)},
+            **({"learned_skill_binding": skill_binding["binding_path"],
+                "learned_skill_versions": {s["id"]: s["version"] for s in skill_binding["skills"]}}
+               if skill_binding else {}),
             **({
                 "literature_task_type": (validation_context.get("literature_task") or {}).get("task_type"),
                 "literature_triggered_by": (validation_context.get("literature_task") or {}).get("triggered_by"),
@@ -833,6 +868,7 @@ class InvocationMixin:
                 + "Put detailed proofs, scripts, numbers and other material in arbitrary research files, "
                 + "but make each submitted claim scientifically self-contained. "
                 + "Do not submit a handoff while blocked, paused or unfinished."
+                + skill_addendum
             )
         if use_native_goal:
             from .native_goal import native_goal_setup_turn
@@ -948,6 +984,11 @@ class InvocationMixin:
 
         try:
             identifier, raw = invoke_with_audit(prompt, "continuation" if continuation else "task")
+            if skill_binding:
+                skill_versions[identifier] = skill_binding["catalogue_version"]
+                skill_flags[identifier] = skill_binding["learning"]
+                if skill_binding.get("learning") and identifier not in skill_protocols:
+                    skill_protocols.append(identifier)
             if pending_guidance is not None:
                 from .attention_guidance import mark_guidance_consumed
                 consumed = mark_guidance_consumed(self.cycle_dir, pending_guidance, role=role, stage=stage)
@@ -1376,4 +1417,18 @@ class InvocationMixin:
             closure_hash=closure_hash, logical_key=logical_key,
             invocation_artifact_manifest=str(artifact_manifest) if artifact_manifest else None,
         )
+        self._finish_skill_memory(state, actual, invocation_id, binding=skill_binding)
         return output
+
+    def _skill_memory_note_path(self, role: str, invocation_id: str) -> Path:
+        workspace = self.cycle_workspace / "literature" if role == "literature" else self.cycle_workspace
+        return workspace / f".skill-note-{invocation_id}.json"
+
+    def _finish_skill_memory(self, state: dict[str, Any], role: str, invocation_id: str,
+                             *, binding: dict[str, Any] | None = None) -> None:
+        from .skill_evolution.runtime import safely
+        workspace = self.cycle_workspace / "literature" if role == "literature" else self.cycle_workspace
+        safely("finish", root=self.spec.research_root, cycle_dir=self.cycle_dir,
+               workspace=workspace, role=role, invocation_id=invocation_id,
+               note_path=self._skill_memory_note_path(role, invocation_id), binding=binding,
+               config_path=self.spec.config_path)

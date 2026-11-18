@@ -46,6 +46,9 @@ class ReplayCheckpointTest(unittest.TestCase):
             workflow._write_replay_checkpoint(state, "cycle_start")
             before_plan = spec.document.read_bytes()
             before_canvas = spec.branch_canvas.read_bytes()
+            from theory_master.science_graph_store import ScienceGraphStore
+            with ScienceGraphStore(spec.graph_database, readonly=True) as store:
+                before_graph = store.graph_view()
             before_state = json.loads((source / "replay_checkpoints/cycle_start.json").read_text())
             dry = replay_cycle(spec, source, "start", dry_run=True)
             self.assertEqual(dry["status"], "validated")
@@ -59,6 +62,15 @@ class ReplayCheckpointTest(unittest.TestCase):
             outcome = replay_cycle(spec, source, "start", backend_factory=lambda _spec, _routes: FakeBackend(reworks=0))
             duplicate = replay_cycle(spec, source, "start", backend_factory=lambda _spec, _routes: FakeBackend(reworks=0))
             attempt = Path(outcome["execution_root"])
+            private_config = json.loads((attempt / "task/.theory-master/theory-master.config.json").read_text())
+            self.assertEqual(private_config["graph_database"], str(attempt / "research/science_graph.sqlite3"))
+            self.assertEqual(private_config["vault_root"], str(attempt / "task"))
+            self.assertTrue((attempt / "research/science_graph.sqlite3").is_file())
+            self.assertFalse((attempt / "task/science_graph.sqlite3").exists())
+            with ScienceGraphStore(spec.graph_database, readonly=True) as store:
+                self.assertEqual(store.graph_view(), before_graph)
+            with ScienceGraphStore(attempt / "research/science_graph.sqlite3", readonly=True) as store:
+                self.assertTrue(store.graph_view()["nodes"])
             self.assertEqual(outcome["status"], "over")
             self.assertNotEqual(outcome["attempt_id"], duplicate["attempt_id"])
             self.assertNotEqual(outcome["attempt_id"], "original-attempt")

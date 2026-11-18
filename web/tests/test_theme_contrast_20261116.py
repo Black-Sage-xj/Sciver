@@ -41,7 +41,7 @@ def test_graph_light_selection_and_low_zoom_visibility():
   latestGraph.camera.zoom=1;latestGraph.events.aftertransform();await tick();
   selected=latestGraph.data.edges.find(e=>e.id==='AX');
   assert.equal(selected.style.lineWidth,5,'zoom compensation reverses on zoom in');
-  theme='blue';await elements['ex-refresh'].onclick();await tick();await tick();
+  theme='blue';await ctx.window.testReloadIndex();await tick();await tick();
   assert.equal(latestGraph.data.edges.find(e=>e.id==='AX').style.stroke,'#fef08a');
 })().catch(e=>{console.error(e);process.exitCode=1});
 """

@@ -85,6 +85,8 @@ def _h_text(node: dict[str, Any]) -> str:
     if preferred:
         header.append("priority: preferred")
     lines = [*header, "", f"# {title}", "", summary]
+    if reasoning := node.get("research_transition"):
+        lines += ["", "**研究承接：** " + preview(reasoning["current_change"], 120)]
     dossier_ref = node.get("dossier_ref") or f"notes/hypotheses/{node['id']}"
     lines += ["", "[[" + str(dossier_ref) + "]]"]
 
@@ -138,53 +140,72 @@ def _external_text(node: dict[str, Any]) -> str:
 def write_external_detail_documents(
     store: ScienceGraphStore, *, notes_root: Path | None = None,
 ) -> int:
-    """Atomically materialize full External bodies as generated, linked Markdown views.
+    """Publish each External document once, independently of Canvas refresh.
 
-    SQLite and the legacy archive remain authoritative. Existing hand-written
-    files are never overwritten, and paths cannot escape the task's notebook root.
+    Existing files are user-owned. A publication ledger prevents deleted notes
+    from being silently reconstructed by a later scientific publication pass.
     """
-    task_root = store.path.parent.resolve()
-    root = Path(notes_root) if notes_root is not None else task_root / "notes"
+    import fcntl
+    import logging
+    from .vault_canvas import _atomic_json, canvas_bindings
+    if notes_root is None:
+        binding = next((row for row in canvas_bindings(store.path) if not row["branch_root"]), None)
+        task_root = Path(binding["vault_root"]) if binding else store.path.parent.resolve()
+        root = task_root / "notes"
+    else:
+        root = Path(notes_root)
+        task_root = root.parent.resolve()
     if root.is_symlink():
         raise ValueError("External detail notes root cannot be a symlink")
-    resolved_root = root.resolve()
-    if not resolved_root.is_relative_to(task_root):
+    root = root.resolve()
+    if not root.is_relative_to(task_root):
         raise ValueError("External detail notes root escapes the task root")
-    resolved_root.mkdir(parents=True, exist_ok=True)
-    root = resolved_root
     detail_dir = root / "external"
     if detail_dir.is_symlink():
         raise ValueError("External detail directory cannot be a symlink")
     detail_dir.mkdir(parents=True, exist_ok=True)
     if not detail_dir.resolve().is_relative_to(task_root):
         raise ValueError("External detail directory escapes the task root")
-
-    marker = "<!-- generated-by: theory-master-external-detail/v1 -->\n"
+    control = task_root / ".theory-master"
+    control.mkdir(parents=True, exist_ok=True)
+    ledger_path = control / "external-publications.json"
     written = 0
-    for row in store.db.execute(
-        "SELECT id,content FROM external_records ORDER BY id"
-    ):
-        ref = external_detail_ref(row["id"])
-        if not ref:
-            continue
-        target = task_root / ref
-        if target.is_symlink() or not target.resolve().is_relative_to(task_root):
-            raise ValueError(f"Unsafe External detail target: {ref}")
-        payload = marker + str(row["content"] or "").rstrip() + "\n"
-        if target.exists():
-            prior = target.read_text(encoding="utf-8")
-            if not prior.startswith(marker):
-                raise ValueError(f"Refusing to overwrite hand-written External detail: {ref}")
-            if prior == payload:
+    marker = "<!-- generated-by: theory-master-external-detail/v1 -->\n"
+    with (control / "external-publications.lock").open("a+b") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8")) if ledger_path.is_file() else {}
+        for row in store.db.execute("SELECT id,content FROM external_records ORDER BY id"):
+            ref = external_detail_ref(row["id"])
+            if not ref:
                 continue
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=target.parent,
-            prefix=target.name + ".", suffix=".tmp", delete=False,
-        ) as stream:
-            stream.write(payload)
-            temporary = Path(stream.name)
-        os.replace(temporary, target)
-        written += 1
+            target = detail_dir / Path(ref).name
+            if target.is_symlink() or not target.resolve().is_relative_to(task_root):
+                raise ValueError(f"Unsafe External detail target: {ref}")
+            if row["id"] in ledger:
+                if not target.is_file():
+                    logging.getLogger(__name__).warning("Published External document is missing: %s", target)
+                continue
+            if target.exists():
+                ledger[row["id"]] = target.relative_to(task_root).as_posix()
+                continue
+            payload = marker + str(row["content"] or "").rstrip() + "\n"
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent,
+                                             prefix=target.name + ".", suffix=".tmp", delete=False) as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+                temporary = Path(stream.name)
+            try:
+                # Install only if absent; a user's concurrent creation wins.
+                try:
+                    os.link(temporary, target)
+                    written += 1
+                except FileExistsError:
+                    pass
+            finally:
+                temporary.unlink(missing_ok=True)
+            ledger[row["id"]] = target.relative_to(task_root).as_posix()
+        _atomic_json(ledger_path, ledger)
     return written
 
 
@@ -241,6 +262,7 @@ def canvas_projection(store: ScienceGraphStore) -> dict[str, Any]:
                 "cycle_outcomes": [{k: v for k, v in o.items() if k != "report_context"} for o in n["cycle_outcomes"]],
                 "whole_h_assessment": n["whole_h_assessment"], "cycle_count": n["cycle_count"],
                 "frontiers": n["frontiers"]} if is_h else {}),
+            **({"research_transition": n["research_transition"]} if n.get("research_transition") else {}),
         })
     edges = []
     edge_ids: set[str] = set()

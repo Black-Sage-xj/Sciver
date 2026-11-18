@@ -71,11 +71,12 @@ function nodeFill(n,compact=compactView()){
 }
 function ensureOverviewColorToggle(){
   const graphHost=$('ex-graph');
-  if(!graphHost||graphHost.querySelector?.('#ex-color-mode'))return;
+  if(!graphHost||document.querySelector?.('#ex-color-mode')||graphHost.querySelector?.('#ex-color-mode'))return;
   const button=document.createElement('button');
   button.id='ex-color-mode';button.type='button';button.className='ex-color-mode';
+  const menu=document.querySelector?.('#ex-view-color');
   const toolbar=$('ex-zoom-percent')?.parentElement;
-  button.style.cssText=(toolbar?'':'position:absolute;top:55px;left:12px;z-index:8;')+
+  if(!menu)button.style.cssText=(toolbar?'':'position:absolute;top:55px;left:12px;z-index:8;')+
     'padding:6px 10px;border:1px solid #596579;border-radius:7px;'+
     'font:600 12px system-ui;'+
     'cursor:pointer;box-shadow:0 3px 12px #0008';
@@ -88,7 +89,8 @@ function ensureOverviewColorToggle(){
   button.onclick=()=>{overviewColorMode=overviewColorMode==='frontier'?'outcome':'frontier';
     refresh();updateZoomLabels();renderColorLegend()};
   refresh();
-  if(toolbar?.insertBefore)toolbar.insertBefore(button,$('ex-zoom-percent'));
+  if(menu)menu.append(button);
+  else if(toolbar?.insertBefore)toolbar.insertBefore(button,$('ex-zoom-percent'));
   else graphHost.append(button);
 }
 
@@ -252,6 +254,10 @@ function graphLabelStyle(data,style,compact){
 
 const ID=s=>String(s??'');
 let index=null, selected=null, graph=null, graphReady=false, taskId=$('ex-task').value;
+const vaultUi=globalThis.SciverVaultUI?.create({getTask:()=>taskId,
+  getBranch:()=>selected?.kind==='node'&&/^H-\d+$/.test(selected.id)?selected.id:
+    docOriginView?.taskId===taskId&&docOriginView.selected?.kind==='node'&&/^H-\d+$/.test(docOriginView.selected.id)?docOriginView.selected.id:null,
+  getHypotheses:()=>index?.nodes.filter(node=>/^H-\d+$/.test(node.id))||[]});
 let collapsed=new Set(), searchTimer=null, renderSerial=0;
 let hoveredEdge=null,edgeMenuTimer=null;
 let searchRequestSerial=0;
@@ -443,7 +449,7 @@ async function openTipPanel(filter=null){
   const panel=$('ex-tip-panel');
   if(!index)return;
   // Repeating the same filter closes the overlay, just like a document outline.
-  if(!panel.hidden&&panel.dataset.filter===(filter||'all')){
+  if(!panel.hidden&&panel.dataset.filter===(filter||'all')&&!$('ex-branches')?.open){
     ++tipWorkerRequest;panel.hidden=true;return;
   }
   const request=++tipWorkerRequest,currentTask=taskId;
@@ -458,7 +464,7 @@ async function openTipPanel(filter=null){
   title.textContent=(index.canvas==='science_graph.sqlite3'?'研究分支 · ':'科研末端 · ')+(filter?frontierNames[filter]:'全部')+' '+records.length;
   head.append(title);
   const close=document.createElement('button');close.textContent='关闭 ×';
-  close.onclick=()=>{++tipWorkerRequest;panel.hidden=true};head.append(close);panel.append(head);
+  close.onclick=()=>{++tipWorkerRequest;panel.hidden=true;closeToolbarMenus(true)};head.append(close);panel.append(head);
   const note=document.createElement('p');note.className='ex-tip-panel-note';
   note.textContent=index.canvas==='science_graph.sqlite3'?'每个 H 只有一个当前前沿状态；缺失状态显示未标记。历史 Decision 前沿仅保留于归档。':'列表使用 Canvas 原始 frontier_status；点击条目定位，若不在当前研究前沿中则切换至完整图谱。';
   panel.append(note);
@@ -475,7 +481,7 @@ async function openTipPanel(filter=null){
     sub.textContent=cardCycleText(node,[],new Map())+' · '+(typeNames[knownType(node)]||knownType(node))+
       ' · '+frontierNames[status]+(terminal?'':' · 存在后续科研连线');
     button.append(sub);
-    button.onclick=()=>{++tipWorkerRequest;panel.hidden=true;navigate('node',node.id,'',{focus:true})};
+    button.onclick=()=>{++tipWorkerRequest;panel.hidden=true;closeToolbarMenus();navigate('node',node.id,'',{focus:true})};
     entry.append(button);
     if(status==='active')activeEntries.set(node.id,entry);
     panel.append(entry);
@@ -611,7 +617,8 @@ function outcomeDetailsHtml(outcomes){
       (String(outcome.summary||'').length>360?'…':'')+'</p>':'')+
     '<div class="ex-reader-documents">'+
     '<button type="button" class="ex-ref ex-document-link" data-ref="'+esc(uri('report',outcome.cycle_id))+'">'+
-    '阅读研究报告 <span aria-hidden="true">↗</span></button></div></div></details>';
+    '阅读研究报告 <span aria-hidden="true">↗</span></button>'+
+    '<button type="button" class="ex-ref" data-discuss-cycle="'+esc(outcome.cycle_id)+'">讨论这一轮</button></div></div></details>';
   return '<section class="ex-reader-card ex-outcome-details" id="ex-outcome-details" aria-labelledby="ex-results-title">'+
     '<header class="ex-reader-section-head"><span class="ex-section-number" aria-hidden="true">02</span><div>'+
     '<h3 id="ex-results-title">研究结论 <span class="ex-result-count">'+records.length+' 轮</span></h3>'+
@@ -639,6 +646,19 @@ function downstreamHighlight(start,visibleEdges,maxHops=2){
     frontier=next;
   }
   return {ids,lineageIds};
+}
+function linkedNodeId(kind=selected?.kind,id=selected?.id){
+  if(!index)return null;
+  if(kind==='node')return index.nodes.some(n=>n.id===id)?id:null;
+  if(kind==='report'){
+    const node=index.nodes.find(n=>[...(n.semantic?.cycle_outcomes||[]),n.semantic?.outcome]
+      .some(outcome=>outcome&&String(outcome.cycle_id)===String(id)))||
+      index.nodes.find(n=>String(n.semantic?.cycle)===String(id));
+    return node?.id||null;
+  }
+  if(kind==='doc')return index.nodes.find(n=>n.semantic?.dossier_ref===id||
+    (index.references['node:'+n.id]||[]).some(ref=>ref.kind==='doc'&&ref.id===id))?.id||null;
+  return null;
 }
 function g6Data(layoutBase=false){
   const s=structure(index.nodes,index.edges),vis=visibility(s,layoutBase);
@@ -668,7 +688,7 @@ function g6Data(layoutBase=false){
       stroke:'#111827',lineWidth:1,linkToCenter:true
     }));
   };
-  const target=selected?.kind==='node'?selected.id:null;
+  const target=linkedNodeId();
   const activeEdgeId=selected?.kind==='edge'?selected.id:null;
   const selectedEdge=activeEdgeId?rawEdges.find(e=>edgeKey(e)===activeEdgeId):null;
   const descendants=downstreamHighlight(target,rawEdges);
@@ -889,7 +909,7 @@ function updateOutcomeCards(){
   const statusSignature=node=>{const sem=node?.semantic||{};
     return JSON.stringify([hypothesisFrontier(sem),frontierSummary(sem),
       hypothesisVerdict(sem),(sem.cycle_outcomes||[]).length,
-      sem.title,sem.outcome?.summary,sem.outcome?.graph_summary]);};
+      sem.title,sem.outcome?.summary,sem.outcome?.graph_summary,sem.research_transition]);};
   if(outcomeCardsIndex===index&&existing.length===visible.length&&
       visible.every((data,i)=>existing[i].dataset.nodeId===data.id&&
         existing[i].dataset.statusSignature===statusSignature(lookup.get(data.id)))){
@@ -923,6 +943,8 @@ function updateOutcomeCards(){
     card.style.opacity='1';
     card.style.width=(width-strip-8)+'px';card.style.height=(height-8)+'px';
     const cycle=cardCycleText(node,[],lookup);
+    const transition=researchTransition(sem);
+    const transitionCopy=transition&&(transition.current_change||transition.why_now);
     const status=hypothesisFrontier(sem),verdict=hypothesisVerdict(sem);
     const records=Array.isArray(sem.cycle_outcomes)?sem.cycle_outcomes.filter(hasRecordedOutcome):[];
     const outcome=records.length===1?records[0]:
@@ -943,6 +965,7 @@ function updateOutcomeCards(){
     for(const [part,title,description,anchor] of sections){
       const button=document.createElement('button');button.type='button';
       button.className='ex-outcome-part ex-outcome-'+part+
+        (part==='hypothesis'&&transitionCopy?' has-transition':'')+
         (part==='outcome'?' ex-outcome-verdict-'+verdict:'')+
         (selected?.kind==='node'&&selected.id===data.id&&
           (selected.anchor==='outcome'?'outcome':'hypothesis')===part?' is-selected':'');
@@ -950,6 +973,7 @@ function updateOutcomeCards(){
       button.title=(part==='hypothesis'?'前沿 '+frontierSummary(sem)+'；查看猜想：':
         (verdict==='unadjudicated'?'科研保全状态 ':'科学裁决状态 ')+
         statusLabels[verdict]+'；查看 Outcome：')+description;
+      if(part==='hypothesis'&&transitionCopy)button.title+='\n这一步改变什么：'+transitionCopy;
       if(part==='outcome'&&outcome?.graph_summary)
         button.title=Object.values(outcome.graph_summary).filter(Boolean).join('\n');
       button.setAttribute('aria-label',button.title);
@@ -958,6 +982,10 @@ function updateOutcomeCards(){
       const copy=document.createElement('span');copy.className='ex-outcome-copy';
       copy.textContent=description;
       button.append(heading);button.append(copy);
+      if(part==='hypothesis'&&transitionCopy){
+        const reason=document.createElement('span');reason.className='ex-outcome-transition';
+        reason.textContent=abbreviate(transitionCopy,54);button.append(reason);
+      }
       button.onclick=event=>{
         event?.preventDefault?.();event?.stopPropagation?.();
         navigate('node',data.id,anchor,{focus:false});
@@ -1017,7 +1045,11 @@ function refreshEdgeMenu(){
   const count=traverse([target],s.children).size-1,folded=collapsed.has(target);
   edgeMenu.dataset.edgeId=edge.id;edgeMenu.dataset.targetId=target;
   edgeMenuAction.textContent=folded?'+':'−';
-  edgeMenuAction.setAttribute('aria-label',(folded?'展开':'折叠')+'子分支（'+count+' 个后代节点）');
+  const actionLabel=(folded?'展开':'折叠')+'子分支（'+count+' 个后代节点）';
+  edgeMenuAction.setAttribute('aria-label',actionLabel);
+  const transition=researchTransition(s.lookup.get(target)?.semantic);
+  edgeMenuAction.title=transition?'这一步改变什么：'+transition.current_change+
+    '\n为什么现在研究：'+transition.why_now:actionLabel;
   edgeMenuAction.disabled=!count;
   edgeMenuAction.setAttribute('aria-expanded',String(!folded));
   edgeMenu.hidden=!count;
@@ -1102,6 +1134,9 @@ function updateSourceRail(){
       button.style.borderLeftColor=color;
       button.title='来源：'+edge.fromNode+' · '+(source?.semantic?.title||source?.label||'')+
         '（'+(typeNames[scienceType]||scienceType)+'）';
+      const transition=researchTransition(lookup.get(n.id)?.semantic);
+      if(transition)button.title+='\n这一步改变什么：'+transition.current_change+
+        '\n为什么现在研究：'+transition.why_now;
       button.setAttribute('aria-label','跳转前序节点 '+edge.fromNode);
       button.textContent=compactSourceLabel(source);
       button.onclick=event=>{
@@ -1195,6 +1230,39 @@ function positionSourceRail(){
   }
   positionOutcomeCards();
   positionCompactLabels();
+  positionNodePulse();
+}
+let pulsedNode=null,pulseAnimation=null,pulseTimer;
+let pulseRing=null;
+function nodePulseRing(){
+  if(pulseRing)return pulseRing;
+  pulseRing=$('ex-node-pulse')||document.createElement('div');
+  pulseRing.id='ex-node-pulse';pulseRing.hidden=true;pulseRing.setAttribute('aria-hidden','true');
+  Object.assign(pulseRing.style,{position:'absolute',pointerEvents:'none',zIndex:5,
+    boxSizing:'border-box',border:'3px solid #93c5fd',borderRadius:'14px',boxShadow:'0 0 22px #60a5fa'});
+  $('ex-graph').append(pulseRing);
+  return pulseRing;
+}
+function positionNodePulse(){
+  if(!pulsedNode||!graphReady||!graph)return;
+  const ring=nodePulseRing();
+  const node=graph.getNodeData(pulsedNode);if(!node)return;
+  const [x,y]=graph.getViewportByCanvas(graph.getElementPosition(pulsedNode));
+  const [width,height]=node.style.size,zoom=safeZoom(),gap=5;
+  Object.assign(ring.style,{left:(x-width*zoom/2-gap)+'px',top:(y-height*zoom/2-gap)+'px',
+    width:(width*zoom+gap*2)+'px',height:(height*zoom+gap*2)+'px'});
+}
+function pulseNode(id){
+  const ring=nodePulseRing();
+  clearTimeout(pulseTimer);pulseAnimation?.cancel();
+  pulsedNode=id;positionNodePulse();ring.hidden=false;
+  const finish=()=>{ring.hidden=true;pulsedNode=null;pulseAnimation=null};
+  const reduced=window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  if(ring.animate&&!reduced){
+    pulseAnimation=ring.animate([{opacity:0},{opacity:1,offset:.15},
+      {opacity:.3,offset:.45},{opacity:1,offset:.65},{opacity:0}],{duration:1400,easing:'ease-out'});
+    pulseAnimation.onfinish=finish;
+  }else pulseTimer=setTimeout(finish,1400);
 }
 // Only switch between compact and detailed labels; never rerun Dagre.
 let lastCompactMode=null;
@@ -1546,6 +1614,60 @@ function withoutRepeatedTitle(body,title){
   return heading&&heading[2].trim()===String(title).trim()?
     heading[1]+body.slice(heading[0].length):body;
 }
+function researchTransition(sem={}){
+  const value=sem.research_transition;
+  return value?.schema==='theory-master/research-transition/v1'&&
+    ['prior_gap','current_change','why_now','goal_advance'].every(key=>typeof value[key]==='string')&&
+    Array.isArray(value.sources)?value:null;
+}
+function transitionStatus(value){
+  return ({supported:'支持',rejected:'反驳',open:'尚无法判定',none:'尚无整体裁决',
+    unadjudicated:'未裁决'})[value]||'未标记';
+}
+function transitionOutcomeStatus(outcome){
+  const originals=Array.isArray(outcome.original_verdicts)?outcome.original_verdicts.filter(Boolean):[];
+  return originals.length?'历史裁决：'+originals.join('/') : transitionStatus(outcome.verdict);
+}
+function transitionSourcesHtml(sources){
+  const ordered=[...sources].sort((a,b)=>(a.role==='main'?0:1)-(b.role==='main'?0:1));
+  return ordered.length?'<ul class="ex-transition-sources">'+ordered.map(source=>{
+    const id=String(source.hypothesis_id||''),linked=index.nodes.find(n=>n.id===id);
+    const role=source.role==='main'?'主要承接':source.role==='other'?'补充来源':'前序来源';
+    const title=source.title||linked?.semantic?.title||linked?.label||id;
+    const label=esc(title)+(title!==id?' <small>'+esc(id)+'</small>':'');
+    const target=linked?'<button type="button" class="ex-ref ex-transition-source-link" data-ref="'+
+      esc(uri('node',id))+'">'+label+'</button>':'<span>'+label+'</span>';
+    const records=(source.outcome_refs||[]).filter(outcome=>String(outcome.cycle_id||'').trim());
+    return '<li><span class="ex-transition-role">'+role+'</span>'+target+
+      (source.scientific_status?'<span class="ex-transition-status">整体猜想：'+
+        esc(transitionStatus(source.scientific_status))+'</span>':'')+
+      (records.length?'<details class="ex-transition-results"><summary>来源检验 · '+records.length+' 轮</summary>'+
+        records.map(outcome=>'<button type="button" class="ex-ref" data-ref="'+esc(uri('report',outcome.cycle_id))+'">'+
+          'Cycle '+esc(outcome.cycle_id)+' · '+esc(transitionOutcomeStatus(outcome))+'</button>').join('')+'</details>':'')+'</li>';
+  }).join('')+'</ul>':'';
+}
+function researchTransitionHtml(node){
+  const transition=researchTransition(node.semantic);
+  let content;
+  if(transition){
+    const fields=[['prior_gap',transition.sources.length?'前序留下的问题':'从什么问题出发'],
+      ['current_change','这一步改变什么'],['why_now','为什么现在研究']];
+    content=transitionSourcesHtml(transition.sources)+
+      '<dl class="ex-transition-facts">'+fields.map(([key,label])=>'<div><dt>'+label+
+        '</dt><dd class="ex-md">'+mdHtml(transition[key],null)+'</dd></div>').join('')+'</dl>'+
+      (transition.goal_advance?'<details class="ex-transition-goal"><summary>推进目标</summary><div class="ex-md">'+
+        mdHtml(transition.goal_advance,null)+'</div></details>':'');
+  }else{
+    const sources=index.edges.filter(edge=>edge.toNode===node.id&&isScientificEdge(edge))
+      .map(edge=>index.nodes.find(source=>source.id===edge.fromNode))
+      .filter(source=>source&&['Hypothesis','Decision'].includes(knownType(source)))
+      .filter((source,position,items)=>items.findIndex(item=>item.id===source.id)===position)
+      .map(source=>({hypothesis_id:source.id,title:source.semantic?.title||source.label}));
+    content='<p class="ex-reader-empty">承接理由未记录。</p>'+transitionSourcesHtml(sources);
+  }
+  return '<section class="ex-research-transition" aria-label="为什么研究到这里">'+
+    '<h4>为什么研究到这里</h4>'+content+'</section>';
+}
 function hypothesisReaderHtml(node,header,timeLine,key){
   const sem=node.semantic||{};
   const summary=sem.hypothesis_summary;
@@ -1572,7 +1694,7 @@ function hypothesisReaderHtml(node,header,timeLine,key){
   return '<section class="ex-reader-card ex-hypothesis-details" id="ex-hypothesis-details" aria-labelledby="ex-hypothesis-title">'+
     '<header class="ex-reader-section-head"><span class="ex-section-number" aria-hidden="true">01</span><div>'+
     '<h3 id="ex-hypothesis-title">猜想</h3><p>这项研究要检验什么</p></div></header>'+
-    '<h2 class="ex-hypothesis-title">'+esc(node.label)+'</h2>'+timeLine+body+
+    '<h2 class="ex-hypothesis-title">'+esc(node.label)+'</h2>'+timeLine+researchTransitionHtml(node)+body+
     '<div class="ex-reader-documents">'+dossier+'</div></section>'+
     outcomeDetailsHtml(outcomes)+
     '<details class="ex-reader-context"><summary>研究分支 · '+esc(branchLabels[frontier])+'</summary>'+
@@ -1583,6 +1705,23 @@ function hypothesisReaderHtml(node,header,timeLine,key){
     (sem.lineage_summary?'<div class="ex-md">'+mdHtml(sem.lineage_summary,null)+'</div>':'')+
     outbound(key)+refsBlock(key)+'</details>';
 }
+let readingSourceVersion='',discussionRequest='';
+function discussionTools(){
+  return '<div class="ex-reader-context" data-discussion-tools><button type="button" class="ex-ref" data-discuss-object>围绕此处讨论</button>'+
+    '<button type="button" class="ex-ref" data-discuss-selection>引用选中文字讨论</button>'+
+    '<p class="muted" data-discussion-status role="status">来源会加入聊天草稿，发送后开始讨论。</p></div>';
+}
+function discussReading(source){
+  discussionRequest=String(Date.now())+Math.random();
+  const status=reader.querySelector('[data-discussion-status]');
+  if(status)status.textContent='正在核验讨论来源…';
+  window.dispatchEvent(new CustomEvent('sciver-chat-reference',{detail:{task_id:taskId,request_id:discussionRequest,source}}));
+}
+window.addEventListener('sciver-chat-reference-result',event=>{
+  if(event.detail?.request_id!==discussionRequest)return;
+  const status=reader.querySelector('[data-discussion-status]');
+  if(status)status.textContent=event.detail.error||'来源已加入聊天草稿；可以继续输入问题。';
+});
 async function navigate(kind,id,anchor='',options={}){
   if(!index)return;
   if(kind==='node'&&!index.nodes.some(n=>n.id===id))return;
@@ -1591,6 +1730,7 @@ async function navigate(kind,id,anchor='',options={}){
   if(['doc','report'].includes(kind)&&!['doc','report'].includes(selected?.kind))docOriginView=captureView();
   if(options.record!==false)rememberBefore();
   selected={kind,id,anchor};
+  readingSourceVersion='';
   const key=uri(kind,id);
   if(kind==='node'){
     const node=index.nodes.find(n=>n.id===id);if(!node)return;
@@ -1646,8 +1786,9 @@ async function navigate(kind,id,anchor='',options={}){
       const doc=await api(base()+'/document?path='+encodeURIComponent(id));
       if(request!==navSerial||selected?.kind!==kind||selected.id!==id)return;
       if(doc.report_cycle)return navigate('report',doc.report_cycle,anchor,{...options,record:false});
+      readingSourceVersion=doc.source_sha256||'';
       reader.innerHTML='<button class="ex-ref" type="button" data-doc-back="1">← 返回图谱位置</button><h2 class="ex-document-title">'+esc(doc.title)+'</h2><div class="ex-meta">Markdown · '+
-        esc(doc.id)+'</div><div class="ex-md" data-doc-content="1">'+mdHtml(withoutRepeatedTitle(doc.content,doc.title),doc.id)+'</div>'+
+        esc(doc.id)+'</div>'+(vaultUi?.documentTools(doc.id)||'')+'<div class="ex-md" data-doc-content="1">'+mdHtml(withoutRepeatedTitle(doc.content,doc.title),doc.id)+'</div>'+
         (doc.next_offset!==null&&doc.next_offset!==undefined?
           '<button class="ex-ref" data-doc-more="'+doc.next_offset+'">加载后续 Markdown 内容 ↓</button>':'')+
         outbound(key)+refsBlock(key);
@@ -1657,9 +1798,11 @@ async function navigate(kind,id,anchor='',options={}){
     try{
       const doc=await api(base()+'/report?cycle='+encodeURIComponent(id)+'&section='+encodeURIComponent(anchor));
       if(request!==navSerial||selected?.kind!==kind||selected.id!==id)return;
+      readingSourceVersion=doc.source_sha256||'';
       reader.innerHTML='<button class="ex-ref" type="button" data-doc-back="1">← 返回图谱位置</button>'+
         '<p class="ex-report-kicker">Cycle '+esc(id)+' · '+(doc.adjudication_status==='unadjudicated'?'阶段性研究报告':'研究报告')+'</p>'+
         '<h2 class="ex-document-title">'+esc(doc.title)+'</h2>'+
+        (vaultUi?.documentTools(doc.id)||'')+
         (anchor?'<button class="ex-ref" data-ref="'+esc(uri('report',id))+'">查看完整报告</button>':'')+
         '<details class="ex-report-toc"><summary>报告目录 · 按章节阅读</summary><nav aria-label="报告章节">'+
         (doc.sections||[]).filter(s=>s.level===2).map(s=>'<button class="ex-ref" data-ref="'+
@@ -1670,6 +1813,20 @@ async function navigate(kind,id,anchor='',options={}){
     }catch(e){reader.textContent='无法加载研究报告：'+e.message}
   }
   if(request!==navSerial)return;
+  if(['node','doc','report'].includes(kind))reader.insertAdjacentHTML('afterbegin',discussionTools());
+  if(options.highlight){
+    const nodeId=linkedNodeId(kind,id);
+    if(nodeId){
+      if(kind!=='node'){
+        revealNode(nodeId);
+        await updateSelectionWithoutLayout();
+        if(request!==navSerial)return;
+        await graph.focusElement(nodeId,{duration:360,easing:'ease-in-out'});
+        if(request!==navSerial)return;
+      }
+      positionSourceRail();pulseNode(nodeId);
+    }
+  }
   reader.scrollTop=0;
   if(anchor){
     const outcomeTarget=anchor==='outcome'&&kind==='node'?
@@ -1685,7 +1842,28 @@ async function navigate(kind,id,anchor='',options={}){
   if(options.record!==false)rememberAfter(Boolean(options.recordCamera));
   else if(!restoring)syncBrowserLocation(false);
 }
+reader.addEventListener('pointerdown',e=>{
+  if(e.target.closest('[data-discuss-selection]'))e.preventDefault();
+});
 reader.addEventListener('click',async e=>{
+  const cycle=e.target.closest('[data-discuss-cycle]');
+  if(cycle){discussReading({kind:'report',id:cycle.dataset.discussCycle,section:'',quote:''});return;}
+  if(e.target.closest('[data-discuss-object],[data-discuss-selection]')){
+    if(!selected||!['node','doc','report'].includes(selected.kind))return;
+    const source={kind:selected.kind,id:selected.id,section:selected.kind==='node'?'':selected.anchor||'',quote:''};
+    if(readingSourceVersion)source.source_version=readingSourceVersion;
+    if(e.target.closest('[data-discuss-selection]')){
+      const selection=window.getSelection();
+      const quote=selection?.toString().trim()||'';
+      const status=reader.querySelector('[data-discussion-status]');
+      if(!quote||!reader.contains(selection.anchorNode)||!reader.contains(selection.focusNode)){
+        if(status)status.textContent='请先选中当前正文中的文字。';return;
+      }
+      if(quote.length>4000){if(status)status.textContent='每次最多引用 4000 字，请缩短选段。';return;}
+      source.quote=quote;
+    }
+    discussReading(source);return;
+  }
   if(e.target.closest('[data-doc-back]')){
     const origin=docOriginView;
     if(origin?.taskId===taskId&&origin.selected?.kind){
@@ -1739,18 +1917,29 @@ reader.addEventListener('click',async e=>{
   const v=el.dataset.ref,split=v.indexOf(':'),hash=v.indexOf('#');
   if(split>0)navigate(v.slice(0,split),v.slice(split+1,hash<0?undefined:hash),hash<0?'':v.slice(hash+1));
 });
-function decodeHash(){
-  let hash;try{hash=decodeURIComponent(location.hash.slice(1))}catch{return null}
+function decodeHash(value=location.hash){
+  let hash;try{hash=decodeURIComponent(value.slice(1))}catch{return null}
   const i=hash.indexOf(':');if(i<1)return null;
   const h=hash.indexOf('#');return {kind:hash.slice(0,i),id:hash.slice(i+1,h<0?undefined:h),
     anchor:h<0?'':hash.slice(h+1)};
 }
+let pendingChatTarget=null;
+window.addEventListener('sciver-explorer-navigate',event=>{
+  let url;try{url=new URL(event.detail.href)}catch{return}
+  const target=decodeHash(url.hash);
+  if(!target||!['node','edge','doc','report'].includes(target.kind))return;
+  event.preventDefault();
+  if(!index){pendingChatTarget=target;return}
+  navigate(target.kind,target.id,target.anchor,{focus:true,animateFocus:true,highlight:true})
+    .catch(error=>showError(error.message));
+});
 window.addEventListener('hashchange',()=>{
   const target=decodeHash();
   if(!index||!target||selected&&target.kind===selected.kind&&target.id===selected.id&&target.anchor===(selected.anchor||''))return;
   navigate(target.kind,target.id,target.anchor,{record:false,focus:false});
 });
 async function load({fresh=false}={}){
+  vaultUi?.warm();
   try{
     const newIndex=await api(base()+'/index'),previous=index;
     index=newIndex;
@@ -1759,7 +1948,7 @@ async function load({fresh=false}={}){
     $('ex-stats').textContent=index.stats.node_count+' 节点 · '+
       index.stats.edge_count+' 科研连线 · '+index.stats.doc_count+' 文档';
     $('ex-index-warning').hidden=!index.stats.partial;
-    const hash=decodeHash();
+    const hash=pendingChatTarget||decodeHash();pendingChatTarget=null;
     const hashValid=hash&&((hash.kind==='node'&&index.nodes.some(n=>n.id===hash.id))||
       (hash.kind==='edge'&&index.edges.some(e=>ID(e.id||e.fromNode+'->'+e.toNode)===hash.id))||
       ['doc','report'].includes(hash.kind));
@@ -1772,7 +1961,7 @@ async function load({fresh=false}={}){
       if(trailIndex<0)rememberAfter();
     }else if(fresh&&hashValid){
       selected=null;collapsed.clear();
-      await navigate(hash.kind,hash.id,hash.anchor,{record:false,focus:true});
+      await navigate(hash.kind,hash.id,hash.anchor,{record:false,focus:true,highlight:true});
     }else if(saved?.taskId===taskId&&(!saved.selected||
       (saved.selected.kind==='node'&&index.nodes.some(n=>n.id===saved.selected.id))||
       (saved.selected.kind==='edge'&&index.edges.some(e=>ID(e.id||e.fromNode+'->'+e.toNode)===saved.selected.id))||
@@ -1909,15 +2098,18 @@ $('ex-fullscreen').onclick=async()=>{
 };
 function syncFullscreen(){
   const isFull=document.fullscreenElement===workspace;
-  const button=$('ex-fullscreen');button.textContent=isFull?'⤢ 退出全屏':'⛶ 全屏';
+  const button=$('ex-fullscreen');button.textContent=isFull?'⤢':'⛶';
+  button.setAttribute('aria-label',isFull?'退出全屏':'全屏');
+  button.title=isFull?'退出全屏（Esc）':'全屏（Esc 退出）';
   button.setAttribute('aria-pressed',String(isFull));refreshRailAfterResize();
 }
 document.addEventListener?.('fullscreenchange',syncFullscreen);
 window.addEventListener('resize',()=>{syncPane();refreshRailAfterResize()});
 $('ex-task').addEventListener('change',()=>{
   taskId=$('ex-task').value;selected=null;collapsed.clear();
+  vaultUi?.reset();reader.innerHTML='<p class="muted">选择左侧科研节点以阅读完整内容。</p>';
   searchRequestSerial++;clearTimeout(searchTimer);$('ex-results').replaceChildren();$('ex-results').hidden=true;
-  $('ex-tip-panel').hidden=true;
+  $('ex-tip-panel').hidden=true;closeToolbarMenus();
   trail.length=0;trailIndex=-1;historySerial=-1;navSerial++;historyButtons();
   if(graph){graph.destroy();graph=null}
   const switched=location.pathname+'?observer_id='+encodeURIComponent(taskId);
@@ -1925,10 +2117,43 @@ $('ex-task').addEventListener('change',()=>{
   else history.replaceState(null,'',switched);
   load({fresh:true});
 });
+// Tool panels overlay the workspace without shrinking or moving the graph.
+const toolbarMenus=Array.from(document.querySelectorAll?.('.ex-toolbar-menu')||[]);
+function closeToolbarMenus(restoreFocus=false,except=null){
+  for(const menu of toolbarMenus){
+    if(menu===except||!menu.open)continue;
+    menu.open=false;
+    if(menu.id==='ex-branches'){++tipWorkerRequest;$('ex-tip-panel').hidden=true}
+    if(restoreFocus)menu.querySelector('summary')?.focus();
+  }
+}
+for(const menu of toolbarMenus){
+  menu.addEventListener('toggle',()=>{
+    if(!menu.open){
+      if(menu.id==='ex-branches'){++tipWorkerRequest;$('ex-tip-panel').hidden=true}
+      return;
+    }
+    closeToolbarMenus(false,menu);
+    if(menu.id==='ex-branches'){
+      $('ex-tip-panel').hidden=true;openTipPanel(null);
+    }
+  });
+}
+document.addEventListener?.('pointerdown',event=>{
+  if(!event.target.closest?.('.ex-toolbar-menu'))closeToolbarMenus();
+  if(!event.target.closest?.('.ex-search-field,#ex-results'))$('ex-results').hidden=true;
+});
 $('ex-back').onclick=()=>restoreView(-1);
 $('ex-forward').onclick=()=>restoreView(1);
 window.addEventListener('keydown',e=>{
   const tag=e.target?.tagName||'';
+  const editing=['INPUT','TEXTAREA','SELECT'].includes(tag)||e.target?.isContentEditable;
+  if(e.key==='/'&&!editing&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!document.querySelector?.('dialog[open]')){
+    e.preventDefault();closeToolbarMenus();$('ex-query').focus();return;
+  }
+  if(e.key==='Escape'){
+    closeToolbarMenus(true);$('ex-results').hidden=true;
+  }
   if(e.altKey&&!e.ctrlKey&&!e.metaKey&&!['INPUT','TEXTAREA','SELECT'].includes(tag)){
     if(e.key==='ArrowLeft'){e.preventDefault();restoreView(-1)}
     else if(e.key==='ArrowRight'){e.preventDefault();restoreView(1)}
@@ -1939,11 +2164,11 @@ $('ex-fit').onclick=fit;
 $('ex-plus').onclick=()=>zoom(1.25);
 $('ex-minus').onclick=()=>zoom(.8);
 $('ex-expand-all').onclick=async()=>{if(!collapsed.size)return;rememberBefore();collapsed.clear();await updateSelectionWithoutLayout({focus:false});rememberAfter()};
-$('ex-refresh').onclick=()=>{searchRequestSerial++;clearTimeout(searchTimer);$('ex-results').hidden=true;rememberBefore();load()};
 window.addEventListener('popstate',event=>{
   const fromUrl=new URLSearchParams(location.search).get('observer_id');
   if(fromUrl&&fromUrl!==taskId&&Array.from($('ex-task').options||[]).some(o=>o.value===fromUrl)){
     taskId=fromUrl;$('ex-task').value=taskId;
+    vaultUi?.reset();reader.innerHTML='<p class="muted">选择左侧科研节点以阅读完整内容。</p>';
     selected=null;collapsed.clear();
     trail.length=0;trailIndex=-1;historySerial=-1;navSerial++;historyButtons();
     if(graph){graph.destroy();graph=null}
@@ -2000,7 +2225,7 @@ $('ex-query').addEventListener('input',()=>{
         '没有找到其他匹配的科研节点或 Markdown 文档。');
       if(payload.partial){
         const notice=document.createElement('p');notice.className='ex-search-warning';
-        notice.textContent='搜索索引受总读取预算限制，结果可能不完整；可缩小文档范围或刷新文件后重试。';
+        notice.textContent='搜索索引受总读取预算限制，结果可能不完整；可缩小文档范围后重试。';
         box.append(notice);
       }
       box.hidden=false;

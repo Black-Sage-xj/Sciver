@@ -47,3 +47,19 @@ assert.ok(!unsafeHtml.includes('<img'), 'raw HTML must not introduce executable 
 assert.ok(unsafeHtml.includes('&lt;img'), 'raw HTML should remain escaped text without rehype-raw');
 
 console.log('PASS: inline/display math, alternate delimiters, GFM, code preservation, partial stream, and raw-HTML safety');
+
+const chineseStrong = render('**建议阅读顺序：**先读综述，再回答**你更想先看环链，还是交联？**我们继续检索。');
+assert.ok(chineseStrong.includes('<strong>建议阅读顺序</strong>：先读'), 'Chinese punctuation adjacent to prose should close bold');
+assert.ok(chineseStrong.includes('<strong>你更想先看环链，还是交联</strong>？我们'), 'Chinese question punctuation should close bold without spaces');
+assert.ok(render('比较**“环链与线性链”**之间的差异。').includes('“<strong>环链与线性链</strong>”'), 'Chinese quotation marks and visible text should be preserved');
+const protectedStrong = render(String.raw`代码 \`**建议：**后文\`；公式 $x ** y$；转义 \*\*问题？\*\*后文。`.replace(/\\`/g, '`'));
+assert.ok(protectedStrong.includes('<code>**建议：**后文</code>'), 'code containing CJK bold markers must remain literal');
+assert.ok(protectedStrong.includes('**问题？**后文'), 'escaped bold delimiters must remain literal');
+assert.doesNotMatch(protectedStrong, /<strong>/, 'math, code and escaped literal markers must not become bold');
+console.log('PASS: CJK punctuation emphasis with exact text, code/math/escape preservation');
+const literalCjkMath = String.raw`$\text{**建议：**后文}$`;
+assert.equal(normalizeMathDelimiters(literalCjkMath), literalCjkMath, 'CJK emphasis-like content inside math must remain unchanged');
+const indentedCjkCode = '    **建议：**后文';
+assert.equal(normalizeMathDelimiters(indentedCjkCode), indentedCjkCode, 'indented code must remain unchanged');
+const quotedCjkCode = '```md\n**建议：**后文\n```';
+assert.equal(normalizeMathDelimiters(quotedCjkCode), quotedCjkCode, 'fenced CJK code must remain unchanged');

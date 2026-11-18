@@ -280,7 +280,8 @@ def preserve_blocked_cycle(*, cycle_dir: Path, canvas_path: Path,
         raise PreservationGuard("projection path does not match the frozen Cycle checkpoint")
     if canvas_path.is_symlink():
         raise PreservationGuard("refusing to write a Canvas projection through a symlink")
-    graph_path = canvas_path.resolve().parent / "science_graph.sqlite3"
+    from .notebook import graph_database_path
+    graph_path = graph_database_path(canvas_path.resolve().parent)
     if not graph_path.is_file():
         raise PreservationGuard(f"canonical SQLite graph is required: {graph_path}")
     note_path = (canvas_path.resolve().parent / "notes" / "scientific_reports"
@@ -294,7 +295,7 @@ def preserve_blocked_cycle(*, cycle_dir: Path, canvas_path: Path,
     ).hexdigest()
     with _canvas_lock(canvas_path) if not dry_run else _no_lock():
         from .science_graph_store import ScienceGraphStore
-        from .science_canvas_export import canvas_projection, write_external_detail_documents
+        from .vault_canvas import refresh_registered_canvases
         with ScienceGraphStore(graph_path, readonly=True) as store:
             if store.db.execute("SELECT 1 FROM hypotheses WHERE id=?", (hid,)).fetchone() is None:
                 raise PreservationGuard(f"preserved H is missing from canonical SQLite: {hid}")
@@ -336,9 +337,7 @@ def preserve_blocked_cycle(*, cycle_dir: Path, canvas_path: Path,
                     branch_id="frontier:" + hid, hypothesis_id=hid,
                     status="parked", reason="unadjudicated preserved research",
                 )
-            projected = canvas_projection(store)
-            write_external_detail_documents(store, notes_root=canvas_path.resolve().parent / "notes")
-        write_json(canvas_path, projected)
+        refresh_registered_canvases(graph_path)
         record = cycle_dir / "preservation" / "status.json"
         record.parent.mkdir(parents=True, exist_ok=True)
         if record.exists():
@@ -545,7 +544,8 @@ def finalize_preserved_cycle(*, cycle_dir: Path, authorization: str,
             if (science.get("branch_canvas") and
                     Path(str(science["branch_canvas"])).resolve() != canvas_path.resolve()):
                 raise PreservationGuard("scientific and projected Canvas pointers differ")
-            graph_path = canvas_path.resolve().parent / "science_graph.sqlite3"
+            from .notebook import graph_database_path
+            graph_path = graph_database_path(canvas_path.resolve().parent)
             if not graph_path.is_file():
                 raise PreservationGuard(f"canonical SQLite graph is missing: {graph_path}")
             node_id = str(archive.get("node_id") or "")
@@ -698,7 +698,8 @@ def migrate_preserved_external_to_h_outcome(*, cycle_dir: Path,
                  / f"Cycle{cid}-preserve_research.md")
     if not note_path.is_file() or note_path.is_symlink() or hid not in note_path.read_text():
         raise PreservationGuard("original full research note is unavailable")
-    graph_path = canvas_path.with_name("science_graph.sqlite3")
+    from .notebook import graph_database_path
+    graph_path = graph_database_path(canvas_path.parent)
     if not graph_path.is_file() or graph_path.is_symlink():
         raise PreservationGuard("canonical graph unavailable")
     run = json.loads((cycle_dir / "run_state.json").read_text(encoding="utf-8"))

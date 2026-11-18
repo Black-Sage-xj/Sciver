@@ -2,7 +2,13 @@
 
 [Back to README](../README.md) · [简体中文](research-graph-guide.zh-CN.md)
 
-The graph records how research moves from hypotheses to evidence and conclusions, and how follow-up questions emerge. Open a task's graph link, or visit `/research-explorer/` and select a task. The **图谱使用说明 (Graph guide)** button beside the graph heading opens help. Close it with the Close button, Esc, or a click outside the dialog. Help is also available in graph fullscreen.
+The graph toolbar's **笔记库 (Notebook)** shows the Markdown folder and offers path copying, opening in Obsidian, a portable notebook download and output location selection. Each document also offers its path and Save a copy. A local desktop connection can reveal the folder; remote users open a downloaded or synchronized folder using their locally registered Obsidian vault name.
+
+`exploration.canvas` lives at the notebook root and refreshes automatically after graph changes. File cards reference the original Markdown with relative paths. A selected hypothesis can have an automatically maintained branch Canvas; full and branch snapshots can also be saved separately. Canvas refresh keeps published Markdown and user edits intact. Web reports and Obsidian read the same document, while SQLite supplies scientific status.
+
+To move the notebook, pause the Runner, Workers and scheduler, then choose an empty destination under Output location. Task identity and computation data stay in place. New tasks accept `sciver new research_plan.md --vault-root /absolute/empty/folder`.
+
+The graph records how research moves from hypotheses to evidence and conclusions, and how follow-up questions emerge. Open a task's graph link, or visit `/research-explorer/` and select a task. The **? (Graph guide)** button at the right of the toolbar opens help. Close it with the Close button, Esc, or a click outside the dialog. Help is also available in graph fullscreen.
 
 ## 1. Hypothesis, Cycle, and Outcome
 
@@ -76,3 +82,5 @@ For example, a Cycle tests a mechanism under specified conditions. Supported mea
 A Cycle Outcome answers what this investigation concluded. **Goal Completion** separately assesses the overall task goal. Read task progress alongside its goal, Scientific Model, and Cycle conclusions.
 
 Developer references: [ResearchGraph design](../design/ResearchGraph设计文档.md) and [Canvas design](../design/Canvas设计文档.md).
+
+The compact toolbar provides search, the complete graph, branches and the legend. Open **分支 (Branches)** to navigate by frontier status and click the node / research link / document statistics to see counts and color keys. Fit, expand all and overview colors stay visible in the toolbar. History sits at the bottom left of the canvas, zoom at the bottom right. `/` focuses search; Esc or an outside click dismisses menus. Menus overlay the workspace without resizing the graph.

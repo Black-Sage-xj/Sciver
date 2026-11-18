@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import pytest
 
+from theory_master.notebook import graph_database_path
 from theory_master.regression_cases import create_test_instance
 from theory_master.science_graph_store import ScienceGraphStore
 from theory_master.scientific_model import load_from_paths
@@ -25,8 +26,11 @@ def test_new_instances_preserve_history_and_have_empty_scientific_state(tmp_path
     with patch("theory_master.runtime_manager.launch_managed_runtime", side_effect=AssertionError("offline")):
         first, _ = create_test_instance(instances_root=instances, start=False)
         (first.research_root / "old-thread.json").write_text('{"thread":"old"}')
-        with ScienceGraphStore(first.branch_canvas.with_name("science_graph.sqlite3")) as graph:
+        first_database = graph_database_path(first.note_area)
+        assert first_database == Path(first.config["graph_database"])
+        with ScienceGraphStore(first_database) as graph:
             graph.add_hypothesis("H-0001", title="Previous work")
+        first_graph_before = first_database.read_bytes()
         second, outcome = create_test_instance(instances_root=instances, start=False)
     assert first.master_id != second.master_id
     assert first.task_home != second.task_home
@@ -38,8 +42,15 @@ def test_new_instances_preserve_history_and_have_empty_scientific_state(tmp_path
     assert make_run_id(research_root=second.research_root, task_mode=True) == "1"
     model = load_from_paths(second.research_root, second.task_home / "research_plan.md", goal_id=second.goal_id)
     assert (model["version"], model["summary"]) == (0, "")
-    with ScienceGraphStore(second.branch_canvas.with_name("science_graph.sqlite3"), readonly=True) as graph:
+    second_database = graph_database_path(second.note_area)
+    assert second_database == Path(second.config["graph_database"])
+    assert second_database != first_database
+    with ScienceGraphStore(second_database, readonly=True) as graph:
         assert graph.db.execute("SELECT COUNT(*) FROM hypotheses").fetchone()[0] == 0
+        assert graph.graph_view()["nodes"] == []
+    assert first_database.read_bytes() == first_graph_before
+    with ScienceGraphStore(first_database, readonly=True) as graph:
+        assert graph.graph_view()["nodes"][0]["title"] == "Previous work"
     for name in ("expected.json", "case.json", "evaluator"):
         assert not (second.task_home / name).exists()
     assert (second.benchmark_root / "datasets/brownian_2d/trajectories.csv").is_file()

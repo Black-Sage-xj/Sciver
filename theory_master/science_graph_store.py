@@ -135,18 +135,21 @@ class ScienceGraphStore:
     """Single-host SQLite canonical graph store; all writes use IMMEDIATE txn."""
 
     def _report_reference(self, record: dict[str, Any]) -> str:
+        # The stored vault-relative reference identifies the unique document.
+        # File existence must not redirect it to another Markdown on refresh.
+        explicit = str(record.get("report_ref") or record.get("document_ref") or "")
+        if explicit:
+            return explicit
         cycle = str(record.get("cycle_id") or "")
         if re.fullmatch(r"[A-Za-z0-9_-]{1,64}", cycle):
-            canonical = f"notes/outcomes/{cycle}.md"
-            candidate = self.path.parent / canonical
-            if candidate.is_file() and not candidate.is_symlink():
-                return canonical
-        return str(record.get("report_ref") or record.get("document_ref") or "")
+            return f"notes/outcomes/{cycle}.md"
+        return ""
 
     def __init__(self, database: str | Path, *, readonly: bool = False,
-                 allow_after_goal_seal: bool = False):
+                 allow_after_goal_seal: bool = False, auto_refresh_canvas: bool = True):
         self.path = Path(database)
         self.readonly = readonly
+        self.auto_refresh_canvas = auto_refresh_canvas
         # Only the seal transaction and non-scientific derived indexes
         # (e.g. cycle_memory_index) may write after the Goal is sealed.
         self.allow_after_goal_seal = allow_after_goal_seal
@@ -209,6 +212,10 @@ class ScienceGraphStore:
                 id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '',
                 summary TEXT NOT NULL DEFAULT '', scientific_status TEXT NOT NULL DEFAULT 'none',
                 dossier_ref TEXT, created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS hypothesis_reading_context(
+                hypothesis_id TEXT PRIMARY KEY REFERENCES hypotheses(id),
+                source_json TEXT NOT NULL, recorded_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS outcomes(
                 id TEXT PRIMARY KEY,
@@ -367,6 +374,7 @@ class ScienceGraphStore:
                 self.db.execute(f"RELEASE SAVEPOINT {name}")
             return
         self.db.execute("BEGIN IMMEDIATE")
+        changes_before = self.db.total_changes
         if not (self.allow_after_goal_seal or self._sealing):
             try:
                 terminal = self._goal_terminal_row()
@@ -385,7 +393,22 @@ class ScienceGraphStore:
             self.db.execute("ROLLBACK")
             raise
         else:
+            changed = self.db.total_changes != changes_before
+            if changed:
+                self.db.execute(
+                    "INSERT INTO graph_meta(key,value) VALUES ('graph_revision','1') "
+                    "ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1"
+                )
             self.db.execute("COMMIT")
+            if changed and self.auto_refresh_canvas:
+                # Canvas is a derived, one-way view. Its publication failure
+                # cannot undo or obscure a committed scientific transaction.
+                try:
+                    from .vault_canvas import refresh_registered_canvases
+                    refresh_registered_canvases(self.path)
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception("Canvas refresh deferred for %s", self.path)
 
     def _goal_terminal_row(self) -> sqlite3.Row | None:
         # Read-only connections to older V2 databases may lack the table.
@@ -538,6 +561,76 @@ class ScienceGraphStore:
                 status="active", reason="new Hypothesis created",
             )
             self._event("hypothesis.created", h_id, {"scientific_status": scientific_status})
+
+    def research_transition(self, hypothesis_id: str) -> dict[str, Any] | None:
+        """Older V2 graphs can be read without adding tables or inventing motives."""
+        if not self.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hypothesis_reading_context'"
+        ).fetchone():
+            return None
+        row = self.db.execute(
+            "SELECT source_json FROM hypothesis_reading_context WHERE hypothesis_id=?", (hypothesis_id,)
+        ).fetchone()
+        return json.loads(row["source_json"]) if row else None
+
+    def record_research_transition(
+        self, hypothesis_id: str, candidate: dict[str, Any], *, frozen: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Freeze original Lead reasoning and actual lineage references at H registration."""
+        from .research_transition import transition_record
+
+        with self.transaction():
+            existing = self.research_transition(hypothesis_id)
+            if "transition" not in candidate:
+                return existing
+            incoming = list(self.db.execute(
+                "SELECT source_hypothesis,provenance_json FROM scientific_edges "
+                "WHERE target_hypothesis=? ORDER BY id", (hypothesis_id,)
+            ))
+            lineage = [(row["source_hypothesis"], json.loads(row["provenance_json"]).get("lineage_role", "other"))
+                       for row in incoming]
+            lineage.sort(key=lambda item: (item[1] != "main", item[0]))
+            if existing is not None:
+                proposed = transition_record(candidate, existing["sources"])
+                frozen_lineage = [(s["hypothesis_id"], s["role"]) for s in existing["sources"]]
+                if (proposed != existing or sorted(lineage) != sorted(frozen_lineage)
+                        or (frozen is not None and frozen != existing)):
+                    raise ValueError("Frozen research transition cannot change on replay")
+                return existing
+            if frozen is not None:
+                if (not isinstance(frozen, dict) or not isinstance(frozen.get("sources"), list)
+                        or transition_record(candidate, frozen["sources"]) != frozen
+                        or sorted((s["hypothesis_id"], s["role"]) for s in frozen["sources"]) != sorted(lineage)):
+                    raise ValueError("Frozen research transition checkpoint conflicts with registered lineage or proposal")
+                self.db.execute(
+                    "INSERT INTO hypothesis_reading_context(hypothesis_id,source_json,recorded_at) VALUES (?,?,?)",
+                    (hypothesis_id, _json(frozen), _timestamp()),
+                )
+                self._event("hypothesis.reasoning_frozen", hypothesis_id, {"sources": [s["hypothesis_id"] for s in frozen["sources"]]})
+                return frozen
+            sources = []
+            for source_id, role in lineage:
+                source = self.db.execute(
+                    "SELECT h.title,o.verdict AS scientific_status,o.cycle_id,o.summary,o.decisive_test,o.judge_rationale "
+                    "FROM hypotheses h JOIN outcomes o ON o.hypothesis_id=h.id WHERE h.id=?", (source_id,)
+                ).fetchone()
+                assessed = any(source[key] for key in ("cycle_id", "summary", "decisive_test", "judge_rationale"))
+                sources.append({
+                    "hypothesis_id": source_id, "role": role, "title": source["title"],
+                    "scientific_status": source["scientific_status"] if assessed or source["scientific_status"] in {"supported", "rejected"} else "none",
+                    "outcome_refs": [{
+                        "id": row["id"], "cycle_id": row["cycle_id"], "verdict": row["verdict"],
+                        "report_ref": self._report_reference(row),
+                        **({"original_verdicts": list(row["original_verdicts"])} if row.get("original_verdicts") else {}),
+                    } for row in self.cycle_outcomes(source_id)],
+                })
+            record = transition_record(candidate, sources)
+            self.db.execute(
+                "INSERT INTO hypothesis_reading_context(hypothesis_id,source_json,recorded_at) VALUES (?,?,?)",
+                (hypothesis_id, _json(record), _timestamp()),
+            )
+            self._event("hypothesis.reasoning_frozen", hypothesis_id, {"sources": [s["hypothesis_id"] for s in sources]})
+            return record
 
     def register_cycle_hypothesis(self, *, cycle_id: str, hypothesis_id: str) -> None:
         """Bind a newly locked scientific Cycle to its own H, including retries."""
@@ -1026,6 +1119,12 @@ class ScienceGraphStore:
 
     def graph_view(self) -> dict[str, Any]:
         """Only Hypothesis/External appear as GRAPH nodes; Outcomes stay embedded."""
+        reading_contexts = {}
+        if self.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hypothesis_reading_context'"
+        ).fetchone():
+            reading_contexts = {row["hypothesis_id"]: json.loads(row["source_json"])
+                                for row in self.db.execute("SELECT hypothesis_id,source_json FROM hypothesis_reading_context")}
         goal_gate_by_outcome = {}
         if self.db.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_gate_assessments'"
@@ -1039,6 +1138,8 @@ class ScienceGraphStore:
         hypotheses = []
         for h in self.db.execute("SELECT * FROM hypotheses ORDER BY id"):
             item = dict(h)
+            if h["id"] in reading_contexts:
+                item["research_transition"] = reading_contexts[h["id"]]
             row = self.db.execute(
                 "SELECT * FROM outcomes WHERE hypothesis_id=?",(h["id"],)
             ).fetchone()
@@ -1632,6 +1733,7 @@ class ScienceGraphStore:
             "id": node_id,
             "title": str(node.get("title") or node_id),
             "claim": str(node.get("summary") or ""),
+            **({"research_transition": node["research_transition"]} if node.get("research_transition") else {}),
             "whole_h_assessment": {key: whole.get(key) for key in whole_fields if key in whole},
             "cycle_outcomes": [
                 {**{key: row.get(key) for key in outcome_fields if key in row},
@@ -1993,7 +2095,9 @@ def import_legacy_canvas(canvas_file: str | Path, database: str | Path, *,
         if not backup.exists():
             shutil.copy2(src, backup)
     diagnostics: list[str] = []
-    with ScienceGraphStore(database) as store:
+    # Import must not replace the source Canvas before the explicit migration
+    # has archived and verified its bytes.
+    with ScienceGraphStore(database, auto_refresh_canvas=False) as store:
         import_key = "canvas_import:" + digest
         if store.db.execute("SELECT 1 FROM graph_meta WHERE key=?", (import_key,)).fetchone():
             return {"status": "already_imported", "backup": str(backup) if backup else None,

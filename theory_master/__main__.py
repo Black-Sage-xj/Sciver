@@ -282,6 +282,8 @@ def main() -> int:
             command.add_argument("--reset-login", action="store_true", help="disable the locally configured Web login if you forgot its password")
         if name == "quickstart":
             command.add_argument("--no-web", action="store_true", help="only initialize and verify Test0, then exit")
+    from .skill_evolution.cli import add_parser as add_skills_parser
+    add_skills_parser(sub)
     for name in ("validate", "initialize", "cancel", "project"):
         item = sub.add_parser(name); item.add_argument("master_id", nargs="?", default=None)
         if name == "cancel": item.add_argument("--reason", required=True)
@@ -371,6 +373,7 @@ def main() -> int:
     item = sub.add_parser("smoke"); item.add_argument("--live", action="store_true")
     item = sub.add_parser("new", help="initialize a task from one research_plan.md path")
     item.add_argument("research_plan", type=Path)
+    item.add_argument("--vault-root", type=Path, help="choose an empty notebook folder for the new task")
     test_p = sub.add_parser("test", aliases=["test0", "task0"], help="create and run a fresh canonical regression task")
     test_p.add_argument("case", nargs="?", help="fixture selector such as Test0")
     test_p.add_argument("destination", type=Path, nargs="?", help="empty/new directory for the runnable TM task")
@@ -404,6 +407,9 @@ def main() -> int:
     account_p = sub.add_parser("codex-account", help="switch Sciver ChatGPT/Codex login identity only")
     account_p.add_argument("action", nargs="?", default="status", choices=["status", "init", "1", "2", "login-1", "login-2"])
     args = parser.parse_args()
+    if args.command == "skills":
+        from .skill_evolution.cli import run as skills_command
+        return skills_command(args)
     if args.command == "cycle": return cycle_command(args)
     if args.command == "pricing": return pricing_command(args.action, args.research_root)
     if args.command == "model-profile": return model_profile_command(args.action)
@@ -416,7 +422,8 @@ def main() -> int:
             spec = spec_from_task(master_id=args.master_id)
             if spec.branch_canvas is None:
                 parser.error("task has no shared Canvas; cannot discover branch claims")
-            coordinator = BranchClaims(spec.research_root, spec.branch_canvas.with_name("science_graph.sqlite3"))
+            from .notebook import graph_database_path
+            coordinator = BranchClaims(spec.research_root, spec.graph_database or graph_database_path(spec.branch_canvas.parent))
             if args.share_accounts is not None:
                 from .worker_mode import configure_mode, read_mode
                 mode = read_mode(spec.research_root)
@@ -464,7 +471,7 @@ def main() -> int:
         return 0
     if args.command == "ls": return print_runs(args.root)
     if args.command == "smoke": return smoke(args.live)
-    if args.command == "new": print(task_summary(bootstrap(args.research_plan))); return 0
+    if args.command == "new": print(task_summary(bootstrap(args.research_plan, vault_root=args.vault_root))); return 0
     if args.command in {"test", "test0", "task0"}:
         if args.list:
             for case in list_cases():

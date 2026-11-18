@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import csv
 from datetime import datetime, timezone
 import json
@@ -11,11 +12,12 @@ import re
 import sys
 import time
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
 
-from scholar_identity import arxiv_key, consolidate, doi_key
+from scholar_identity import arxiv_key, consolidate, doi_key, source_abstract_variants
+from scholar_fulltext import arxiv_from_locations, oa_locations
 
 SOURCES = ("openalex", "crossref", "semanticscholar", "pubmed", "arxiv")
 USER_AGENT = "TheoryMaster-tm-scholar/1.0 (academic metadata research)"
@@ -71,7 +73,11 @@ def normalize(raw: dict, source: str) -> dict:
         paper = make(title, authors, raw.get("publication_year"), raw.get("doi"), url, abstract,
                      raw.get("cited_by_count"), pdf_urls[0] if pdf_urls else "", source,
                      arxiv_id=(raw.get("ids") or {}).get("arxiv") or "", author_ids=ids)
-        paper["open_access_urls"] = list(dict.fromkeys(pdf_urls))
+        paper["oa_locations"] = oa_locations(raw, source)
+        paper["open_access_urls"] = [item["url"] for item in paper["oa_locations"]]
+        paper["open_access_url"] = next(iter(paper["open_access_urls"]), "")
+        paper["is_open_access"] = bool(paper["open_access_urls"])
+        paper["arxiv_id"] = paper["arxiv_id"] or arxiv_from_locations(paper["oa_locations"])
         return paper
     if source == "crossref":
         title = (raw.get("title") or [""])[0]
@@ -79,18 +85,26 @@ def normalize(raw: dict, source: str) -> dict:
         parts = (raw.get("published") or raw.get("created") or {}).get("date-parts") or [[]]
         year = parts[0][0] if parts and parts[0] else None
         ids = [str(a.get("ORCID") or "") for a in raw.get("author") or []]
-        return make(title, authors, year, raw.get("DOI"), raw.get("URL"), raw.get("abstract"), raw.get("is-referenced-by-count"), "", source, author_ids=ids)
+        paper = make(title, authors, year, raw.get("DOI"), raw.get("URL"), raw.get("abstract"), raw.get("is-referenced-by-count"), "", source, author_ids=ids)
+        paper["oa_locations"] = oa_locations(raw, source)
+        paper["open_access_urls"] = [item["url"] for item in paper["oa_locations"]]
+        paper["open_access_url"] = next(iter(paper["open_access_urls"]), "")
+        paper["is_open_access"] = bool(paper["open_access_urls"])
+        paper["arxiv_id"] = arxiv_from_locations(paper["oa_locations"])
+        return paper
     if source == "semanticscholar":
         authors = [a.get("name", "") for a in raw.get("authors") or []]
         ids = raw.get("externalIds") or {}
         pdf = raw.get("openAccessPdf") or {}
-        return make(raw.get("title"), authors, raw.get("year"), ids.get("DOI"), raw.get("url"), raw.get("abstract"), raw.get("citationCount"), pdf.get("url"), source, arxiv_id=ids.get("ArXiv") or "")
+        paper = make(raw.get("title"), authors, raw.get("year"), ids.get("DOI"), raw.get("url"), raw.get("abstract"), raw.get("citationCount"), pdf.get("url"), source, arxiv_id=ids.get("ArXiv") or "")
+        paper["oa_locations"] = oa_locations(raw, source)
+        return paper
     raise ValueError(f"invalid provider: {source}")
 
 
 def make(title, authors, year, doi, url, abstract, citations, open_url, source, *, arxiv_id="", author_ids=()) -> dict:
     clean_doi = doi_key(doi)
-    return {
+    paper = {
         "title": str(title or "").strip(), "authors": [str(a).strip() for a in authors if a],
         "year": int(year) if year else None, "doi": clean_doi,
         "url": str(url or "").strip(), "abstract": str(abstract or "").strip(),
@@ -100,9 +114,28 @@ def make(title, authors, year, doi, url, abstract, citations, open_url, source, 
         "open_access_urls": [str(open_url)] if open_url else [],
         "author_ids": sorted({str(a).strip() for a in author_ids if a}),
     }
+    if paper["abstract"]:
+        paper["abstract_variants"] = source_abstract_variants(paper)
+    return paper
+
+
+def _exact_paper(raw: dict, source: str, doi: str) -> dict:
+    paper = normalize(raw, source)
+    if doi_key(paper.get("doi")) != doi:
+        raise ValueError("provider result did not match the requested DOI")
+    return paper
 
 
 def search(source: str, query: str, limit: int) -> list[dict]:
+    exact_doi = doi_key(query)
+    if exact_doi and source == "openalex":
+        return [_exact_paper(get_json("https://api.openalex.org/works/https://doi.org/" + quote(exact_doi, safe="/")), source, exact_doi)]
+    if exact_doi and source == "crossref":
+        return [_exact_paper(get_json("https://api.crossref.org/works/" + quote(exact_doi, safe="")).get("message") or {}, source, exact_doi)]
+    if exact_doi and source == "semanticscholar":
+        endpoint = "https://api.semanticscholar.org/graph/v1/paper/DOI:" + quote(exact_doi, safe="/") + "?" + urlencode({
+            "fields": "title,year,authors,abstract,citationCount,externalIds,url,openAccessPdf"})
+        return [_exact_paper(get_json(endpoint), source, exact_doi)]
     if source == "openalex":
         endpoint = "https://api.openalex.org/works?" + urlencode({"search": query, "per-page": limit})
         return [normalize(row, source) for row in get_json(endpoint).get("results", [])
@@ -190,11 +223,22 @@ def main() -> int:
     if not selected:
         parser.error("--sources must contain at least one scholarly provider")
     errors, fetched = [], []
-    for source in selected:
+    def run_provider(source):
         try:
-            fetched.extend(search(source, args.query, max(1, min(args.limit, 100))))
+            return source, search(source, args.query, max(1, min(args.limit, 100))), ""
         except Exception as exc:
-            errors.append(f"{source}: {type(exc).__name__}: {exc}")
+            return source, [], f"{source}: {type(exc).__name__}: {exc}"
+    # Providers are independent services. One slow connector must not delay
+    # starting every other service; each service keeps its own bounded retries.
+    with ThreadPoolExecutor(max_workers=min(5, len(selected))) as executor:
+        for source, rows, error in executor.map(run_provider, selected):
+            fetched.extend(rows)
+            if error:
+                errors.append(error)
+    # Keep pre-consolidation records for metadata-quality diagnostics and host
+    # reconciliation. Provider title pollution must not erase a clean same-DOI
+    # record simply because the polluted title is longer.
+    (out / "fetched.json").write_text(json.dumps(fetched, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     papers = rank_and_dedupe(fetched, args.query, args.from_year, args.to_year)
     (out / "papers.json").write_text(json.dumps(papers, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     with (out / "papers.csv").open("w", newline="", encoding="utf-8") as handle:

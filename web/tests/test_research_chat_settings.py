@@ -4,6 +4,7 @@ import json
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -32,8 +33,9 @@ class ResearchChatSettingsTests(unittest.TestCase):
         updated = snapshot(self.state_dir, self.state, ident)["session"]
         self.assertEqual(updated["model"], "gpt-6-sol")
         self.assertEqual(updated["reasoning_effort"], "high")
-        with self.assertRaises(ResearchChatError):
-            set_model(self.state_dir, ident, "not-a-model")
+        with patch("theory_master.codex_model_catalog.model_catalog", return_value={"status": "unknown"}):
+            with self.assertRaises(ResearchChatError):
+                set_model(self.state_dir, ident, "not-a-model")
         with self.assertRaises(ResearchChatError):
             set_reasoning_effort(self.state_dir, ident, "extreme")
 

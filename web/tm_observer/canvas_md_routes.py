@@ -64,11 +64,12 @@ def running_worker_markers(root: Path, observer_id: str, state: dict[str, Any]) 
     Never equate a persisted RUNNING string with process liveness.
     """
     from .worker_console import registered_workers
+    from theory_master.notebook import graph_database_path
     from theory_master.science_graph_store import ScienceGraphStore
 
     run = next((run for run in state.get("runs", [])
                 if isinstance(run, dict) and run.get("observer_id") == observer_id
-                and Path(str(run.get("task_root") or "")).resolve() == root), None)
+                ), None)
     if run is None:
         return []
     workers = [worker for worker in registered_workers(run)
@@ -76,7 +77,7 @@ def running_worker_markers(root: Path, observer_id: str, state: dict[str, Any]) 
     if not workers:
         return []
     owned: dict[str, str] = {}
-    graph = root / "science_graph.sqlite3"
+    graph = graph_database_path(root)
     if graph.is_file() and not graph.is_symlink():
         try:
             with ScienceGraphStore(graph, readonly=True) as store:
@@ -127,12 +128,16 @@ def canvas_md_get(
         if action == "document":
             result = read_document(root, (query.get("path") or [""])[0], offset=offset)
         else:
+            from theory_master.notebook import graph_database_path
             from theory_master.research_report import read_report
             try:
-                result = read_report(root / "science_graph.sqlite3", (query.get("cycle") or [""])[0],
-                    section=(query.get("section") or [""])[0], offset=offset, max_chars=1024 * 1024)
+                result = read_report(graph_database_path(root), (query.get("cycle") or [""])[0],
+                    section=(query.get("section") or [""])[0], offset=offset, max_chars=1024 * 1024,
+                    vault_root=root)
             except KeyError as exc:
                 raise ExplorerError("本轮研究报告不存在", 404) from exc
+            except FileNotFoundError as exc:
+                raise ExplorerError("本轮研究报告 Markdown 文件不存在", 404) from exc
             except ValueError as exc:
                 raise ExplorerError(str(exc), 400) from exc
     else:

@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 
 
-def setup_panel(workspace: str) -> str:
+def setup_panel(workspace: str, *, auto_welcome: bool = True) -> str:
     key = hashlib.sha256(workspace.encode()).hexdigest()[:16]
     return '''
 <style>
@@ -41,11 +41,12 @@ def setup_panel(workspace: str) -> str:
 const form=document.querySelector('[data-project-setup]');if(!form)return;
 const modal=document.querySelector('[data-setup-welcome]');
 const key='sciver-project-welcome-''' + key + '''';
+const autoWelcome=''' + ('true' if auto_welcome else 'false') + ''';
 function closeWelcome(){modal?.close();try{localStorage.setItem(key,'seen');}catch(_){} }
 modal?.querySelector('[data-setup-welcome-close]')?.addEventListener('click',()=>{closeWelcome();form.elements.name.focus();});
 modal?.querySelector('[data-setup-welcome-skip]')?.addEventListener('click',closeWelcome);
 modal?.addEventListener('cancel',()=>{try{localStorage.setItem(key,'seen');}catch(_){}});
-try{if(!localStorage.getItem(key))modal?.showModal();}catch(_){}
+try{if(autoWelcome&&!localStorage.getItem(key)&&form.getClientRects().length)modal?.showModal();}catch(_){}
 const feedback=form.querySelector('[data-setup-error]');const files=form.querySelector('[data-setup-files]');
 let checkedDirectory='';
 async function post(path,data){const r=await fetch(path,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-TM-Operator-Intent':'1'},body:JSON.stringify(data)});const body=await r.json();if(!r.ok)throw new Error(body.error||'请求失败');return body;}

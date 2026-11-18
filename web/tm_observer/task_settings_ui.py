@@ -5,6 +5,7 @@ import html
 from typing import Any, Sequence
 
 from . import run_monitor
+from .document_conversion_ui import document_conversion_panel
 from .run_controls_ui import _launch_id, settings_panel
 
 
@@ -90,7 +91,7 @@ def workspace_settings_body(runs: Sequence[dict[str, Any]], selected: dict[str, 
         '<h1>Settings</h1>'
         '<p>在 Workspace 中管理设置。自动审计是任务级配置，请先选择任务。</p>'
         '</div></header>'
-        + _appearance_settings_panel() + access_settings_panel(access) +
+        + _appearance_settings_panel() + access_settings_panel(access) + document_conversion_panel() +
         '<section class="tm-task-settings-panel">'
         + _task_selector(runs) +
         '</section></main>'
@@ -113,12 +114,13 @@ def task_settings_body(run: dict[str, Any], *, task_selector: str = "", access: 
       </header>
       {_appearance_settings_panel()}
       {access_settings_panel(access)}
+      {document_conversion_panel()}
       {task_selector}
       <section class="tm-task-settings-panel" data-settings-task="{ident}"
         data-cycle="{cycle}" data-status="{status}" data-launch="{launch}">
-        <h2>自动审计</h2>
-        <p class="tm-task-settings-hint">这项功能不常用，仅在此处配置。设置会保存到当前任务，
-          开关在下一次 Run/Resume 后由新 Runner 采用；不会打断正在执行的 Cycle。
+        <h2>科研后台设置</h2>
+        <p class="tm-task-settings-hint">自动审计设置保存到当前任务，
+          其开关在下一次 Run/Resume 后由新 Runner 采用；不会打断正在执行的 Cycle。
           自动审计默认关闭，需要另行配置外部审计适配器，启用后会额外消耗模型额度。</p>
         <details><summary>自动审计的环境准备</summary><p>在启动 Runner 的环境中配置
           <code>THEORY_MASTER_AUDIT_SKILL</code>（审计 Skill 文件）、
@@ -150,11 +152,13 @@ def task_settings_body(run: dict[str, Any], *, task_selector: str = "", access: 
           }});
           const data=await response.json();
           if(!response.ok||!data.ok)throw new Error(data.error||'保存失败');
-          if(action==='set_operator_preference' && value.kind==='flag'){{
+          if(action==='set_operator_preference' && value.kind==='flag' && value.key==='cycle_audit'){{
             const caption=settings.querySelector('.tm-setting-gear-status');
             if(caption)caption.textContent='已配置'+(value.value?'开启':'关闭')+' · 下次 Run/Resume';
           }}
-          show('已保存。自动审计开关在下一次 Run/Resume 生效。');
+          show(value.key==='skill_learning'
+            ? '已保存。Skill 自提升优化在后续安全科研调用生效；不启动额外模型或科研 Cycle。'
+            : '已保存。自动审计开关在下一次 Run/Resume 生效。');
           return true;
         }}catch(error){{
           if(control&&rollback!==undefined)control.checked=rollback;
@@ -165,9 +169,9 @@ def task_settings_body(run: dict[str, Any], *, task_selector: str = "", access: 
         }}
       }}
       settings.addEventListener('change',event=>{{
-        const input=event.target.closest('[data-setting-key="cycle_audit"]');
-        if(!input)return;
-        save('set_operator_preference',{{kind:'flag',key:'cycle_audit',value:input.checked}},
+        const input=event.target.closest('[data-setting-key]');
+        if(!input||!['cycle_audit','skill_learning'].includes(input.dataset.settingKey))return;
+        save('set_operator_preference',{{kind:'flag',key:input.dataset.settingKey,value:input.checked}},
              input,!input.checked);
       }});
       const model=settings.querySelector('[data-setting-model="cycle_audit"]');

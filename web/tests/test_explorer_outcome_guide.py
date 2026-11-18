@@ -20,7 +20,9 @@ GUIDE = {"conclusion": "The local mean bound remains unresolved.",
 
 
 @pytest.mark.parametrize("status", ["active", "parked", "closed"])
-def test_web_projects_guide_and_branch_reason_without_touching_scientific_records(tmp_path: Path, status: str):
+@pytest.mark.parametrize("canvas_present", [True, False])
+def test_web_projects_guide_and_branch_reason_without_touching_scientific_records(
+        tmp_path: Path, status: str, canvas_present: bool):
     database = tmp_path / "science_graph.sqlite3"
     with ScienceGraphStore(database) as store:
         store.add_hypothesis("H-0001", title="A local bound", summary=compose_hypothesis_summary(
@@ -31,6 +33,25 @@ def test_web_projects_guide_and_branch_reason_without_touching_scientific_record
                              record_only=True)
         reason = "The local test is complete; the mean bound is unresolved."
         store.set_frontier(branch_id="f", hypothesis_id="H-0001", status=status, reason=reason)
+    # SDK writes publish the derived Canvas. Web reads must neither update an
+    # existing view nor recreate a missing view, for any scientific branch state.
+    canvas = tmp_path / "exploration.canvas"
+    assert canvas.is_file()
+    if not canvas_present:
+        canvas.unlink()
+
+    def files():
+        # Read-only SQLite connections may create coordination files in WAL
+        # mode. An empty WAL carries no scientific write; all other files and
+        # their modification times, including the canonical DB, stay frozen.
+        wal = database.with_name(database.name + "-wal")
+        if wal.exists():
+            assert wal.read_bytes() == b""
+        coordination = {wal, database.with_name(database.name + "-shm")}
+        return {p.relative_to(tmp_path): (p.read_bytes(), p.stat().st_mtime_ns)
+                for p in tmp_path.rglob("*") if p.is_file() and p not in coordination}
+
+    files_before = files()
     before = database.read_bytes()
     node = build_index(tmp_path)["nodes"][0]
     assert node["semantic"]["cycle_outcomes"][0]["graph_summary"] == GUIDE
@@ -42,7 +63,8 @@ def test_web_projects_guide_and_branch_reason_without_touching_scientific_record
     assert reason in node["text"]
     assert search(tmp_path, "Twelve historically exposed")[0]["id"] == "H-0001"
     assert database.read_bytes() == before
-    assert not (tmp_path / "exploration.canvas").exists()
+    assert canvas.exists() == canvas_present
+    assert files() == files_before
 
 
 @pytest.mark.skipif(not shutil.which("node"), reason="requires Node.js")

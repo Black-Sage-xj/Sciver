@@ -48,10 +48,19 @@ class ResearchPlanEditorTests(unittest.TestCase):
         config.write_text(json.dumps({
             "schema": "theory-master/system/v1", "path_model": "theory-master/task-path/v2",
             "task_home": str(self.task), "plan_path": str(self.path), "research_root": str(research),
+            "embedded_state_format": 4, "goal_id": "synthetic-editor-goal",
+            "graph_database": str(research / "science_graph.sqlite3"),
         }), encoding="utf-8")
         (self.task / ".theory-master" / "task.json").write_text(json.dumps({
             "schema": "theory-master/task/v2", "config_path": str(config),
         }), encoding="utf-8")
+        from theory_master.scientific_model import initialize_state
+        from theory_master.science_graph_store import ScienceGraphStore
+        initialize_state(research, goal_id="synthetic-editor-goal")
+        (research / ".theory-master").mkdir(exist_ok=True)
+        (research / ".theory-master" / "task.json").write_text(json.dumps({"config_path": str(config)}))
+        with ScienceGraphStore(research / "science_graph.sqlite3"):
+            pass
         self.ident = hashlib.sha256(str(research.resolve()).encode()).hexdigest()[:16]
         self.run.update(observer_id=self.ident, research_root=str(research))
         return research, config
@@ -73,7 +82,8 @@ class ResearchPlanEditorTests(unittest.TestCase):
                 self.path.write_text(PLAN)
         self.assertEqual(config.read_bytes(), config_before)
         self.assertEqual((self.task / ".theory-master" / "task.json").read_bytes(), binding_before)
-        self.assertEqual([p.name for p in research.iterdir()], ["untouched.txt"])
+        self.assertEqual((research / "untouched.txt").read_text(), "runtime is not a plan access root")
+        self.assertEqual(json.loads((research / "scientific_model_state.json").read_text())["version"], 0)
 
     def test_external_runtime_requires_exact_canonical_binding_and_config(self):
         research, config = self.bind_external_runtime()

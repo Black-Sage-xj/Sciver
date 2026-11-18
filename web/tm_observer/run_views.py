@@ -1081,6 +1081,8 @@ def _important_timeline(events: Any, *, run: dict[str, Any] | None = None,
         code = str(row.get("code") or "")
         note = str(row.get("summary") or "").strip()
         title = _KIND_LABELS.get(kind, kind.replace("_", " "))
+        if kind == "skill_change":
+            title = "技能变更"
         label = _LIFECYCLE_LABELS.get(lifecycle, lifecycle)
 
         # Cycle and time are the first visible fields. The generic
@@ -1134,6 +1136,9 @@ def _important_timeline(events: Any, *, run: dict[str, Any] | None = None,
             if review_button:
                 rows.append(review_button)
             continue
+        if kind == "skill_change" and run:
+            from .skill_evolution_ui import proposal_details
+            review_button += proposal_details(run, str(row.get("proposal_id") or ""))
         details = {k: v for k, v in row.items()
                    if k not in {"_display_cycle", "_cycle_name", "schema"}}
         raw = json.dumps(details, ensure_ascii=False, indent=2, default=str)

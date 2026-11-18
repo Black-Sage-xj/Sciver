@@ -50,6 +50,23 @@ html[data-sciver-theme] .ex-reader .ex-node-time,.ex-result-time{color:var(--rea
 .ex-hypothesis-facts dd,.ex-guide-facts dd{margin:0}
 .ex-hypothesis-facts>div:first-child dd{font-size:15px}
 .ex-hypothesis-facts>div+div dd{padding:10px 12px;background:var(--read-soft);border-radius:8px;font-size:13px}
+.ex-research-transition{margin:0 0 22px;padding:16px;border:1px solid var(--read-border);border-left:3px solid var(--read-blue);border-radius:8px;background:var(--read-soft)}
+.ex-research-transition>h4{margin:0 0 14px;font-size:14px;color:var(--read-blue)}
+.ex-transition-facts{margin:0}
+.ex-transition-facts>div+div{margin-top:13px}
+.ex-transition-facts dt{margin-bottom:5px;font-size:12px;font-weight:650;color:var(--read-muted)}
+.ex-transition-facts dd{margin:0}
+html[data-sciver-theme] .ex-reader .ex-transition-facts .ex-md{font-size:13px;line-height:1.75}
+.ex-transition-sources{list-style:none;margin:0 0 15px;padding:0}
+.ex-transition-sources li+li{margin-top:9px}
+.ex-transition-role,.ex-transition-status{display:block;font-size:11px;line-height:1.7;color:var(--read-muted)}
+html[data-sciver-theme] .ex-reader .ex-transition-source-link{max-width:100%;margin:0;padding:2px 0;white-space:normal;overflow-wrap:anywhere;text-align:left;color:var(--read-blue)}
+.ex-transition-source-link small{color:var(--read-muted);font-size:10px}
+.ex-transition-goal,.ex-transition-results{margin-top:11px;font-size:12px;color:var(--read-muted)}
+.ex-transition-goal>summary,.ex-transition-results>summary{cursor:pointer}
+.ex-transition-goal[open]>summary{margin-bottom:9px}
+.ex-transition-results .ex-ref{font-size:11px}
+.ex-research-transition>.ex-reader-empty+.ex-transition-sources{margin-top:12px;margin-bottom:0}
 .ex-assessment-note{margin:17px 0 0;font-size:12px;color:var(--read-muted);line-height:1.6}
 .ex-whole-assessment{margin-top:17px;font-size:12px}
 .ex-reader-documents{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}

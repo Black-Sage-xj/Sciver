@@ -35,7 +35,8 @@ class TaskSettingsTests(unittest.TestCase):
                              '/run/'+'a'*16+'/')
             self.assertIn('&lt;task &amp; title&gt;',html)
             self.assertEqual(len(dom.select('#tm-web-settings')),1)
-            self.assertEqual(len(dom.select('input[data-setting-key]')),1)
+            self.assertEqual({x['data-setting-key'] for x in dom.select('input[data-setting-key]')},
+                             {'cycle_audit', 'skill_learning'})
             self.assertEqual(dom.select_one('input[data-setting-key]')['data-setting-key'],
                              'cycle_audit')
             self.assertTrue(dom.select_one('.tm-setting-gear-submenu').has_attr('open'))
@@ -101,7 +102,7 @@ class TaskSettingsTests(unittest.TestCase):
                 self.assertNotIn('Task Console',settings.select_one('.tm-breadcrumb').get_text())
                 self.assertIn('自动审计',settings.get_text())
                 self.assertIsNotNone(settings.select_one('[data-setting-save-model="cycle_audit"]'))
-                self.assertEqual(len(settings.select('[data-setting-key]')),1)
+                self.assertEqual(len(settings.select('[data-setting-key]')),2)
                 self.assertEqual(settings.select_one('select[name=observer_id] option[selected]')['value'],ident)
                 self.assertIsNone(settings.select_one('.tm-tui-screen'))
                 self.assertEqual(settings.select_one('a.tm-nav-link[aria-current="page"]')['href'],

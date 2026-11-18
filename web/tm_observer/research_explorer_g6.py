@@ -7,19 +7,17 @@ from __future__ import annotations
 from pathlib import Path
 
 from .research_reader_ui import READER_CSS
+from .vault_ui import VAULT_CSS, VAULT_HTML, VAULT_SCRIPT
 
 G6_VERSION = "5.1.1"
 
 GRAPH_CSS = r"""
 <style>
 /* Reserve only the global topbar; the research graph fills the remaining viewport. */
-.tm-explorer-view .tm-content{max-width:none;padding:10px 16px 12px;height:calc(100vh - 62px);height:calc(100dvh - 62px);display:flex;flex-direction:column;overflow:hidden}
+.tm-explorer-view .tm-content{max-width:none;padding:6px 12px 10px;height:calc(100vh - 44px);height:calc(100dvh - 44px);display:flex;flex-direction:column;overflow:hidden}
 .tm-explorer-view .tm-page-head{display:none}
 .tm-explorer-view .tm-page-label{display:none}
 .tm-explorer-view .tm-page-head h1{font-size:20px;line-height:26px;margin:0}
-.ex-page-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap;flex:none;margin:0 0 8px}
-.ex-page-head h1{font-size:20px;line-height:26px;margin:0}
-.ex-page-head button{font-size:12px;padding:5px 10px}
 .ex-help{box-sizing:border-box;width:min(780px,calc(100vw - 32px));max-height:85vh;max-height:85dvh;overflow:auto;padding:22px;background:#191f2c;color:#e2e8f0;border:1px solid #64748b;border-radius:12px;line-height:1.7;box-shadow:0 18px 60px #000a}
 .ex-help::backdrop{background:#0009}
 .ex-help header{display:flex;align-items:center;justify-content:space-between;gap:12px}
@@ -119,6 +117,8 @@ GRAPH_CSS = r"""
 .ex-outcome-card .ex-outcome-part.is-selected{box-shadow:inset 0 0 0 2px #bfdbfe}
 .ex-outcome-card .ex-outcome-kicker{font-size:12px;font-weight:750;line-height:1.25}
 .ex-outcome-card .ex-outcome-copy{font-size:12px;font-weight:550;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow-wrap:anywhere}
+.ex-outcome-card .has-transition .ex-outcome-copy{-webkit-line-clamp:2}
+.ex-outcome-card .ex-outcome-transition{font-size:10px;line-height:1.35;font-weight:400;overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow-wrap:anywhere}
 .ex-edge-menu{position:absolute;z-index:9;width:24px;height:24px;pointer-events:auto}
 .ex-edge-menu[hidden]{display:none}
 .ex-edge-menu button{display:flex;align-items:center;justify-content:center;box-sizing:border-box;width:24px;height:24px;padding:0;border:1px solid #93c5fd;border-radius:50%;background:#17283d;color:#e0f2fe;font:600 16px/1 system-ui;box-shadow:0 2px 7px #0008;cursor:pointer}
@@ -163,16 +163,68 @@ GRAPH_CSS = r"""
 .ex-tooltip small{display:block;color:#a1a1aa;margin-top:5px}
 .ex-selected{border-left:3px solid #60a5fa;padding:7px 10px;margin:0 0 14px;background:#1b263a;border-radius:6px;font-size:12px}
 @media(max-width:860px){.ex-layout{min-height:500px;height:calc(100vh - 255px)}.ex-layout[data-layout="side"]{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,var(--ex-stack-size,50%)) 12px minmax(0,1fr)}.ex-layout[data-layout="side"] .ex-splitter{cursor:row-resize}.ex-layout[data-layout="side"] .ex-splitter::before{top:4px;bottom:auto;left:10px;right:10px;width:auto;height:4px}.ex-layout .ex-reader{min-height:0}}
-@media(max-width:900px){.tm-explorer-view .tm-content{height:auto;min-height:calc(100dvh - 108px);overflow:visible}.tm-explorer-view .ex-workspace{min-height:650px}.tm-explorer-view .ex-layout{min-height:500px}.tm-explorer-view .ex-workspace:fullscreen{min-height:0}.tm-explorer-view .ex-workspace:fullscreen .ex-layout{min-height:0}}
+/* Compact graph workspace: one command row, with transient panels outside the canvas. */
+.tm-explorer-view .tm-topbar{height:44px;padding:0 16px;flex:none}
+.tm-explorer-view .tm-secondary-back{min-height:28px;padding:4px 9px}
+.tm-explorer-view .tm-notices-toggle{width:28px;height:28px;border-radius:7px}
+.tm-explorer-view .tm-topbar-right{display:none}
+.tm-explorer-view .tm-content{height:calc(100vh - 44px);height:calc(100dvh - 44px);min-height:0;padding:6px 12px 10px;overflow:hidden}
+.ex-workspace{position:relative}
+.ex-toolbar{position:relative;z-index:10;padding:4px 0;margin:0 0 6px;background:transparent!important;border:0;border-radius:0}
+.ex-toolbar-main{gap:6px;flex-wrap:nowrap}
+.ex-toolbar-title{margin:0 8px 0 2px;font-size:16px;line-height:32px;white-space:nowrap}
+.ex-toolbar-main>label{font-size:0;min-width:0;max-width:220px}
+.ex-toolbar-main select{max-width:100%;height:32px;padding:4px 8px;font-size:12px}
+.ex-toolbar-main button,.ex-toolbar-menu>summary{box-sizing:border-box;min-height:32px;padding:5px 9px;border:1px solid transparent;border-radius:6px;background:transparent;color:var(--tm-text,#e4e4e7);font-size:12px;line-height:20px;white-space:nowrap;cursor:pointer}
+.ex-toolbar-main button:hover,.ex-toolbar-menu>summary:hover,.ex-toolbar-menu[open]>summary{background:var(--tm-hover,#252a36);border-color:var(--tm-border,#414557)}
+.ex-toolbar-main :is(button,summary,input):focus-visible{outline:2px solid var(--tm-accent,#93c5fd);outline-offset:2px}
+.ex-toolbar-menu>summary{display:flex;align-items:center;gap:6px;list-style:none}
+.ex-toolbar-menu>summary::-webkit-details-marker{display:none}
+.ex-toolbar-main .ex-icon-button{width:32px;padding:5px 0;justify-content:center;text-align:center;font-size:18px}
+.ex-toolbar-main #ex-help-open{font-size:14px}
+.ex-toolbar-main .ex-layout-controls{gap:2px;margin-left:auto}
+.ex-search-field{display:flex;align-items:center;gap:6px;flex:0 1 280px;min-width:130px;height:32px;box-sizing:border-box;padding:0 8px;border:1px solid var(--tm-border,#3f3f46);border-radius:6px;background:var(--tm-panel,#18181b);color:var(--tm-muted,#a1a1aa)}
+.ex-toolbar .ex-search-field input{flex:1;min-width:0;width:100%;height:28px;padding:0;border:0;border-radius:0;background:transparent;color:var(--tm-text,#f4f4f5);font-size:12px;outline:0}
+.ex-search-field:focus-within{outline:2px solid var(--tm-accent,#93c5fd);outline-offset:1px}
+.ex-search-field>span{font-size:20px;line-height:1}
+.ex-search-field kbd{font:11px ui-monospace,monospace;padding:0 4px;border:1px solid var(--tm-border,#3f3f46);border-radius:3px}
+.ex-toolbar-main #ex-stats{margin-left:auto;white-space:nowrap;font-size:11px}
+.ex-menu-panel{position:absolute;z-index:12;top:calc(100% + 4px);right:0;box-sizing:border-box;width:340px;max-width:calc(100vw - 32px);max-height:min(560px,70dvh);overflow:auto;padding:12px;border:1px solid var(--tm-border,#465267);border-radius:9px;background:var(--tm-panel,#191f2c);color:var(--tm-text,#e2e8f0);box-shadow:0 12px 32px #0004}
+.ex-toolbar-menu:not([open])>.ex-menu-panel{display:none}
+.ex-menu-caption{margin:0 0 10px;color:var(--tm-muted,#a1a1aa);font-size:12px;line-height:1.6}
+.ex-branch-content{width:430px;left:0;right:auto}
+.ex-branch-content .ex-tip-panel{position:static;width:auto;max-height:none;margin-top:10px;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+.ex-branch-content .ex-tip-panel[hidden]{display:none}
+.ex-branch-content .ex-overview-group{gap:6px}
+.ex-branch-content .ex-overview-title{flex-basis:100%}
+.ex-branch-content .ex-tip-trigger{padding:4px 7px;border-color:var(--tm-border,#465267)}
+#ex-legend-content{display:block}
+#ex-legend-content .ex-overview-group{display:flex;align-items:flex-start;justify-content:flex-start;gap:12px}
+#ex-legend-content .ex-overview-title{flex-basis:100%}
+#ex-legend-content .ex-overview-types{border:0;padding:0;flex-basis:100%;flex-wrap:wrap}
+#ex-legend-content .ex-legend-more-panel{position:static;box-shadow:none;border:0;padding:12px 0 0;min-width:0}
+.ex-view-controls{display:flex;align-items:center;gap:2px;flex-wrap:wrap}
+.ex-toolbar-main .ex-view-controls button{padding-inline:7px}
+.ex-view-controls .ex-color-mode{position:static;font-size:12px;box-shadow:none}
+.ex-toolbar-main #ex-legend-menu{margin-left:auto}
+.ex-toolbar-main #ex-legend-menu>summary{color:var(--tm-muted,#a1a1aa);font-size:11px}
+.ex-toolbar-main .ex-layout-controls{margin-left:0}
+.ex-actions{top:auto;bottom:12px;left:12px;right:auto;gap:0;flex-wrap:nowrap;padding:2px;border:1px solid var(--tm-border,#484851);border-radius:8px;background:var(--tm-panel,#23232c);box-shadow:0 2px 8px #0002}
+.ex-actions button{min-width:30px;height:30px;padding:0 7px;border:0;border-radius:5px;background:transparent;color:var(--tm-text,#f1f5f9);font-size:15px}
+.ex-actions .ex-history{min-width:30px}
+.ex-actions .ex-zoom-percent{height:30px;min-width:46px;padding:0 3px;border:0;background:transparent;color:var(--tm-text,#e2e8f0);font-size:12px}
+.ex-zoom-controls{left:auto;right:12px}
+.ex-workspace>.ex-search{top:46px;left:45px;right:auto;width:min(560px,calc(100% - 45px));max-height:65%;box-sizing:border-box;z-index:13}
+.ex-workspace:fullscreen{padding:8px 12px}
+@media(max-width:1200px){.ex-toolbar-main{flex-wrap:wrap}.ex-search-field{flex:1 1 160px;max-width:280px}.ex-toolbar-main #ex-legend-menu{margin-left:auto}}
+@media(max-width:900px){.tm-explorer-view .tm-app{height:100vh;height:100dvh;min-height:0;display:flex;flex-direction:column}.tm-explorer-view .tm-sidebar{flex:none}.tm-explorer-view .tm-main{display:flex;flex:1;flex-direction:column;min-height:0}.tm-explorer-view .tm-content{height:auto;flex:1;min-height:0}}
+@media(max-width:860px){.tm-explorer-view .ex-layout{min-height:0;height:auto}.tm-explorer-view .ex-workspace{min-height:0}.ex-reader{padding:14px}.ex-menu-panel{max-height:55dvh}}
+@media(max-width:620px){.tm-explorer-view .tm-content{padding:4px 6px 6px}.tm-explorer-view .tm-topbar{padding:0 10px}.tm-explorer-view .tm-breadcrumb{gap:6px;font-size:11px}.tm-explorer-view .tm-breadcrumb-link{display:none}.tm-explorer-view .tm-breadcrumb-divider{display:none}.ex-toolbar-main{flex-wrap:wrap;gap:2px 4px}.ex-toolbar-title{margin-right:2px}.ex-search-field{flex:1;min-width:180px}.ex-toolbar-main>label:not([hidden]){max-width:150px}.ex-toolbar-main .ex-layout-controls{margin-left:auto}.ex-menu-panel{max-width:calc(100vw - 16px)}.ex-workspace>.ex-search{top:42px;left:0;width:100%}.ex-branch-content{width:430px}.ex-actions{bottom:8px;left:8px}.ex-zoom-controls{left:auto;right:8px}}
 </style>
 """
 
 GRAPH_HTML = r"""
 <div class="ex-workspace" id="ex-workspace">
-<header class="ex-page-head">
- <h1>图谱</h1>
- <button id="ex-help-open" type="button" aria-haspopup="dialog" aria-controls="ex-help">图谱使用说明</button>
-</header>
 <dialog id="ex-help" class="ex-help" aria-labelledby="ex-help-title">
  <header><h2 id="ex-help-title">图谱使用说明</h2><form method="dialog"><button type="submit" aria-label="关闭图谱使用说明" autofocus>关闭</button></form></header>
  <p>图谱记录研究如何从猜想走向证据和结论。先看猜想 H 提出了什么，再看对应 Cycle 的 Outcome 得到了什么结论，最后沿连线追踪后续猜想与外部资料。</p>
@@ -198,57 +250,57 @@ GRAPH_HTML = r"""
  <h3>怎样读图和查看原文</h3>
  <ul>
  <li>放大后，H 卡片上半部显示猜想与前沿状态，下半部显示 Outcome；分别点击可阅读详情、逐轮结论和完整 Markdown 报告。</li>
- <li>缩小到 ≤60% 时显示数字概览，默认按前沿着色；“远景颜色”按钮可切换到结论着色。颜色用于导航，结论以详情中的裁决和范围为准。</li>
- <li>顶部前沿与 Outcome 统计均按 H 去重，计数表示猜想数量。一个历史 H 的多条 Outcome 在概览中汇总一次；“更多”展开少见标签。外部资料另计。</li>
+ <li>缩小到 ≤60% 时显示数字概览，默认按前沿着色；工具栏中的“远景颜色”可切换到结论着色。颜色用于导航，结论以详情中的裁决和范围为准。</li>
+ <li>“分支”与统计数字展开的图例中的前沿与 Outcome 统计均按 H 去重，计数表示猜想数量。一个历史 H 的多条 Outcome 在概览中汇总一次；“更多”展开少见标签。外部资料另计。</li>
  <li>H→H 连线表示有来源的科学演化；外部资料（External，E）保存文献、人工输入或历史归档材料，其引用连线用于追溯来源。外部资料本身没有 Judge 裁决权威。</li>
  <li>点击顶部前沿状态定位分支；用搜索查找节点与 Markdown，拖动分隔条调整阅读区，悬停分支连线可折叠或展开。出现后代的 H 仍可保留活跃资格。</li>
  </ul>
  <p>单轮 Outcome 回答“这一轮命题得到了什么结论”；任务是否达成总体目标由独立的 Goal Completion 判断。历史 Canvas 视图可能保留 Decision、Finding、StageSummary 节点，以各记录来源和裁决范围为准。</p>
 </dialog>
-<script id="ex-help-script">
-(()=>{
- const button=document.getElementById('ex-help-open'),dialog=document.getElementById('ex-help');
- button.addEventListener('click',()=>dialog.showModal());
- dialog.addEventListener('click',event=>{
-  if(event.target!==dialog)return;
-  const bounds=dialog.getBoundingClientRect();
-  if(event.clientX<bounds.left||event.clientX>bounds.right||event.clientY<bounds.top||event.clientY>bounds.bottom)dialog.close();
- });
-})();
-</script>
-<div class="ex-toolbar">
+
+<div class="ex-toolbar" aria-label="图谱工具栏">
  <div class="ex-toolbar-main">
+  <h1 class="ex-toolbar-title">图谱</h1>
   <label>科研任务 <select id="ex-task">TM_CANVAS_TASK_OPTIONS</select></label>
-  <input id="ex-query" type="search" placeholder="搜索科研节点与 Markdown…" aria-label="Search scientific documents"/>
-  <button id="ex-refresh" title="重新读取当前 Canvas 与 Markdown">刷新文件</button>
-  <div class="ex-layout-controls" aria-label="工作区操作">
-    <button id="ex-fullscreen" type="button" aria-pressed="false" title="切换工作区全屏（Esc 退出）">⛶ 全屏</button>
+  <div class="ex-search-field"><span aria-hidden="true">⌕</span><input id="ex-query" type="search" placeholder="搜索节点与文档" aria-label="搜索科研节点与 Markdown"/><kbd aria-hidden="true">/</kbd></div>
+  <button id="ex-all" type="button" title="展开所有分支并显示整张图谱">完整图谱</button>
+  <button id="ex-vault-open" type="button" aria-haspopup="dialog" aria-controls="ex-vault">笔记库</button>
+  <details class="ex-toolbar-menu" id="ex-branches">
+   <summary aria-controls="ex-branch-content">分支 <span aria-hidden="true">⌄</span></summary>
+   <div class="ex-menu-panel ex-branch-content" id="ex-branch-content">
+    <div class="ex-overview"><div class="ex-overview-group" id="ex-tip-summary"></div></div>
+    <aside class="ex-tip-panel" id="ex-tip-panel" hidden aria-label="科研分支末端导航"></aside>
+   </div>
+  </details>
+  <div class="ex-view-controls" role="group" aria-label="常用图谱操作">
+   <button id="ex-fit" type="button">适应当前画布</button>
+   <button id="ex-expand-all" type="button">展开全部分支</button>
+   <div id="ex-view-color"></div>
   </div>
-  <span class="small" id="ex-stats">读取中…</span>
+  <details class="ex-toolbar-menu" id="ex-legend-menu">
+   <summary aria-label="图谱统计与图例" title="查看图例与结论统计" aria-controls="ex-legend-content"><span class="small" id="ex-stats">读取中…</span><span aria-hidden="true">⌄</span></summary>
+   <div class="ex-menu-panel ex-overview" id="ex-legend-content"><p class="ex-menu-caption">上半部表示研究前沿，下半部表示本轮结论。</p><div class="ex-overview-group" id="ex-type-legend"></div></div>
+  </details>
   <span id="ex-index-warning" class="ex-index-warning" tabindex="0" aria-label="文档索引未覆盖全部内容" title="文档索引达到读取预算，部分链接和搜索内容可能尚未索引。" hidden>ⓘ</span>
- </div>
-  <div class="ex-overview" aria-label="科研节点类型与末端状态统计">
-    <div class="ex-overview-group" id="ex-tip-summary"></div>
-    <div class="ex-overview-group" id="ex-type-legend"></div>
+  <div class="ex-layout-controls" aria-label="工作区操作">
+   <button id="ex-help-open" class="ex-icon-button" type="button" aria-label="图谱使用说明" title="图谱使用说明" aria-haspopup="dialog" aria-controls="ex-help">?</button>
+   <button id="ex-fullscreen" class="ex-icon-button" type="button" aria-label="全屏" aria-pressed="false" title="全屏（Esc 退出）">⛶</button>
   </div>
+ </div>
 </div>
+<div class="ex-search" id="ex-results" role="status" aria-live="polite" hidden></div>
 <div class="ex-layout" id="ex-layout" data-layout="side">
   <div class="ex-graph" id="ex-graph" aria-label="只读科研演化图谱">
     <div id="ex-g6"></div>
     <div class="ex-outcome-cards" id="ex-outcome-cards" aria-label="猜想与 Outcome 独立阅读区域"></div>
     <div class="ex-compact-labels" id="ex-compact-labels" aria-hidden="true" hidden></div>
-    <div class="ex-actions">
-      <button id="ex-back" class="ex-history" title="返回上一次稳定的图谱位置" aria-label="返回" disabled>← 返回</button>
-      <button id="ex-forward" class="ex-history" title="前进到下一次浏览位置" aria-label="前进" disabled>前进 →</button>
-      <span class="ex-divider"></span>
-      <button id="ex-all" title="展开所有分支并显示整张图谱">完整图谱</button>
-      <span class="ex-divider"></span>
-      <button id="ex-fit">适应画布</button><button id="ex-plus">＋</button><output id="ex-zoom-percent" class="ex-zoom-percent" aria-label="图谱绝对缩放比例" title="100% 为固定节点基础尺寸，与节点数量和适应画布无关">100%</output><button id="ex-minus">－</button>
-      <span class="ex-spacer"></span>
-      <button id="ex-expand-all" title="取消所有折叠">全部展开</button>
+    <div class="ex-actions" role="group" aria-label="图谱浏览历史">
+      <button id="ex-back" class="ex-history" title="返回上一次稳定的图谱位置（Alt+←）" aria-label="返回" disabled>←</button>
+      <button id="ex-forward" class="ex-history" title="前进到下一次浏览位置（Alt+→）" aria-label="前进" disabled>→</button>
     </div>
-    <div class="ex-search" id="ex-results" role="status" aria-live="polite" hidden></div>
-    <aside class="ex-tip-panel" id="ex-tip-panel" hidden aria-label="科研分支末端导航"></aside>
+    <div class="ex-actions ex-zoom-controls" role="group" aria-label="图谱缩放">
+      <button id="ex-plus" type="button" aria-label="放大图谱" title="放大">＋</button><output id="ex-zoom-percent" class="ex-zoom-percent" aria-label="图谱绝对缩放比例" title="100% 为固定节点基础尺寸，与节点数量和适应画布无关">100%</output><button id="ex-minus" type="button" aria-label="缩小图谱" title="缩小">－</button>
+    </div>
     <div class="ex-edge-menu" id="ex-edge-menu" role="group" aria-label="子分支操作" hidden>
       <button id="ex-edge-menu-action" type="button" aria-label="折叠子分支">−</button>
     </div>
@@ -260,6 +312,17 @@ GRAPH_HTML = r"""
   <section class="ex-reader" id="ex-reader" aria-live="polite"><p class="muted">选择左侧科研节点以阅读完整内容。</p></section>
 </div>
 </div>
+<script id="ex-help-script">
+(()=>{
+ const button=document.getElementById('ex-help-open'),dialog=document.getElementById('ex-help');
+ button.addEventListener('click',()=>dialog.showModal());
+ dialog.addEventListener('click',event=>{
+  if(event.target!==dialog)return;
+  const bounds=dialog.getBoundingClientRect();
+  if(event.clientX<bounds.left||event.clientX>bounds.right||event.clientY<bounds.top||event.clientY>bounds.bottom)dialog.close();
+ });
+})();
+</script>
 <script defer src="https://cdn.jsdelivr.net/npm/@antv/g6@5.1.1/dist/g6.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
@@ -278,4 +341,5 @@ TM_GRAPH_JS
 def graph_content() -> str:
     script = Path(__file__).with_name("research_explorer_g6.js").read_text(encoding="utf-8")
     tree_script = Path(__file__).with_name("research_explorer_layout_c.js").read_text(encoding="utf-8")
-    return GRAPH_CSS + READER_CSS + GRAPH_HTML.replace("TM_GRAPH_JS", tree_script + "\n" + script)
+    return (GRAPH_CSS + READER_CSS + VAULT_CSS + VAULT_HTML
+            + GRAPH_HTML.replace("TM_GRAPH_JS", VAULT_SCRIPT + "\n" + tree_script + "\n" + script))

@@ -13,7 +13,9 @@ class SQLiteGraphAuthorityMixin:
         )
         if canvas is None:
             raise RuntimeError("Task configuration must define the Canvas projection path")
-        graph_path = Path(canvas).resolve().parent / "science_graph.sqlite3"
+        from .notebook import graph_database_path
+        graph_path = (getattr(getattr(self, "spec", None), "graph_database", None)
+                      or graph_database_path(Path(canvas).resolve().parent))
         if not graph_path.is_file():
             raise FileNotFoundError(
                 f"Canonical SQLite graph is required at {graph_path}; "

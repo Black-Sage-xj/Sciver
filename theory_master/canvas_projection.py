@@ -9,9 +9,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
-from .runtime import write_json
-
-
 class CycleOutcomeConflictError(ValueError):
     """A retried Cycle Outcome disagrees with the one already committed for the Cycle."""
 
@@ -116,7 +113,7 @@ class CanvasProjectionMixin:
         selected: dict[str, Any],
     ) -> str:
         from .science_graph_store import ScienceGraphStore
-        from .science_canvas_export import canvas_projection
+        from .vault_canvas import refresh_registered_canvases
         target = self.branch_canvas or self.spec.branch_canvas
         graph_path = self._graph_database_path()
         h_id = self._locked_hypothesis_ref(state, branch, selected)
@@ -203,9 +200,18 @@ class CanvasProjectionMixin:
                         adjudicated=adjudicated,
                     )
                     store.db.execute(
-                        "UPDATE hypotheses SET title=?,summary=? WHERE id=?",
-                        (display_title, display_summary, h_id),
+                        "UPDATE hypotheses SET title=?,summary=? WHERE id=? "
+                        "AND (title IS NOT ? OR summary IS NOT ?)",
+                        (display_title, display_summary, h_id, display_title, display_summary),
                     )
+                lock = state.setdefault("hypothesis_lock", {})
+                reasoning = store.record_research_transition(h_id, selected, frozen=lock.get("research_transition"))
+                if reasoning is not None and "research_transition" not in lock:
+                    # The dossier is append-only and may outlive a rolled-back
+                    # SQL transaction. Persist its source snapshot before publication.
+                    lock["research_transition"] = reasoning
+                    if persist := getattr(self, "_persist", None):
+                        persist(state)
                 # The frozen scientific definition is a full-length Markdown
                 # dossier, never a Canvas-card summary. Both new and reused H
                 # append one immutable Cycle snapshot idempotently.
@@ -228,28 +234,23 @@ class CanvasProjectionMixin:
                     lineage_anchor_node_ids=source_ids,
                     lineage_main_node_id=explicit[0] if explicit else "",
                     lineage_other_node_ids=explicit[1] if explicit else [],
+                    research_transition=reasoning,
                 )
-                store.db.execute("UPDATE hypotheses SET dossier_ref=? WHERE id=?",
-                                 (dossier_ref, h_id))
-                projected = canvas_projection(store)
-                if target is not None:
-                    from .science_canvas_export import write_external_detail_documents
-                    write_external_detail_documents(
-                        store, notes_root=target.resolve().parent / "notes"
-                    )
+                store.db.execute("UPDATE hypotheses SET dossier_ref=? WHERE id=? AND dossier_ref IS NOT ?",
+                                 (dossier_ref, h_id, dossier_ref))
         branch["hypothesis_ref"] = h_id
         branch["scientific_parent_node_id"] = source_ids[0] if source_ids else None
         branch["scientific_parent_node_ids"] = list(source_ids)
         branch.pop("continuation_anchor_decision_id", None)
         state.setdefault("canvas_projection", {})["active_hypothesis_node_id"] = h_id
         if target is not None:
-            write_json(target, projected)
+            refresh_registered_canvases(graph_path)
         return h_id
 
     def _render_canvas_from_sqlite(self, state: dict[str, Any]) -> None:
         """Commit the pending Cycle Outcome/frontier labels to SQLite, then export Canvas."""
         from .science_graph_store import ScienceGraphStore
-        from .science_canvas_export import canvas_projection, write_external_detail_documents
+        from .vault_canvas import refresh_registered_canvases
         graph_path = self._graph_database_path()
         target = self.branch_canvas or self.spec.branch_canvas
         outcome_record = state.get("cycle_outcome_record")
@@ -262,12 +263,8 @@ class CanvasProjectionMixin:
             from .multi_worker import canvas_write_lock
             with (nullcontext() if getattr(self, "_canvas_write_locked", False)
                   else canvas_write_lock(self.spec.research_root)):
-                with ScienceGraphStore(graph_path) as store:
-                    projected = canvas_projection(store)
-                    if target is not None:
-                        write_external_detail_documents(store, notes_root=target.resolve().parent / "notes")
                 if target is not None:
-                    write_json(target, projected)
+                    refresh_registered_canvases(graph_path)
             state.setdefault("canvas_projection", {})["next_start_node_id"] = str(
                 state.get("next_start_node_id") or ""
             )
@@ -281,7 +278,7 @@ class CanvasProjectionMixin:
     def _commit_cycle_science(self, state: dict[str, Any], graph_path: Path, target: Path | None,
                               outcome_record: dict[str, Any] | None, updates: Any) -> None:
         from .science_graph_store import ScienceGraphStore
-        from .science_canvas_export import canvas_projection, write_external_detail_documents
+        from .vault_canvas import refresh_registered_canvases
         cycle_outcome = None
         with ScienceGraphStore(graph_path) as store:
             with store.transaction():
@@ -355,9 +352,6 @@ class CanvasProjectionMixin:
                             "reason": str(item.get("reason") or ""),
                         })
                     store.set_frontiers_batch(mapped)
-                projected = canvas_projection(store)
-                if target is not None:
-                    write_external_detail_documents(store, notes_root=target.resolve().parent / "notes")
 
         if cycle_outcome is not None and target is not None:
             from .cycle_outcome_documents import write_outcome_document
@@ -367,11 +361,11 @@ class CanvasProjectionMixin:
             h_id = str(cycle_outcome.get("hypothesis_id") or "")
             evidence = list(cycle_outcome.get("evidence_refs") or [])
             if h_id and evidence:
-                from .hypothesis_dossier import append_hypothesis_evidence, DOSSIER_MARKER
+                from .hypothesis_dossier import append_hypothesis_evidence
                 notes_root = (getattr(self.spec, "notes_mirror_dir", None)
                               or target.resolve().parent / "notes")
                 dossier = notes_root / "hypotheses" / (h_id + ".md")
-                if dossier.is_file() and dossier.read_text(encoding="utf-8").startswith(DOSSIER_MARKER):
+                if dossier.is_file():
                     append_hypothesis_evidence(
                         canvas_path=target,
                         wikilink_stem=dossier.resolve().relative_to(target.resolve().parent).with_suffix("").as_posix(),
@@ -379,7 +373,7 @@ class CanvasProjectionMixin:
                         evidence_refs=evidence,
                     )
         if target is not None:
-            write_json(target, projected)
+            refresh_registered_canvases(graph_path)
         if outcome_record is not None:
             state.pop("cycle_outcome_record", None)
         state.setdefault("canvas_projection", {})["next_start_node_id"] = str(

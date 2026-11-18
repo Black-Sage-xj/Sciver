@@ -216,7 +216,7 @@ class WorkflowScienceMixin:
                 # Shared science barrier + Goal check inside; GoalSealedError propagates.
                 updated = commit_authored_model(
                     self.spec.research_root, content, cycle_id=cycle_id, action=action,
-                    expected_version=(int(input_model["version"]) if getattr(self, "worker_id", None) else None),
+                    expected_version=int(input_model["version"]),
                     graph_path=self._graph_database_path(),
                 )
             except ScientificModelVersionConflict as exc:

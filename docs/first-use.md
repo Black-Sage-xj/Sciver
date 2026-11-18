@@ -52,6 +52,10 @@ Task List → Task Console shows runtime state, errors, Cycles and reports; Canv
 
 ## Create your own topic
 
+In the Web UI, open `/research-chat/?new=1` and choose **创建新项目**. Start with a clear question or an exploratory interest, discuss relevant work, and develop a Plan gradually. **审阅计划并创建项目** lets you save an incomplete draft or review and confirm a new Task. Creation returns a task link without starting scientific execution. Preparation messages use your configured Chat model account. When the question needs literature, Chat can call the existing Literature Agent within the requested scope; that independent model session reuses the production identity, skills and output contracts. Discovery, selected-source reading, comparison and gap-driven follow-up are bounded by a default of two rounds and six source-acquisition attempts. Unresolved source needs pause with retained results; resuming the same job reuses completed work.
+
+For terminal creation:
+
 Create a separate task home and write a plan. Keep the four H1 headings below in this exact order; `sciver new` adds the SDK-maintained Scientific Model. Replace each example paragraph with your concrete goal, scope, allowed resources, completion criteria and available inputs before starting real research.
 
 ```bash
@@ -85,3 +89,13 @@ sciver new "$SCIVER_WORKSPACE/my-topic/research_plan.md"
 - Missing login: install the Codex executable, complete `login-1`, select account `1`, and check `status` again. Do not paste credentials into chat or commit them.
 - Invalid plan: use exactly `# Goal`, `# Research Contract`, `# Final Gate`, `# Required Context`; each section must contain text. After initialization, retain the generated `# Scientific Model` as the last section.
 - Test0 preparation failure: check the error, disk permissions and `sciver test --list`. Existing destinations must be empty; use `--root` to allocate a fresh instance automatically.
+
+
+## Optional PDF conversion
+
+Fresh installations leave PDF conversion **off**. Open **Settings (`/settings`) → PDF conversion** to enable a provider on the host running Sciver:
+
+- **Local Marker**: configure the executable explicitly or place `marker_single` on the service process's `PATH`. Sciver does not assume a personal environment path or install Marker automatically. Enabling your own host does not change product defaults.
+- **Online MinerU**: enter an API Token or set `MINERU_API_KEY` for the service process. Conversion uploads the PDF to MinerU. The key stays in a private server configuration (0600) or environment; settings responses expose only whether a key is configured.
+
+Settings live at `$XDG_CONFIG_HOME/sciver/document-conversion.json`, or `~/.config/sciver/document-conversion.json` when XDG is unset; `SCIVER_DOCUMENT_CONVERSION_CONFIG` can override this location. Changes apply to subsequent conversions. Without conversion, metadata, abstracts and accessible HTML text remain usable. The default page limit is 20; set 0 to process all available pages. Retained text, images and layout artifacts support source review, but converted pages are not automatically verified scientific claims. Reading the first N pages does not establish full-paper verification. Deterministic and mock tests cover the integration; real model quality and online conversion have not been validated by those tests.

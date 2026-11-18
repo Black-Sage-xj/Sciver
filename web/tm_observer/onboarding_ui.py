@@ -26,6 +26,7 @@ def first_use_panel() -> str:
 .tm-onboarding a{color:var(--accent,#85b8ff)}.tm-onboarding details{margin-top:15px}.tm-onboarding summary{cursor:pointer}
 </style><section class="tm-onboarding" aria-label="首次使用引导">
 <h2>开始第一个科研任务</h2>
+<p>自己的课题可从 <a href="/research-chat/?new=1">Research Chat → 创建新项目</a> 开始，先讨论问题、查阅资料，再审阅计划并确认立项。也可以按下面的终端步骤准备官方教学示例。</p>
 <p>在运行 Sciver 的机器上打开终端，使用 Python 3.12 或更高版本及安装 Sciver 时的虚拟环境。网页从工作目录发现任务。</p>
 <h3>1. 创建工作目录并完成离线检查</h3>
 <p>任务和运行数据放在源码目录之外。以下命令只运行本地模拟检查和准备官方 Test0，不会调用模型。</p>''' + code(WORKSPACE_SETUP + '\nsciver smoke\nsciver test Test0 --root "$SCIVER_WORKSPACE" --prepare-only') + '''

@@ -39,6 +39,7 @@ const elem=id=>(elements[id]??=( {
   getBoundingClientRect(){return {left:0,top:0,width:800,height:500}},
   querySelectorAll(){return []},
   querySelector(){return null},
+  insertAdjacentHTML(position,value){this.innerHTML=position==='afterbegin'?value+this.innerHTML:this.innerHTML+value},
   replaceChildren(){this.children=[]},
   append(child){this.children.push(child)},
 }));
@@ -136,7 +137,12 @@ const ctx={
   setTimeout,clearTimeout,console
 };
 vm.runInNewContext(fs.readFileSync(require('node:path').join(require('node:path').dirname(process.argv[1]),'research_explorer_layout_c.js'),'utf8'),ctx);
-vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),ctx);
+// Exercise internal index reload without keeping an obsolete production control.
+const source=fs.readFileSync(process.argv[1],'utf8');
+const boot="window.addEventListener('DOMContentLoaded'";
+assert(source.includes(boot));
+vm.runInNewContext(source.replace(boot,
+  "window.testReloadIndex=()=>{rememberBefore();return load()};"+boot),ctx);
 const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
 (async()=>{
   elements['ex-workspace']=elem('ex-workspace');
@@ -275,7 +281,7 @@ const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
   nodes[0].semantic={type:'Hypothesis',cycle:1,frontier_status:'active',
     cycle_outcomes:[{verdict:'supported',cycle_id:'1',summary:'Supported result'}],
     outcome:{verdict:'supported',cycle_id:'1',summary:'Supported result'}};
-  await elements['ex-refresh'].onclick();await tick();await tick();
+  await ctx.window.testReloadIndex();await tick();await tick();
   let initialCard=elements['ex-outcome-cards'].children.find(n=>n.dataset.nodeId==='A');
   assert.equal(initialCard.children.length,2);
   assert(initialCard.children[0].children[0].textContent.includes('Active'));
@@ -315,7 +321,7 @@ const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
   edges.push({id:'DH8',fromNode:'D',toNode:'H-0008'},
     {id:'H8H9',fromNode:'H-0008',toNode:'H-0009'},
     {id:'H9H10',fromNode:'H-0009',toNode:'H-0010'});
-  await elements['ex-refresh'].onclick();await tick();
+  await ctx.window.testReloadIndex();await tick();
   const h=latestGraph.getNodeData('H-0008');
   assert(h,'Outcome does not replace H');
   assert.equal(latestGraph.getNodeData().filter(x=>x.id==='H-0008').length,1);
@@ -538,7 +544,7 @@ const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
   latestGraph.events['node:click']({target:{id:'H-0009'}});await tick();await tick();
   assert.equal(history.state.tmExplorerView.selected.id,'H-0009');
   nodes.push({id:'H-9999',label:'Unassigned cycle',semantic:{type:'Hypothesis',title:'Unassigned cycle'}});
-  await elements['ex-refresh'].onclick();await tick();
+  await ctx.window.testReloadIndex();await tick();
   latestGraph.camera.zoom=.30;
   latestGraph.events.aftertransform();
   assert.equal(labelFor('H-9999').textContent,'C?',
@@ -546,7 +552,7 @@ const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
   nodes.push({id:'H-0034',label:'Selected source',semantic:{type:'Hypothesis',title:'Selected source'}});
   nodes.push({id:'H-0035',label:'Other source',semantic:{type:'Hypothesis',title:'Other source'}});
   nodes.push({id:'2-hypothesis',label:'Historical source',semantic:{type:'Hypothesis',title:'Historical source'}});
-  await elements['ex-refresh'].onclick();await tick();
+  await ctx.window.testReloadIndex();await tick();
   latestGraph.camera.zoom=.07;
   latestGraph.events.aftertransform();
   assert.equal(labelFor('H-0034').textContent,'C?',
@@ -571,7 +577,7 @@ const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
   h8.semantic.cycle_outcomes=[
     {cycle_id:'87',verdict:'supported',summary:'scope A'},
     {cycle_id:'89',verdict:'rejected',summary:'scope B'}];
-  await elements['ex-refresh'].onclick();await tick();
+  await ctx.window.testReloadIndex();await tick();
   latestGraph.camera.zoom=.30;latestGraph.events.aftertransform();
   assert.equal(latestGraph.getNodeData('H-0008').style.fill,'#186F98',
     'active frontier takes precedence over parked and closed branches');
@@ -592,7 +598,7 @@ const tick=()=>new Promise(resolve=>setTimeout(resolve,0));
   // Imported milestone_advanced is a compatibility projection, not Judge Open.
   nodes.find(n=>n.id==='H-0010').semantic.cycle_outcomes=[
     {cycle_id:'90',verdict:'open',original_verdicts:['milestone_advanced']}];
-  await elements['ex-refresh'].onclick();await tick();
+  await ctx.window.testReloadIndex();await tick();
   const legacy=elements['ex-outcome-cards'].children.find(x=>x.dataset.nodeId==='H-0010');
   assert(legacy.children[1].children[0].textContent.includes('历史归一'));
   assert.equal(legacy.children[1].style.background,'#656C7A',

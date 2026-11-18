@@ -71,28 +71,24 @@ class LiteratureStartupCheckTest(unittest.TestCase):
         from theory_master.__main__ import literature_startup_check
         with tempfile.TemporaryDirectory() as temp:
             paper = [{"title": "Polymer network topology", "source": "openalex"}]
-            marker = Path(temp) / "marker_single"; marker.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8"); marker.chmod(0o755)
             def fake_run(command, **kwargs):
-                if "--output-dir" not in command:
-                    self.assertEqual(command, [str(marker), "--help"])
-                    return SimpleNamespace(returncode=0, stdout="marker help", stderr="")
+                self.assertIn("--output-dir", command)
                 out = Path(command[command.index("--output-dir") + 1]); out.mkdir(parents=True, exist_ok=True)
                 (out / "papers.json").write_text(json.dumps(paper), encoding="utf-8")
                 self.assertEqual(command[command.index("--limit") + 1], "1")
                 self.assertEqual(command[command.index("--sources") + 1], "openalex")
                 self.assertNotIn("HTTP_PROXY", kwargs["env"]); self.assertNotIn("HTTPS_PROXY", kwargs["env"])
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
-            with unittest.mock.patch.dict("os.environ", {"SCHOLARLY_MARKER_BIN": str(marker)}, clear=False), unittest.mock.patch("theory_master.cli_runtime.tempfile.mkdtemp", return_value=temp), unittest.mock.patch("theory_master.cli_runtime.subprocess.run", side_effect=fake_run):
+            with unittest.mock.patch("theory_master.document_conversion.load_settings", return_value={"enabled": False, "available": False, "provider": "marker"}), unittest.mock.patch("theory_master.cli_runtime.tempfile.mkdtemp", return_value=temp), unittest.mock.patch("theory_master.cli_runtime.subprocess.run", side_effect=fake_run):
                 result = literature_startup_check()
             self.assertEqual(result["status"], "ok"); self.assertEqual(result["retrieved"], 1)
-            self.assertEqual(result["pdf_to_markdown"], "marker-ready")
+            self.assertEqual(result["pdf_to_markdown"], "disabled")
             self.assertIn("tm-scholar", result["skills"])
 
     def test_startup_check_fails_when_retrieval_returns_no_papers(self):
         from theory_master.__main__ import literature_startup_check
         with tempfile.TemporaryDirectory() as temp:
-            marker = Path(temp) / "marker_single"; marker.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8"); marker.chmod(0o755)
-            with unittest.mock.patch.dict("os.environ", {"SCHOLARLY_MARKER_BIN": str(marker)}, clear=False), unittest.mock.patch("theory_master.cli_runtime.tempfile.mkdtemp", return_value=temp), unittest.mock.patch("theory_master.cli_runtime.subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="", stderr="")):
+            with unittest.mock.patch("theory_master.document_conversion.load_settings", return_value={"enabled": False, "available": False, "provider": "marker"}), unittest.mock.patch("theory_master.cli_runtime.tempfile.mkdtemp", return_value=temp), unittest.mock.patch("theory_master.cli_runtime.subprocess.run", return_value=SimpleNamespace(returncode=0, stdout="", stderr="")):
                 with self.assertRaisesRegex(RuntimeError, "Literature startup check failed"):
                     literature_startup_check()
 

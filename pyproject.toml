@@ -28,11 +28,13 @@ include = ["theory_master*"]
 
 [tool.setuptools.package-data]
 theory_master = [
+  "skill_evolution/*.md",
   "model_profiles/test.toml",
   "model_profiles/codex.toml",
   "model_profiles/advanced.toml",
   "model_profiles/README.md",
   "resources/identities/*.md",
+  "resources/identities/research_chat/AGENTS.md",
   "resources/skills/*/*",
   "resources/skills/*/*/*",
   "resources/skills/*/*/*/*",

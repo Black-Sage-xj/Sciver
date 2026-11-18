@@ -26,7 +26,7 @@ STAGE_CONTEXT_FIELDS: dict[tuple[str, str], tuple[str, ...]] = {
         "operator_guidance",
         "qualification_feedback", "lead_literature_result", "workspace_access",
     ),
-    ("research_lead", "hypothesis_display"): ("frozen_hypothesis",),
+    ("research_lead", "hypothesis_display"): ("frozen_hypothesis", "frozen_reasoning"),
     ("research_lead", "candidate_selection"): (
         "qualified_candidates",
     ),
@@ -173,7 +173,9 @@ def _candidate_digest(value: Any, *, limit: int | None = None) -> list[dict[str,
         background = {key: val for key, val in {
             "id": row.get("id"), "title": row.get("title"),
             "why_now": row.get("why_now"), "goal_advance": row.get("goal_advance"),
+            "transition": row.get("transition"),
             "lineage_anchor_node_id": row.get("lineage_anchor_node_id"),
+            "lineage_anchor_node_ids": row.get("lineage_anchor_node_ids"),
             "lineage_main_node_id": row.get("lineage_main_node_id"),
             "lineage_other_node_ids": row.get("lineage_other_node_ids"),
             "evolution_operator": row.get("evolution_operator"), "status": row.get("status"),
@@ -230,6 +232,7 @@ def _qualified_candidate_options(value: Any, *, continuation: bool) -> list[dict
                 "scope": row.get("scope"),
                 "why_now": row.get("why_now"),
                 "goal_advance": row.get("goal_advance"),
+                "transition": row.get("transition"),
                 "decisive_test": row.get("decisive_test"),
             })
         result.append({key: val for key, val in option.items() if val not in (None, "", [], {})})
@@ -577,7 +580,15 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
         }.items() if value not in (None, "", [], {})}
     if role == "research_lead" and stage == "hypothesis_display":
         lock = context.get("frozen_hypothesis") if isinstance(context.get("frozen_hypothesis"), dict) else {}
-        return {"frozen_hypothesis": locked_science_view(lock)}
+        reasoning = context.get("frozen_reasoning")
+        frozen_reasoning = {
+            key: value for key, value in (reasoning.items() if isinstance(reasoning, Mapping) else ())
+            if key in {"transition", "why_now", "goal_advance", "lineage_main_node_id",
+                       "lineage_other_node_ids", "lineage_anchor_node_id", "lineage_anchor_node_ids",
+                       "evolution_operator"} and value not in (None, "", [], {})
+        }
+        return {"frozen_hypothesis": locked_science_view(lock),
+                **({"frozen_reasoning": frozen_reasoning} if frozen_reasoning else {})}
     if role == "research_lead" and stage == "selection_repair":
         error = context.get("qualification_error") if isinstance(context.get("qualification_error"), dict) else {}
         return {

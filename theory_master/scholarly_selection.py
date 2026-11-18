@@ -6,6 +6,9 @@ import hashlib
 import html
 import json
 import re
+import importlib.util
+import math
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +17,139 @@ _TARGET_STOPWORDS = {
     "citations", "citation", "original", "definition", "authoritative", "later",
     "interpretations", "interpretation", "source", "sources", "required", "only",
 }
+
+_SEARCH_STOPWORDS = _TARGET_STOPWORDS | {
+    "how", "does", "what", "which", "affect", "effects", "including", "identify",
+    "foundational", "recent", "nearest", "work", "contrasting", "findings",
+    "tractable", "open", "questions", "question", "interested", "interest",
+    "search", "literature", "papers", "please", "review", "overview", "about",
+    "are", "can", "could", "would", "should", "this", "that", "these", "those",
+}
+
+
+def _compact_query(value: str, *, max_terms: int = 14) -> str:
+    """Remove task prose while retaining terms, names and non-English queries."""
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    terms = [token for token in _ascii_focus(text).split()
+             if token.casefold() not in _SEARCH_STOPWORDS]
+    if terms:
+        return " ".join(terms[:max_terms])
+    return text[:300]
+
+
+def _planned_queries(values: Any, *, limit: int = 6) -> list[str]:
+    """The planner supplies short complementary queries, never executable commands."""
+    if not isinstance(values, list):
+        return []
+    queries, seen = [], set()
+    for item in values:
+        value = item.get("query") if isinstance(item, dict) else item
+        if not isinstance(value, str):
+            continue
+        value = re.sub(r"\s+", " ", value).strip()[:400]
+        key = " ".join(re.findall(r"[^\W_]+", value.casefold()))
+        if key and key not in seen:
+            queries.append(value)
+            seen.add(key)
+        if len(queries) >= limit:
+            break
+    return queries
+
+
+def _metadata_issue(record: Any) -> str:
+    """Reject corrupt provider records before they enter a model's evidence corpus.
+
+    Provider artifacts stay in each query directory; rejected content is never
+    silently shortened into an apparently valid article title.
+    """
+    if not isinstance(record, dict):
+        return "record_not_object"
+    title = record.get("title")
+    if not isinstance(title, str) or not title.strip():
+        return "missing_title"
+    if len(title) > 1200 or len(title.split()) > 160:
+        return "title_exceeds_article_bound"
+    if not re.search(r"\w", title, re.UNICODE):
+        return "missing_title"
+    abstract = record.get("abstract") or ""
+    if not isinstance(abstract, str):
+        return "invalid_abstract"
+    if len(abstract) > 30000:
+        return "abstract_exceeds_metadata_bound"
+    page_markers = ("enable javascript", "verify you are human", "checking your browser",
+                    "access denied", "just a moment", "accept all cookies", "cookie settings")
+    if any(marker in title.casefold() for marker in page_markers):
+        return "webpage_title_instead_of_article"
+    if re.search(r"<(?:html|body|script|!doctype)\b", title, re.I):
+        return "html_document_in_title"
+    year = record.get("year")
+    if year not in (None, ""):
+        try:
+            int(year)
+        except (TypeError, ValueError, OverflowError):
+            return "invalid_year"
+    return ""
+
+
+def _clean_metadata_record(record: Any) -> tuple[dict[str, Any] | None, str]:
+    issue = _metadata_issue(record)
+    if issue:
+        return None, issue
+    row = dict(record)
+    for field in ("title", "abstract", "venue"):
+        value = html.unescape(re.sub(r"<[^>]+>", " ", str(row.get(field) or "")))
+        row[field] = re.sub(r"\s+", " ", value).strip()
+    row["year"] = int(row["year"]) if row.get("year") not in (None, "") else None
+    for field in ("authors", "sources", "author_ids", "keywords", "open_access_urls"):
+        values = row.get(field) or []
+        if isinstance(values, str):
+            values = [values]
+        if not isinstance(values, list):
+            values = []
+        row[field] = list(dict.fromkeys(str(v).strip()[:1000] for v in values[:500]
+                                       if isinstance(v, (str, int)) and str(v).strip()))
+    if not row["sources"] and row.get("source"):
+        row["sources"] = [str(row["source"])[:100]]
+    for field in ("citation_count",):
+        try:
+            row[field] = min(10**9, max(0, int(row.get(field) or 0)))
+        except (TypeError, ValueError, OverflowError):
+            row[field] = 0
+    try:
+        score = float(row.get("score") or 0)
+        row["score"] = score if math.isfinite(score) else 0.0
+    except (TypeError, ValueError, OverflowError):
+        row["score"] = 0.0
+    for field in ("oa_locations", "fulltext_candidates"):
+        if isinstance(row.get(field), list):
+            row[field] = [item for item in row[field][:40] if isinstance(item, dict)]
+    return row, ""
+
+
+def _term_set(value: str) -> set[str]:
+    tokens = re.findall(r"[^\W_]+", str(value or "").casefold())
+    return {token[:-1] if len(token) > 4 and token.endswith("s") and not token.endswith("ss")
+            else token for token in tokens if len(token) >= 3 and token not in _SEARCH_STOPWORDS}
+
+
+def _landscape_relevance(record: dict[str, Any], queries: list[str], domain_context: str = "",
+                         relevance_terms: list[str] | None = None) -> float:
+    """Reward scientific phrase coverage; provider popularity breaks only close ties."""
+    title = _term_set(record.get("title") or "")
+    abstract = _term_set(record.get("abstract") or "")
+    query_terms = [_term_set(query) for query in queries]
+    coverage = [(.75 * len(terms & title) + .25 * len(terms & abstract)) / len(terms)
+                for terms in query_terms if terms]
+    relevance = max(coverage, default=0.0)
+    # Shared query terms are a model-independent subject anchor. This prevents a
+    # result matching only an ambiguous subtopic from winning the broad survey.
+    shared = set.intersection(*query_terms) if query_terms and all(query_terms) else set()
+    anchors = _term_set(str(domain_context or "").split(",", 1)[0]) or shared
+    if relevance_terms:
+        anchors |= _term_set(" ".join(str(value) for value in relevance_terms[:12]))
+    alignment = len(anchors & (title | abstract)) / len(anchors) if anchors else 0.0
+    citations = math.log1p(min(int(record.get("citation_count") or 0), 10000)) / math.log1p(10000)
+    return round(relevance + .65 * alignment + .03 * citations, 5)
 
 
 def _ascii_focus(value: str) -> str:
@@ -59,11 +195,25 @@ def _precise_search_anchors(value: str) -> list[str]:
 
 
 def _query_variants(
-    task_type: str, source_gap_id: str, search_target: str, new_lead: str, domain_context: str = ""
+    task_type: str, source_gap_id: str, search_target: str, new_lead: str, domain_context: str = "",
+    search_queries: list[Any] | None = None,
 ) -> list[str]:
     raw = f"{search_target} {new_lead}".strip()
+    planned = _planned_queries(search_queries)
+    if planned:
+        return planned
     if task_type != "targeted_source":
-        return [raw or source_gap_id]
+        primary = _compact_query(domain_context.split(",", 1)[0]) if domain_context else ""
+        broad = _compact_query(search_target or new_lead)
+        clauses = re.split(r"[?;\n]|\b(?:including|compare|versus)\b", raw, flags=re.I)
+        candidates = [broad]
+        # Compact clauses complement the overview while retaining its subject.
+        anchor = primary or " ".join(broad.split()[:3])
+        for clause in clauses[1:]:
+            compact = _compact_query(clause, max_terms=8)
+            if _term_set(compact):
+                candidates.append(_compact_query(f"{anchor} {compact}"))
+        return _planned_queries(candidates, limit=4) or [source_gap_id]
 
     def focus(value: str, limit: int) -> str:
         return " ".join(_ascii_focus(value).split()[:limit])
@@ -108,8 +258,66 @@ def _paper_key(record: dict[str, Any]) -> str:
     doi = re.sub(r"^(?:https?://(?:dx\.)?doi\.org/|doi\s*:\s*)", "", doi, flags=re.I)
     if doi:
         return "doi:" + doi
+    arxiv = _identity_helpers().arxiv_key(record.get("arxiv_id"))
+    if arxiv:
+        return "arxiv:" + arxiv
     title = re.sub(r"\W+", " ", str(record.get("title") or "").lower()).strip()
     return "title:" + title
+
+
+@lru_cache(maxsize=1)
+def _identity_helpers():
+    """Use the same identity implementation as the bundled retrieval CLI."""
+    from .skills import skills_root
+    path = skills_root() / "tm-scholar" / "scripts" / "scholar_identity.py"
+    spec = importlib.util.spec_from_file_location("sciver_scholarly_identity", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("scholarly identity helpers unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _reconcile_locked_source(papers: list[dict], source_lock: dict) -> list[dict]:
+    """Attach a requested source to an unambiguous provider identity and its OA URLs."""
+    if not source_lock:
+        return papers
+    identity = _identity_helpers()
+    requested_doi = identity.doi_key(source_lock.get("doi"))
+    requested_title = identity.title_key(source_lock.get("title"))
+    candidates = []
+    for paper in papers:
+        if paper.get("source") == "source-lock":
+            continue
+        actual_doi = identity.doi_key(paper.get("doi"))
+        if requested_doi:
+            matches = actual_doi == requested_doi
+        else:
+            matches = bool(requested_title and identity.title_key(paper.get("title")) == requested_title)
+            if source_lock.get("year") and paper.get("year"):
+                matches = matches and abs(int(source_lock["year"]) - int(paper["year"])) <= 1
+            if source_lock.get("authors") and paper.get("authors"):
+                matches = matches and identity.authors_compatible(source_lock["authors"], paper["authors"])
+        if matches:
+            candidates.append(paper)
+    stable_ids = {identity.doi_key(paper.get("doi")) or identity.arxiv_key(paper.get("arxiv_id"))
+                  or (identity.title_key(paper.get("title")), paper.get("year"), tuple(paper.get("authors") or []))
+                  for paper in candidates}
+    seeds = [paper for paper in papers if paper.get("source") == "source-lock"]
+    if len(stable_ids) != 1:
+        for seed in seeds:
+            seed["identity_resolution"] = "ambiguous" if candidates else "unresolved"
+        return papers
+    provider = dict(candidates[0])
+    for paper in candidates[1:]:
+        provider = identity.merge_paper(provider, paper)
+    provider["source_locked"] = True
+    provider["source_lock_status"] = str(source_lock.get("status") or "locked")
+    provider["identity_resolution"] = "exact_doi" if requested_doi else "unique_exact_title_candidate"
+    provider["requested_source"] = {key: source_lock.get(key) for key in ("doi", "title", "year", "authors") if source_lock.get(key)}
+    if "is_open_access" in source_lock and not source_lock["is_open_access"]:
+        provider["is_open_access"] = False
+    return [provider, *(paper for paper in papers if paper not in candidates and paper not in seeds)]
 
 
 def _proper_name_tokens(value: str) -> list[str]:

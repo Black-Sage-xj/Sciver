@@ -47,6 +47,10 @@ class LeadFrontierStatusPromptTest(unittest.TestCase):
             "why_now": "global pivot is scientifically preferable",
             "goal_advance": "advances the Final Gate",
             "decisive_test": "a discriminating test",
+            "transition": {
+                "prior_gap": "The source claim leaves this bounded scientific question unresolved.",
+                "current_change": "Derive a distinct claim to test the remaining question.",
+            },
         }
         with self.assertRaisesRegex(ValueError, "required for NEW H"):
             contract.validate({"candidates": [{**base, "evolution_operator": "derive"}]}, {})

@@ -12,6 +12,8 @@ from tests.test_science_frontier_v2 import _Workflow
 
 BASE = dict(hypothesis="Independent scientific claim", scope="Frozen scope", why_now="Feasible test",
             goal_advance="Advance the goal", decisive_test="A discriminating check",
+            transition={"prior_gap": "The declared sources leave this relation unresolved.",
+                        "current_change": "Combine the sources to test the bounded relation."},
             evolution_operator="combine")
 KNOWN = {"_known_hypothesis_ids": ["H-0001", "H-0002", "H-0003"]}
 
@@ -110,7 +112,7 @@ def test_fake_workflow_preserves_main_and_other_through_qualification(tmp_path):
             return tid, raw
 
     spec, _ = TheoryMasterTest().make(tmp_path, reworks=0)
-    database = spec.branch_canvas.parent / "science_graph.sqlite3"
+    database = spec.graph_database
     with ScienceGraphStore(database) as store:
         store.add_hypothesis("H-0007", title="First source")
         store.add_hypothesis("H-0008", title="Main source")

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Build and cold-start ordinary wheels offline, outside the source checkout.
+"""Prepare runtime dependencies, then build and cold-start wheels offline.
 
-Requires local pip/setuptools/wheel. No SDK provider, login or model calls are
-used. Run with the minimum supported Python as part of release verification.
+Requires local pip/setuptools/wheel. Dependency preparation uses the configured
+package index unless --dependency-wheels supplies a local wheel directory.
+No SDK provider, login or model calls are used. Run with the minimum supported
+Python as part of release verification.
 """
 from __future__ import annotations
 
@@ -10,11 +12,13 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 from urllib.request import urlopen
 import venv
 import zipfile
@@ -23,7 +27,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def check_distribution(work: Path) -> dict:
+def check_distribution(work: Path, *, dependency_wheels: Path | None = None) -> dict:
     work = work.resolve()
     work.mkdir(parents=True, exist_ok=True)
     wheels = work / "wheels"
@@ -43,6 +47,38 @@ def check_distribution(work: Path) -> dict:
                PIP_NO_INDEX="1", PYTHONNOUSERSITE="1")
     results = []
 
+    runtime_dependencies = tomllib.loads((ROOT / "web/pyproject.toml").read_text())["project"].get("dependencies", [])
+    runtime_dependencies = [requirement for requirement in runtime_dependencies if re.match(
+        r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", requirement)[1].lower().replace("_", "-") != "sciver"]
+    dependency_preparation = {"mode": "local-wheels" if dependency_wheels is not None else "package-index",
+                              "index_access": bool(runtime_dependencies) and dependency_wheels is None,
+                              "requirements": runtime_dependencies, "exit": 0, "wheel_files": []}
+    if runtime_dependencies:
+        command = [sys.executable, "-m", "pip", "download", "--only-binary=:all:", "--dest", str(wheels)]
+        if dependency_wheels is not None:
+            dependency_wheels = dependency_wheels.resolve()
+            if not dependency_wheels.is_dir():
+                raise ValueError("--dependency-wheels must name a directory containing reviewed runtime wheels")
+            command.extend(["--no-index", "--find-links", str(dependency_wheels)])
+        command.extend(runtime_dependencies)
+        # This outer preparation step uses normal pip configuration. Keep its
+        # diagnostics private: index URLs may contain credentials. Only public
+        # requirements, exit status and resulting wheel names are reported.
+        download_env = dict(os.environ)
+        download_env.pop("PIP_NO_INDEX", None)
+        download_env.update(PIP_NO_INPUT="1", PIP_DISABLE_PIP_VERSION_CHECK="1")
+        try:
+            prepared = subprocess.run(command, cwd=outside, env=download_env,
+                                      capture_output=True, text=True, timeout=180)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Runtime dependency wheel preparation timed out") from None
+        dependency_preparation.update(exit=prepared.returncode,
+                                      wheel_files=sorted(path.name for path in wheels.glob("*.whl")))
+        results.append({"command": command, "exit": prepared.returncode, "stage": "runtime-dependencies"})
+        print(json.dumps({"runtime_dependency_preparation": dependency_preparation}), file=sys.stderr, flush=True)
+        if prepared.returncode:
+            raise RuntimeError("Runtime dependency wheel preparation failed; check pip configuration and compatible wheel availability")
+
     def run(command, *, cwd=outside):
         result = subprocess.run([str(arg) for arg in command], cwd=cwd, env=env,
                                 capture_output=True, text=True, timeout=180)
@@ -53,7 +89,9 @@ def check_distribution(work: Path) -> dict:
 
     run([sys.executable, "-m", "pip", "wheel", "--no-deps", "--no-build-isolation",
          "--wheel-dir", wheels, ROOT, ROOT / "web"])
-    artifacts = sorted(wheels.glob("*.whl"))
+    artifacts = sorted(path for path in wheels.glob("*.whl")
+                       if path.name.startswith(("sciver-", "tm_observer-")))
+    dependency_artifacts = sorted(path for path in wheels.glob("*.whl") if path not in artifacts)
     assert len(artifacts) == 2, artifacts
     for artifact in artifacts:
         with zipfile.ZipFile(artifact) as archive:
@@ -112,6 +150,7 @@ from theory_master.scientific_model import load_from_paths
 from theory_master.regression_cases import resolve_case, grade_case
 from theory_master.specification import make_run_id
 import theory_master, tm_observer
+import PIL, pypdf
 bindings = [TaskBinding.load(path) for path in Path("instances").iterdir() if (path / ".theory-master/task.json").is_file()]
 assert len(bindings) == 2
 assert len({b.master_id for b in bindings}) == 2
@@ -122,7 +161,8 @@ for b in bindings:
     assert not list(b.research_root.rglob("*thread*.json*"))
     model = load_from_paths(b.research_root, b.task_home / "research_plan.md", goal_id=b.goal_id)
     assert (model["version"], model["summary"]) == (0, "")
-    with ScienceGraphStore(b.branch_canvas.with_name("science_graph.sqlite3"), readonly=True) as graph:
+    graph_path = Path(b.config.get("graph_database") or b.branch_canvas.with_name("science_graph.sqlite3"))
+    with ScienceGraphStore(graph_path, readonly=True) as graph:
         assert graph.db.execute("SELECT COUNT(*) FROM hypotheses").fetchone()[0] == 0
     for private in ("expected.json", "case.json", "evaluator"):
         assert not (b.task_home / private).exists()
@@ -137,7 +177,8 @@ assert not grade_case("Test0", submission)["passed"]
 print(json.dumps({"task_ids": [b.master_id for b in bindings], "scientific_state": "empty", "next_cycle": 1,
                   "research_roots": [str(b.research_root) for b in bindings],
                   "goal": case.plan_path.read_text().split("# Research Contract", 1)[0].removeprefix("# Goal").strip(),
-                  "core": theory_master.__file__, "web": tm_observer.__file__, "fixture": str(case.root)}))
+                  "core": theory_master.__file__, "web": tm_observer.__file__, "fixture": str(case.root),
+                  "runtime_dependencies": {"Pillow": PIL.__version__, "pypdf": pypdf.__version__}}))
 '''])
     installed_checks = json.loads(checks)
     with socket.socket() as reserve:
@@ -216,6 +257,8 @@ print(json.dumps({"task_ids": [b.master_id for b in bindings], "scientific_state
                 server.kill()
                 server.wait(timeout=5)
     result = {"python": sys.version, "artifacts": [str(path) for path in artifacts],
+              "dependency_artifacts": [str(path) for path in dependency_artifacts],
+              "dependency_preparation": dependency_preparation,
               "commands": results, "installed_checks": installed_checks, "endpoints": endpoints,
               "prepared_tasks": prepared_tasks,
               "model_calls": 0}
@@ -226,12 +269,14 @@ print(json.dumps({"task_ids": [b.master_id for b in bindings], "scientific_state
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--work-dir", type=Path, help="new directory in which to keep wheels, logs and result.json")
+    parser.add_argument("--dependency-wheels", type=Path,
+                        help="reviewed local runtime wheel directory; disables network dependency preparation")
     args = parser.parse_args()
     if args.work_dir:
-        result = check_distribution(args.work_dir)
+        result = check_distribution(args.work_dir, dependency_wheels=args.dependency_wheels)
     else:
         with tempfile.TemporaryDirectory(prefix="sciver-distribution-") as directory:
-            result = check_distribution(Path(directory))
+            result = check_distribution(Path(directory), dependency_wheels=args.dependency_wheels)
     print(json.dumps(result, indent=2))
     return 0
 

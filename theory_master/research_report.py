@@ -143,10 +143,9 @@ def fold_legacy_summary(body: str, *, has_guide: bool) -> str:
             "\n</details>\n\n" + body[first["end"]:])
 
 
-def load_report(database: Path, cycle_id: str) -> dict[str, Any]:
-    """Compose a current or historical Cycle report without changing its files."""
+def load_report(database: Path, cycle_id: str, *, vault_root: Path | None = None) -> dict[str, Any]:
+    """Read the sole Markdown report; scientific status stays in the graph store."""
     from .science_graph_store import ScienceGraphStore
-    from .cycle_outcome_documents import render_outcome_document, _valid_v2_json
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", cycle_id):
         raise ValueError("invalid Cycle ID")
     with ScienceGraphStore(database, readonly=True) as store:
@@ -159,53 +158,33 @@ def load_report(database: Path, cycle_id: str) -> dict[str, Any]:
         if row is None:
             raise KeyError(f"Unknown Cycle report: {cycle_id}")
         outcome = json.loads(row["source_json"])
-        if not adjudicated:
-            outcome["verdict"] = "unadjudicated"
-            outcome["judge_rationale"] = ""
-        original = []
-        for source in outcome.get("source_decisions") or [outcome]:
-            old = (store.db.execute("SELECT raw_json FROM legacy_records WHERE id=?", (source["id"],)).fetchone()
-                   if "legacy_records" in tables else None)
-            if old:
-                original.append(json.loads(old["raw_json"]).get("text", ""))
-    root = database.resolve().parent
-    canonical = root / "notes" / "outcomes" / f"{cycle_id}.json"
-    lock = {}
-    if canonical.is_file() and not canonical.is_symlink():
-        raw = canonical.read_text(encoding="utf-8")
-        if _valid_v2_json(raw):
-            saved = json.loads(raw)
-            saved_outcome = saved.get("outcome") or {}
-            saved_lock = saved.get("lock") or {}
-            owners = {outcome.get("hypothesis_id"), (outcome.get("identity_migration") or {}).get("original_hypothesis_id")}
-            if (saved_outcome.get("hypothesis_id") == outcome.get("hypothesis_id")
-                    and str(saved_outcome.get("cycle_id")) == cycle_id
-                    and saved_lock.get("id", outcome.get("hypothesis_id")) in owners):
-                lock = saved_lock
-    # Recover only the existing reproduction footer from old narrative files;
-    # scientific prose is already preserved verbatim in the SQLite Outcome.
-    ref = str(outcome.get("report_ref") or "")
-    source = (root / ref).resolve()
-    if ref and not source.is_file() and not ref.endswith(".md"):
-        source = (root / (ref + ".md")).resolve()
-    if ref and not outcome.get("report_context") and source.is_relative_to(root) and source.is_file():
-        with source.open("rb") as stream:
-            legacy = stream.read(2 * 1024 * 1024).decode("utf-8", errors="ignore")
-        footer = next((r for r in sections(legacy) if r["title"] in {"复现索引", "Reproduction index"}), None)
-        if footer:
-            outcome["report_context"] = {"reproduction_index": legacy[footer["start"]:], "documents": []}
-    content = render_outcome_document(outcome, lock=lock, original_decision="\n\n---\n\n".join(original))
-    return {"id": f"notes/outcomes/{cycle_id}.md", "cycle_id": cycle_id,
+    if vault_root is None:
+        from .notebook import configured_vault_root, notebook_config
+        registered = notebook_config(database.resolve().parent)
+        vault_root = configured_vault_root(registered[1]) if registered else database.resolve().parent
+    root = vault_root.resolve()
+    ref = str(outcome.get("report_ref") or f"notes/outcomes/{cycle_id}.md")
+    path = Path(ref)
+    if path.is_absolute() or ".." in path.parts or path.suffix.lower() != ".md":
+        raise ValueError(f"Cycle report must reference a Markdown file inside its vault: {ref}")
+    source = (root / path).resolve()
+    if not source.is_relative_to(root):
+        raise ValueError(f"Cycle report is outside its vault: {ref}")
+    if not source.is_file():
+        raise FileNotFoundError(f"Cycle report Markdown is missing: {ref}")
+    raw = source.read_bytes()
+    content = raw.decode("utf-8")
+    return {"id": path.as_posix(), "cycle_id": cycle_id,
             "title": str(outcome.get("title") or f"Cycle {cycle_id} · 研究报告"),
-            "content": content, "source_sha256": hashlib.sha256(row["source_json"].encode()).hexdigest(),
+            "content": content, "source_sha256": hashlib.sha256(raw).hexdigest(),
             "adjudication_status": "adjudicated" if adjudicated else "unadjudicated",
             "judge_verdict": outcome.get("verdict") if adjudicated else None,
             "sections": [{k: r[k] for k in ("id", "title", "level")} for r in sections(content)]}
 
 
 def read_report(database: Path, cycle_id: str, *, section: str = "", offset: int = 0,
-                max_chars: int = 12_000) -> dict[str, Any]:
-    result = load_report(database, cycle_id)
+                max_chars: int = 12_000, vault_root: Path | None = None) -> dict[str, Any]:
+    result = load_report(database, cycle_id, vault_root=vault_root)
     text = section_text(result["content"], section)
     if offset < 0 or offset > len(text) or max_chars < 1:
         raise ValueError("invalid report offset or length")

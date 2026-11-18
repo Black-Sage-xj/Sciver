@@ -11,6 +11,8 @@ import subprocess
 import csv
 from datetime import datetime, timezone
 import os
+import signal
+import time
 import sys
 from pathlib import Path
 from typing import Any, Callable
@@ -28,16 +30,76 @@ from .scholarly_selection import (
     _ascii_focus, _load_json, _paper_key, _proper_name_tokens, _query_variants,
     _slug, _source_lock_record, _targeted_relevance, _write_targeted_index,
     _domain_alignment, _write_evidence_index,
+    _reconcile_locked_source, _clean_metadata_record, _landscape_relevance,
+    _identity_helpers,
 )
+
+
+def _run_scholarly_command(command, *, capture_output=True, text=True, timeout=150, check=False, cancel_event=None):
+    """Bound a whole reader/converter tree, including inherited output pipes."""
+    if cancel_event is not None and cancel_event.is_set():
+        raise InterruptedError("Scholarly acquisition cancelled")
+    process = subprocess.Popen(command, stdout=subprocess.PIPE if capture_output else None,
+        stderr=subprocess.PIPE if capture_output else None, text=text, start_new_session=True)
+
+    def kill_tree():
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        except ProcessLookupError:
+            pass
+
+    try:
+        deadline = time.monotonic() + timeout
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                raise InterruptedError("Scholarly acquisition cancelled")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout)
+            try:
+                stdout, stderr = process.communicate(timeout=min(.2, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    except BaseException:
+        kill_tree()
+        process.communicate(timeout=5)
+        raise
+    # A successful CLI must also leave no background converter descendants.
+    kill_tree()
+    if check and process.returncode:
+        raise subprocess.CalledProcessError(process.returncode, command, stdout, stderr)
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
+def _reading_timeout(timeout_s: int) -> int:
+    timeout = max(timeout_s, 180)
+    from .document_conversion import load_settings
+    settings = load_settings()
+    if settings.get("enabled"):
+        # The acquisition clock stops new URL attempts; one already-started
+        # conversion is still entitled to its explicitly configured timeout.
+        timeout += int(settings.get("timeout_s") or 240) + 30
+    return timeout
 
 def retrieve_scholarly(
     task: dict[str, Any],
     workspace: Path,
     *,
     timeout_s: int = 150,
-    runner: Callable[..., Any] = subprocess.run,
+    runner: Callable[..., Any] = _run_scholarly_command,
+    cancel_event=None,
 ) -> dict[str, Any]:
     """Execute reproducible scholarly retrieval in the host runner process."""
+    if cancel_event is not None and cancel_event.is_set():
+        raise InterruptedError("Scholarly acquisition cancelled")
+    if runner is _run_scholarly_command and cancel_event is not None:
+        def run_with_cancellation(command, **kwargs):
+            return _run_scholarly_command(command, cancel_event=cancel_event, **kwargs)
+        runner = run_with_cancellation
     source_gap_id = str(task.get("source_gap_id") or task.get("gap_id") or "external-gap")
     task_type = str(task.get("task_type") or "targeted_source")
     search_target = str(task.get("search_target") or "").strip()
@@ -45,10 +107,11 @@ def retrieve_scholarly(
     domain_context = str(task.get("domain_context") or "").strip()
     source_lock = task.get("source_lock") if isinstance(task.get("source_lock"), dict) else {}
     if task_type == "targeted_source" and (source_lock.get("doi") or source_lock.get("title")):
-        exact = str(source_lock.get("title") or source_lock.get("doi") or "").strip()
+        exact = str(source_lock.get("doi") or source_lock.get("title") or "").strip()
         query_variants = [exact]
     else:
-        query_variants = _query_variants(task_type, source_gap_id, search_target, new_lead, domain_context)
+        query_variants = _query_variants(task_type, source_gap_id, search_target, new_lead, domain_context,
+                                         task.get("search_queries"))
     query = query_variants[0]
 
     root = workspace / "literature" / "sdk_retrieval" / _slug(source_gap_id)
@@ -78,6 +141,9 @@ def retrieve_scholarly(
     blocked_runs = 0
     returncodes: list[int] = []
     locked_key = ""
+    quality_rejections: list[dict[str, Any]] = []
+    raw_metadata_count = 0
+    identity = _identity_helpers()
     if source_lock:
         locked_record = _source_lock_record(source_lock)
         locked_key = _paper_key(locked_record)
@@ -101,6 +167,8 @@ def retrieve_scholarly(
             returncode_i = int(getattr(proc, "returncode", 0) or 0)
             stdout_i = str(getattr(proc, "stdout", "") or "")
             stderr_i = str(getattr(proc, "stderr", "") or "")
+        except InterruptedError:
+            raise
         except Exception as exc:
             returncode_i = 1
             stdout_i = ""
@@ -108,7 +176,8 @@ def retrieve_scholarly(
         returncodes.append(returncode_i)
         all_stdout.append(stdout_i)
         all_stderr.append(stderr_i)
-        rows = _load_json(run_dir / "papers.json", [])
+        raw_path = run_dir / "fetched.json"
+        rows = _load_json(raw_path if raw_path.is_file() else run_dir / "papers.json", [])
         if not isinstance(rows, list):
             rows = []
         errors_i = (run_dir / "errors.log").read_text(encoding="utf-8", errors="replace") if (run_dir / "errors.log").is_file() else ""
@@ -123,14 +192,38 @@ def retrieve_scholarly(
             "connector_error_count": len(error_lines_i),
             "output_dir": str(run_dir),
         })
-        for row in rows:
-            if not isinstance(row, dict):
+        raw_metadata_count += len(rows)
+        for row_index, raw_row in enumerate(rows):
+            row, issue = _clean_metadata_record(raw_row)
+            if issue:
+                quality_rejections.append({"query_index": index, "row_index": row_index,
+                    "reason": issue,
+                    "title_excerpt": str(raw_row.get("title") or "")[:180]
+                    if isinstance(raw_row, dict) else ""})
                 continue
+            assert row is not None
+            row["discovery_queries"] = [query_item]
             key = _paper_key(row)
             fetched_keys.add(key)
             previous = merged.get(key)
-            if previous is None or float(row.get("score") or 0) > float(previous.get("score") or 0):
-                merged[key] = dict(row)
+            if previous is None:
+                # A provider lacking DOI can still match a DOI-bearing record
+                # through compatible exact title/year/author metadata.
+                matches = [other_key for other_key, other in merged.items()
+                           if other.get("source") != "source-lock" and identity.same_paper(other, row)]
+                if len(matches) == 1:
+                    previous_key = matches[0]
+                    previous = merged.pop(previous_key)
+                    fetched_keys.add(previous_key)
+                    if previous.get("doi") and not row.get("doi"):
+                        key = previous_key
+            if previous is None:
+                merged[key] = row
+            else:
+                item = identity.merge_paper(previous, row)
+                item["discovery_queries"] = list(dict.fromkeys(
+                    list(previous.get("discovery_queries") or []) + [query_item]))
+                merged[key] = item
             if locked_key and key == locked_key:
                 enriched = dict(merged.get(key) or {})
                 for field, value in dict(row).items():
@@ -143,7 +236,7 @@ def retrieve_scholarly(
                     enriched["open_access_url"] = str(source_lock.get("open_access_url") or "")
                 merged[key] = enriched
 
-    papers = list(merged.values())
+    papers = _reconcile_locked_source(list(merged.values()), source_lock)
     if task_type == "targeted_source":
         focus_query = " ".join(query_variants[:2])
         for paper in papers:
@@ -161,7 +254,29 @@ def retrieve_scholarly(
             reverse=True,
         )
     else:
-        papers.sort(key=lambda row: float(row.get("score") or 0), reverse=True)
+        terms = task.get("relevance_terms")
+        relevance_terms = terms if isinstance(terms, list) else []
+        for paper in papers:
+            paper["landscape_relevance"] = _landscape_relevance(
+                paper, query_variants, domain_context, relevance_terms)
+            # Preserve the provider's score for diagnostics; downstream callers
+            # use score for prioritization, so publish the same grounded order.
+            paper["provider_score"] = paper.get("score", 0)
+            paper["score"] = paper["landscape_relevance"]
+        papers.sort(key=lambda row: (float(row.get("score") or 0),
+                                     int(row.get("year") or 0)), reverse=True)
+    candidate_count_before_limit = len(papers)
+    try:
+        candidate_limit = max(1, min(100, int(task.get("max_candidates") or 60)))
+    except (TypeError, ValueError, OverflowError):
+        candidate_limit = 60
+    papers = papers[:candidate_limit]
+    quality_path = retrieval_dir / "metadata_quality.json"
+    quality_path.write_text(json.dumps({"raw_metadata_count": raw_metadata_count,
+        "rejected_metadata_count": len(quality_rejections), "rejections": quality_rejections,
+        "candidate_count_before_limit": candidate_count_before_limit,
+        "candidate_limit": candidate_limit, "retained_candidate_count": len(papers)},
+        ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     papers_path = retrieval_dir / "papers.json"
     papers_path.write_text(json.dumps(papers, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     _write_targeted_index(retrieval_dir, papers, query_runs)
@@ -191,19 +306,26 @@ def retrieve_scholarly(
             "--output-dir", str(reading_dir),
             "--reading-limit", "1" if source_lock else "5",
             "--reading-selection", "manual" if source_lock else "top",
-            *(["--paper-ids", str(source_lock.get("doi") or source_lock.get("title"))] if source_lock else []),
+            *(["--paper-ids", str(next((paper.get("doi") or paper.get("title") for paper in papers
+                                       if paper.get("source_locked")), "")
+                                  or source_lock.get("doi") or source_lock.get("title"))] if source_lock else []),
             "--pdf-policy", "open-access-only",
-            "--max-pages", "20",
+            "--resolve-oa",
+            "--timeout-s", str(max(10, min(timeout_s, 600))),
         ]
         try:
-            read_proc = runner(read_command, capture_output=True, text=True, timeout=max(timeout_s, 180), check=False)
+            read_timeout = _reading_timeout(timeout_s)
+            read_proc = runner(read_command, capture_output=True, text=True, timeout=read_timeout, check=False)
             reading_result = {
                 "returncode": int(getattr(read_proc, "returncode", 0) or 0),
                 "stdout": str(getattr(read_proc, "stdout", "") or "")[-3000:],
                 "stderr": str(getattr(read_proc, "stderr", "") or "")[-3000:],
                 "reading_index": str(reading_dir / "reading_index.md"),
                 "pdf_manifest": str(reading_dir / "pdf_manifest.csv"),
+                "timeout_s": read_timeout,
             }
+        except InterruptedError:
+            raise
         except Exception as exc:
             reading_result = {"error": f"{type(exc).__name__}: {exc}"}
 
@@ -252,6 +374,8 @@ def retrieve_scholarly(
                     "json": str(out_dir / "paper_trace.json"),
                     "stderr": str(getattr(trace_proc, "stderr", "") or "")[-2000:],
                 })
+            except InterruptedError:
+                raise
             except Exception as exc:
                 trace_runs.append({"seed": seed, "error": f"{type(exc).__name__}: {exc}"})
 
@@ -267,6 +391,10 @@ def retrieve_scholarly(
         "source_lock": json.loads(json.dumps(source_lock)),
         "discovery_mode": "source_lock" if source_lock else "discovery",
         "query_variants": query_variants, "query_runs": query_runs,
+        "raw_metadata_count": raw_metadata_count,
+        "rejected_metadata_count": len(quality_rejections),
+        "candidate_count_before_limit": candidate_count_before_limit,
+        "metadata_quality_json": str(quality_path),
         # paper_count is retained for compatibility but is a metadata-hit
         # count, not a count of papers actually read.
         "paper_count": len(papers),

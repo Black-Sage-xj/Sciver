@@ -6,6 +6,7 @@ No third-party retrieval code is bundled.
 from __future__ import annotations
 
 import math
+import html
 import re
 import unicodedata
 from urllib.parse import unquote
@@ -20,7 +21,8 @@ def doi_key(value: object) -> str:
 
 def arxiv_key(value: object) -> str:
     raw = unquote(str(value or "")).strip()
-    raw = re.sub(r"^(?:https?://(?:www\.)?arxiv\.org/(?:abs|pdf)/|arxiv:)", "", raw, flags=re.I)
+    raw = re.sub(r"^(?:https?://(?:(?:www|export)\.)?arxiv\.org/(?:abs|pdf|html)/|arxiv:)", "", raw, flags=re.I)
+    raw = raw.split("?", 1)[0].split("#", 1)[0]
     raw = re.sub(r"\.pdf$", "", raw, flags=re.I)
     raw = re.sub(r"v\d+$", "", raw, flags=re.I)
     return raw.casefold() if re.fullmatch(r"(?:\d{4}\.\d{4,5}|[a-z.-]+/\d{7})", raw, re.I) else ""
@@ -83,10 +85,36 @@ def same_paper(a: dict, b: dict) -> bool:
     return authors_compatible(left_authors, right_authors)
 
 
+def source_abstract_variants(paper: dict) -> list[dict]:
+    """Keep literal provider versions; HTML entity decoding changes no wording."""
+    values = []
+    for variant in paper.get("abstract_variants") or []:
+        if isinstance(variant, dict) and isinstance(variant.get("text"), str):
+            values.append({"text": variant["text"].strip()[:16000],
+                "provider": str(variant.get("provider") or "")[:120],
+                "url": str(variant.get("url") or "")[:3000]})
+    abstract = str(paper.get("abstract") or "").strip()[:16000]
+    if abstract and not any(item["text"] == abstract for item in values):
+        sources = set(paper.get("sources") or []) - {None, ""}
+        provider = "merged_metadata" if len(sources) > 1 else str(paper.get("source") or "")
+        values.append({"text": abstract, "provider": provider[:120], "url": str(paper.get("url") or "")[:3000]})
+    decoded = [{**item, "text": html.unescape(item["text"])} for item in values]
+    unique = {}
+    for item in [*values, *decoded]:
+        if item["text"]:
+            unique.setdefault((item["text"], item["provider"], item["url"]), item)
+    return list(unique.values())[:12]
+
+
 def merge_paper(old: dict, new: dict) -> dict:
     result = dict(old)
     result["sources"] = sorted(set((old.get("sources") or [old.get("source")]) +
                                    (new.get("sources") or [new.get("source")])) - {None, ""})
+    variants = {}
+    for item in [*source_abstract_variants(old), *source_abstract_variants(new)]:
+        variants.setdefault((item["text"], item["provider"], item["url"]), item)
+    if variants:
+        result["abstract_variants"] = list(variants.values())[:12]
     for key in ("doi", "arxiv_id", "url", "open_access_url", "abstract", "title", "authors"):
         value = new.get(key)
         previous = result.get(key)
@@ -98,6 +126,13 @@ def merge_paper(old: dict, new: dict) -> dict:
         if url))
     if not result.get("open_access_url") and result["open_access_urls"]:
         result["open_access_url"] = result["open_access_urls"][0]
+    locations = {}
+    for item in (old, new):
+        for location in item.get("oa_locations") or []:
+            if isinstance(location, dict) and isinstance(location.get("url"), str):
+                locations.setdefault(location["url"], dict(location))
+    if locations:
+        result["oa_locations"] = list(locations.values())[:20]
     result["citation_count"] = max(int(old.get("citation_count") or 0),
                                    int(new.get("citation_count") or 0))
     result["is_open_access"] = bool(result.get("is_open_access") or new.get("is_open_access"))

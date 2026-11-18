@@ -486,6 +486,10 @@ class Collector(CollectorRecoveryMixin, CollectorProjectionMixin):
             seen: set[str] = set()
             for path in paths_from_event(mapped):
                 ref = loaded_skill_for_path(role, path, task_config_path=getattr(self.spec, "config_path", None))
+                if ref is None:
+                    # Learned entries come from this invocation's immutable SDK binding.
+                    ref = next((item for item in getattr(self, "learned_skill_refs", ())
+                                if str(item.skill_md) == str(path)), None)
                 if ref is None or ref.directory in seen:
                     continue
                 seen.add(ref.directory)
@@ -504,6 +508,7 @@ class Collector(CollectorRecoveryMixin, CollectorProjectionMixin):
                         "load_index": prior + 1,
                         "first_load_in_turn": prior == 0 or agent.get("skill_last_turn", {}).get(ref.directory) != mapped.get("turn_id"),
                         "detection": "observed_file_read",
+                        "invocation_id": getattr(self, "skill_evolution_invocation_id", None),
                     }
                     agent.setdefault("skill_last_turn", {})[ref.directory] = mapped.get("turn_id")
                     self._apply_codex(skill_event, role=_agent_key(role), thread_id=thread_id)

@@ -9,6 +9,7 @@ import re
 from typing import Any, Mapping
 
 from .hypothesis_display import TITLE_LIMIT, CLAIM_LIMIT, CONDITIONS_LIMIT
+from .research_transition import validate_transition
 
 from .cycle_criteria import criterion_rows
 
@@ -77,6 +78,10 @@ MINIMAL_FRONTIER_PROPOSAL_SCHEMA = {
         "scope": "the scientific scope/boundary of this hypothesis",
         "why_now": "...",
         "goal_advance": "...",
+        "transition": {
+            "prior_gap": "source unresolved gap or root Goal unknown; nonempty, maximum 400 characters",
+            "current_change": "what this H changes or tests in response; nonempty, maximum 400 characters",
+        },
         "decisive_test": "test definition for this hypothesis within its stated scope",
         "lineage_main_node_id": "one existing SQLite H ID; determines the branch connection",
         "lineage_other_node_ids": "0–2 other existing SQLite H IDs; details only, no branch connections",
@@ -96,7 +101,7 @@ MINIMAL_FRONTIER_PROPOSAL_VALIDATION_SCHEMA = {
     }],
 }
 
-FRONTIER_PROPOSAL_PROMPT_NOTE = """Use evolution_operator only from: refine | specialize | generalize | alternative | combine | derive | counter_hypothesis. For a root H, omit all lineage fields. For a derived H, choose one main and up to two distinct other sources. If revisiting a parked source, include that H in main or other sources. Anchors are directly relevant lineage references, not evidence. The SDK owns H identity and lineage edges. Closed/rejected H may source a distinct new H but is not reopened. Do not return canvas_title, canvas_summary, canvas_claim, or canvas_conditions; post-lock hypothesis_display owns display output."""
+FRONTIER_PROPOSAL_PROMPT_NOTE = """Use evolution_operator only from: refine | specialize | generalize | alternative | combine | derive | counter_hypothesis. For a root H, omit all lineage fields. For a derived H, choose one main and up to two distinct other sources. If revisiting a parked source, include that H in main or other sources. Anchors are directly relevant lineage references, not evidence. The SDK owns H identity and lineage edges. Closed/rejected H may source a distinct new H but is not reopened. Every new Candidate requires transition.prior_gap/current_change, each nonempty and at most 400 characters; the SDK freezes and displays these authored sentences verbatim. Do not return canvas_title, canvas_summary, canvas_claim, or canvas_conditions; post-lock hypothesis_display owns display output."""
 
 MINIMAL_HYPOTHESIS_DISPLAY_SCHEMA = {
     "canvas_title": f"faithful scientific title, maximum {TITLE_LIMIT} characters",
@@ -392,8 +397,9 @@ def _minimal_frontier_structure(output: dict[str, Any], context: Mapping[str, An
             raise ValueError("candidate contains SDK-owned fields: " + ", ".join(sorted(forbidden)))
         for field in ("hypothesis", "scope", "why_now", "goal_advance", "decisive_test"):
             _text(candidate.get(field), f"candidates[{index}].{field}")
+        validate_transition(candidate.get("transition"))
         allowed_candidate_fields = {
-            "hypothesis", "scope", "why_now", "goal_advance", "decisive_test",
+            "hypothesis", "scope", "why_now", "goal_advance", "decisive_test", "transition",
             "lineage_anchor_node_id", "lineage_anchor_node_ids", "lineage_main_node_id",
             "lineage_other_node_ids", "evolution_operator", "reconsideration_trigger",
         }
@@ -671,7 +677,7 @@ def _minimal_repair_verification_structure(output: dict[str, Any], context: Mapp
         raise ValueError("repair verification requires frozen revise blockers")
     if str(candidate.get("parent_candidate_id") or "") != str(original.get("id") or ""):
         raise ValueError("repair verification parent Candidate mismatch")
-    for field in ("hypothesis", "scope", "goal_advance", "estimand"):
+    for field in ("hypothesis", "scope", "goal_advance", "estimand", "transition"):
         if candidate.get(field, "") != original.get(field, ""):
             raise ValueError(f"repair verification changed frozen {field}")
     if " ".join(str(candidate.get("decisive_test") or "").split()) == " ".join(str(original.get("decisive_test") or "").split()):
@@ -962,7 +968,7 @@ def _lead_selection_structure(output: dict[str, Any], context: Mapping[str, Any]
 
 PHASE_CONTRACTS: dict[tuple[str, str], RoleContract] = {
     ("research_lead", "frontier_proposal"): RoleContract(
-        "theory-master/role/research-lead/frontier-proposal", 12,
+        "theory-master/role/research-lead/frontier-proposal", 13,
         MINIMAL_FRONTIER_PROPOSAL_SCHEMA, _minimal_frontier_structure, _noop,
         FRONTIER_PROPOSAL_PROMPT_NOTE,
         validation_schema=MINIMAL_FRONTIER_PROPOSAL_VALIDATION_SCHEMA,

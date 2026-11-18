@@ -19,7 +19,7 @@ This repository contains the maintained source for the engine, agent workflows, 
 
 - **Research workflow engine** — orchestrates multi-stage, multi-agent scientific investigation.
 - **Agent roles and skills** — reusable identities, instructions, and research procedures.
-- **Web Observatory** — inspect persisted runs, review progress, and explicitly control research runs through the SDK.
+- **Web Observatory** — start a new project from a question or interest through Research Chat, develop a Plan, and confirm task creation; inspect existing graphs, reports, and runtime state, and carry out explicitly authorized research adjustments. See the [research collaboration guide (Chinese)](docs/research-chat-collaboration.zh-CN.md).
 - **Tests and design references** — regression tests and technical design documentation.
 
 ## System architecture
@@ -80,6 +80,8 @@ To create your own project, start from scratch or select an existing directory c
 
 For existing-project migration, the five Research Plan sections, and what happens after setup, see [Start with your own research](docs/START_HERE.md).
 
+You can also begin with an interest and ask Research Chat to explore the literature. An independent Literature job plans complementary searches, selects papers, reads accessible sources, and compares mechanisms and open questions. Open its progress card to inspect sources and the report; candidate records, abstracts, readable bodies, and checked claims are shown separately. Discuss the results before reviewing a project plan and confirming creation. See the [Literature workflow (Chinese)](docs/literature-workflow.zh-CN.md) and its [live acceptance results (Chinese)](docs/literature-acceptance-20261118.zh-CN.md).
+
 To verify setup without starting the Web server:
 
 ```bash
@@ -115,7 +117,7 @@ Without `--prepare-only`, `test` starts real model-based research and uses accou
 - Install a supported Codex CLI and log in to your model provider; the CLI is not bundled with the Python package. After installing the CLI, log in with `sciver codex-account login-1`, then check `sciver codex-account status`.
 - Select available models and accounts in the Web UI. The model tier named `test` still makes real model requests and consumes quota; it is separate from the offline setup check.
 - `sciver web` defaults to the active Python for computation. Run `python -m pip install numpy scipy` for numerical work, or run `export THEORYMASTER_COMPUTE_PYTHON=/absolute/path/to/python` to select your scientific environment. Explicit settings are preserved.
-- External literature retrieval is optional for setup and viewing. The `research-lit` skill does not bundle a retrieval adapter. When needed, install a licensed `lit_retrieve.py` adapter in `~/.local/share/theory-master/scholarly-scripts`, or override the directory and interpreter with `THEORYMASTER_SCHOLARLY_SCRIPTS` and `THEORYMASTER_SCHOLARLY_PYTHON`.
+- Literature discovery uses the bundled `tm-scholar` public scholarly connectors. Setup and offline viewing need no literature access. Model-assisted literature jobs use the selected account and quota; public APIs may be rate-limited and full text may be unavailable. Optional Marker/MinerU PDF conversion is configured in Settings and defaults to disabled; accessible HTML can still be read. `THEORYMASTER_SCHOLARLY_PYTHON` selects the scholarly Python runtime when needed.
 
 ## Repository layout
 

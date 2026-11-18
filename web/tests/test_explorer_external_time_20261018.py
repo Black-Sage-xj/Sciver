@@ -34,7 +34,7 @@ ADDITIONAL = r"""
       text:'type: External\n# Ambiguous source'});
   edges.push({id:'D-follow',fromNode:'D',toNode:'external-follow'},
              {id:'B-follow',fromNode:'B',toNode:'external-follow'});
-  await elements['ex-refresh'].onclick();await tick();await tick();
+  await ctx.window.testReloadIndex();await tick();await tick();
   await elements['ex-all'].onclick();await tick();await tick();
   latestGraph.camera.zoom=.34;
   latestGraph.events.aftertransform();

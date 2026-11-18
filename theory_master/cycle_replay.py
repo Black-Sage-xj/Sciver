@@ -85,7 +85,7 @@ def _rebind_private_replay_owner(
 ) -> None:
     """Rebind a frozen H to its replay Cycle inside the private cloned graph only."""
     from .science_graph_store import ScienceGraphStore
-    with ScienceGraphStore(graph_path) as store:
+    with ScienceGraphStore(graph_path, auto_refresh_canvas=False) as store:
         with store.transaction():
             owner = store.db.execute(
                 "SELECT cycle_id FROM hypothesis_cycle_owners WHERE hypothesis_id=?",
@@ -236,10 +236,12 @@ def replay_cycle(source_spec: TaskSpec, source_cycle: Path, requested: str, *, d
             shutil.copy2(inputs / "branch_canvas.canvas", canvas)
             # The private replay task must receive the canonical graph snapshot;
             # Canvas is only a projection and cannot reconstruct scientific state.
-            shutil.copy2(inputs / "science_graph.sqlite3", task_home / "science_graph.sqlite3")
+            private_database = runtime_root / "science_graph.sqlite3"
+            shutil.copy2(inputs / "science_graph.sqlite3", private_database)
             config = json.loads((inputs / "task_config.json").read_text(encoding="utf-8"))
             if "task_skills" in record["source_sha256"]:
-                shutil.copytree(inputs / "task_skills", config_path.parent / "skills")
+                from .skills import task_skills_root
+                shutil.copytree(inputs / "task_skills", task_skills_root(config_path))
             if "notes_mirror" in record["source_sha256"]:
                 shutil.copytree(inputs / "notes_mirror", task_home / "notes", dirs_exist_ok=True)
             benchmark_src = inputs / "benchmark" if (
@@ -255,6 +257,7 @@ def replay_cycle(source_spec: TaskSpec, source_cycle: Path, requested: str, *, d
                 shutil.copytree(benchmark_src, benchmark)
             benchmark_access = external_benchmark or (benchmark if benchmark_src is not None else None)
             config.update({"plan_path": str(plan), "task_home": str(task_home), "research_root": str(runtime_root),
+                           "vault_root": str(task_home), "graph_database": str(private_database),
                            "branch_canvas": str(canvas), "notes_dir": str(task_home / "notes"),
                            "legacy_research_root": None, "task_id": replay_task_id,
                            "max_cycles": 1})
@@ -264,6 +267,7 @@ def replay_cycle(source_spec: TaskSpec, source_cycle: Path, requested: str, *, d
             config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             shutil.copy2(inputs / "scientific_model_state.json", runtime_root / "scientific_model_state.json")
             private_spec = replace(source_spec, document=plan, research_root=runtime_root, branch_canvas=canvas,
+                                   graph_database=private_database,
                                    notes_mirror_dir=task_home / "notes", config_path=config_path, task_home=task_home,
                                    benchmark_dir=benchmark_access,
                                    legacy_research_root=None, max_cycles=1)
@@ -276,7 +280,7 @@ def replay_cycle(source_spec: TaskSpec, source_cycle: Path, requested: str, *, d
             (staging / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             if requested == "investigator":
                 replay_cycle_id = _next_private_cycle_id(
-                    task_home / "science_graph.sqlite3", runtime_root,
+                    private_database, runtime_root,
                     task_mode=private_spec.task_mode, goal_id=private_spec.goal_id,
                 )
                 lock = record["state"].get("hypothesis_lock") or {}
@@ -284,7 +288,7 @@ def replay_cycle(source_spec: TaskSpec, source_cycle: Path, requested: str, *, d
                 if not frozen_h_id:
                     raise ValueError("investigator checkpoint has no frozen H identity")
                 _rebind_private_replay_owner(
-                    task_home / "science_graph.sqlite3", source_cycle_id=str(source_cycle.name),
+                    private_database, source_cycle_id=str(source_cycle.name),
                     replay_cycle_id=replay_cycle_id, hypothesis_id=frozen_h_id,
                 )
                 cycle_workspace = runtime_root / replay_cycle_id / "workspace"
@@ -328,6 +332,7 @@ def replay_cycle(source_spec: TaskSpec, source_cycle: Path, requested: str, *, d
             final_config = final_task / ".theory-master/theory-master.config.json"
             final_config_data = json.loads(final_config.read_text(encoding="utf-8"))
             final_config_data.update({"plan_path": str(final_task / "research_plan.md"), "task_home": str(final_task),
+                                      "vault_root": str(final_task), "graph_database": str(final_root / "science_graph.sqlite3"),
                                       "research_root": str(final_root), "branch_canvas": str(final_task / "branch.canvas"),
                                       "notes_dir": str(final_task / "notes"), "legacy_research_root": None,
                                       "task_id": replay_task_id, "max_cycles": 1})
@@ -341,10 +346,11 @@ def replay_cycle(source_spec: TaskSpec, source_cycle: Path, requested: str, *, d
             replay_cycle_id = None
             if requested == "start":
                 replay_cycle_id = _next_private_cycle_id(
-                    final_task / "science_graph.sqlite3", final_root,
+                    final_root / "science_graph.sqlite3", final_root,
                     task_mode=private_spec.task_mode, goal_id=private_spec.goal_id,
                 )
             private_spec = replace(private_spec, document=attempt_root / "task/research_plan.md",
+                                   graph_database=final_root / "science_graph.sqlite3",
                                    research_root=attempt_root / "research", branch_canvas=attempt_root / "task/branch.canvas",
                                    notes_mirror_dir=attempt_root / "task/notes", config_path=attempt_root / "task/.theory-master/theory-master.config.json",
                                    task_home=attempt_root / "task",

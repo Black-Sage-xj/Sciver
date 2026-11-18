@@ -1,5 +1,16 @@
 # TheoryMaster Canvas / ResearchGraph 现行维护规范
 
+## Markdown 笔记库与自动 Canvas（2026-11-18）
+
+- `vault_root` 明确指定人类可读笔记库；`branch_canvas` 固定在该目录根部。新任务的 `graph_database` 位于独立的 `research_root`，运行数据与笔记分别保存。任务身份由原配置和运行根目录绑定，移动笔记库保留任务 ID。
+- `vault_canvas.refresh_canvas()` / `refresh_registered_canvases()` 从 SQLite 的一致快照生成标准 JSON Canvas。H 档案、Cycle 报告和 External 文档使用库内相对路径的 `file` 卡片，连线带关系名称。报告卡片属于阅读投影，科学图谱节点仍为 H 与 External。
+- 图谱外层事务提交后刷新已登记全图和分支 Canvas；文档首次发布后的运行时刷新使卡片关联可见文件。单独刷新 Canvas 只读取既有 Markdown，不生成、改写或恢复 Markdown。输出经锁和原子替换发布；失败保留上一个完整文件，登记 pending，并在后续提交或手动刷新时重试。
+- 全图文件为根目录的 `exploration.canvas`；用户创建的分支文件为同目录的 `branch-<H ID>.canvas`，范围为该 H 及后续分支、关联 External 和报告。Canvas 单向生成；个人布局可另存副本。
+- Markdown 是唯一可编辑阅读正文。Outcome 和 External 首次发布后保留原文件；H 档案只为新 Cycle 追加独立块，重试保留已有字节。发布索引独立保存在 `.theory-master`。已删除的文档显示缺失，刷新不重建。
+- Web `/document`、`/report` 和 Agent `report-read` 读取同一 Markdown。章节、分页与正文摘要来自文件；节点身份、连线、Whole-H / Cycle 裁决及前沿状态来自 SQLite。
+- 图谱工具栏的“笔记库”提供路径、复制、Obsidian、同机打开文件夹、整库下载、全图/分支另存和输出目录选择。服务端整库移动只允许无活跃 Runner、Worker 或调度器的任务，保留唯一文档，更新路径绑定；本机另存产生副本。
+- 用 `sciver new research_plan.md --vault-root /absolute/empty/folder` 选择新任务笔记目录。远程网页使用本机已登记的 Obsidian 库名；服务端文件管理器操作仅对同机桌面连接开放。
+
 ## Runtime data authority (2026-10-20)
 
 - `science_graph.sqlite3` is the only authoritative store for H records, lineage, External records, frontier status, and Cycle Outcomes.
@@ -47,7 +58,7 @@ Canvas 不是 Workflow 状态板、Evidence Registry、原始数据仓库或完�
 ### 正式投影、旧布局预览与 External 详情
 
 - `exploration.canvas` 是当前 `science_graph.sqlite3` 的只读正式投影；当前核对结果为 117 个 H、68 个 External、185 个节点、260 条边。SQLite 是权威数据源，Canvas 不反向写入数据库。
-- External 卡片只保留短预览，并通过 `[[notes/external/<External ID>.md|详细内容]]` 打开由 SQLite 生成的完整正文副本。Markdown 详情是阅读入口，不是第二个权威存储；修订应以 SQLite 为准再重新生成。
+- Web External 卡片显示数据库短预览，完整详情读取 `notes/external/<External ID>.md`。Canvas 使用同一文件的文档卡片。首次发布后保留用户编辑，图谱刷新只更新 Canvas。
 - `exploration-v2.canvas` 是历史 staging 布局预览，节点/边集合与当前正式图谱不同；其元数据明确标为 `staging_preview_not_current`，不用于当前 Agent 上下文、科研状态判断或正式投影一致性核验。它也可以被可视化查看，但不是当前正式图的等价副本。为避免混合历史与当前数据，其 External 详情独立保存在 `notes/external-v2/<ID>.md`，不覆盖正式投影的 `notes/external/<ID>.md`。
 - 正式投影元数据的 Outcome 语义必须表示“每个 H 有一个 Whole-H assessment，并可有零条或多条 Cycle Outcome”。旧 `one_outcome_per_hypothesis` 不符合现行模型；旧预览必须明确标注历史/非权威，不能冒充当前 schema。
 
@@ -129,3 +140,8 @@ Reporter 的当前 `report` 合同为 v5：返回 `title`、三节研究正文 `
 如文档与运行契约出现偏差，以实测代码和数据库证据复核后更新文档；不得以旧文案擅自扩大 Agent 权限。
 
 ### 2026-10-19 · Preserve 阶段性结论归属原 Hypothesis 的 Outcome
+
+- **Preserve 归属**：停止前保存的阶段性发现归入该 H 的 Cycle Outcome 历史，保留原报告、Evidence SHA 和已有 Judge 返工意见，不创建独立 External/StageSummary 节点。
+- **裁决分离**：预算拒绝续批等未完成情况使用 `unadjudicated` 保全记录；正式 supported、rejected 或 Open 仍只由 Judge 产生。保全材料不得用成科学反证，也不得覆盖正式裁决。
+- **阅读显示**：H 详情的 Outcome 部分可查看阶段性总结、未完成的冻结检验、缺口、终止原因和来源；节点仍为 Hypothesis，前沿是否继续由独立状态表达。
+- **紧凑工具栏（展示层）**：分支、搜索、完整图谱、常用视图、统计、帮助和全屏集中在工具栏；浏览历史与缩放位于画布底角。菜单支持外部点击与 Esc 关闭，并返回键盘焦点。窄屏按剩余视口分配图谱与笔记空间。这些操作只影响阅读状态。

@@ -63,8 +63,11 @@ class WorkflowStateMixin:
             graph_resolver = getattr(self, "_graph_database_path", None)
             if callable(graph_resolver):
                 graph_path = graph_resolver()
+            elif getattr(spec, "graph_database", None) is not None:
+                graph_path = Path(spec.graph_database).resolve()
             elif getattr(spec, "branch_canvas", None) is not None:
-                graph_path = Path(spec.branch_canvas).resolve().parent / "science_graph.sqlite3"
+                from .notebook import graph_database_path
+                graph_path = graph_database_path(Path(spec.branch_canvas).resolve().parent)
         candidates = {
             "research_plan": getattr(spec, "document", None),
             "task_config": getattr(spec, "config_path", None),
@@ -128,8 +131,8 @@ class WorkflowStateMixin:
         external_references: dict[str, str] = {}
         if spec is not None and getattr(spec, "config_path", None) is not None:
             config = json.loads(Path(spec.config_path).read_text(encoding="utf-8"))
-            home = Path(config.get("task_home") or spec.document.parent)
-            for label, source_dir in (("task_skills", home / ".theory-master" / "skills"),
+            from .skills import task_skills_root
+            for label, source_dir in (("task_skills", task_skills_root(Path(spec.config_path))),
                                       ("notes_mirror", Path(spec.notes_mirror_dir) if spec.notes_mirror_dir else None),
                                       ("benchmark", Path(config["benchmark_root"]) if config.get("benchmark_root") else None)):
                 if source_dir is None or not source_dir.is_dir():
@@ -406,10 +409,8 @@ class WorkflowStateMixin:
         self.branch_canvas = self.spec.branch_canvas
         graph_path = self._graph_database_path()
         if create and not self.branch_canvas.exists():
-            from .science_graph_store import ScienceGraphStore
-            from .science_canvas_export import canvas_projection
-            with ScienceGraphStore(graph_path, readonly=True) as store:
-                write_json(self.branch_canvas, canvas_projection(store))
+            from .vault_canvas import refresh_registered_canvases
+            refresh_registered_canvases(graph_path)
         if hasattr(self.backend, "cwd"):
             self.backend.cwd = self.cycle_workspace  # type: ignore[attr-defined]
             if hasattr(self.backend, "cycle_id"):
@@ -829,6 +830,7 @@ class WorkflowStateMixin:
         anchors = {
             "task_home": str(task_home),
             "note_area": str(self.spec.document.parent.resolve()),
+            "notes_vault_root": str(canvas.parent),
             "research_root": str(self.spec.research_root.resolve()),
             "branch_canvas": str(canvas),
         }
@@ -843,10 +845,6 @@ class WorkflowStateMixin:
             anchors["benchmark_root"] = str(benchmark_root.resolve())
         if self.spec.legacy_research_root is not None:
             anchors["legacy_research_root"] = str(self.spec.legacy_research_root.resolve())
-        for parent in (task_home, *task_home.parents):
-            if parent.name == "笔记区" or (parent / ".obsidian").is_dir():
-                anchors["notes_vault_root"] = str(parent)
-                break
         for start in (task_home, canvas, self.spec.research_root.resolve()):
             for parent in (start, *start.parents):
                 if (parent / ".git").exists():
@@ -864,7 +862,7 @@ class WorkflowStateMixin:
         return EvidenceRegistry(
             self.cycle_dir,
             self.cycle_workspace,
-            task_local_root=Path(anchors["task_home"]) if anchors.get("task_home") else None,
+            task_local_root=Path(anchors["notes_vault_root"]) if anchors.get("notes_vault_root") else None,
             repo_root=Path(anchors["repo_root"]) if anchors.get("repo_root") else None,
             research_root=self.spec.research_root,
             legacy_research_root=self.spec.legacy_research_root,

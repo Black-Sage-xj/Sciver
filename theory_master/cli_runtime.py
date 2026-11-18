@@ -44,9 +44,8 @@ def literature_startup_check(routes=None) -> dict[str, object]:
         raise RuntimeError(f"Literature retrieval script missing: {script}")
     if not converter.is_file():
         raise RuntimeError(f"Literature PDF-to-Markdown interface missing: {converter}")
-    marker_bin = Path((os.environ.get("SCHOLARLY_MARKER_BIN") or str(Path.home() / "miniconda3" / "envs" / "marker_env" / "bin" / "marker_single"))).expanduser()
-    if not marker_bin.is_file():
-        raise RuntimeError(f"Literature Marker converter missing: {marker_bin}")
+    from .document_conversion import load_settings
+    conversion = load_settings()
     root = Path(tempfile.mkdtemp(prefix="theory-master-literature-check-"))
     output = root / "retrieval"
     command = [sys.executable, str(script), "--query", "polymer network topology spatial embedding", "--sources", "openalex", "--limit", "1", "--output-dir", str(output), "--report-style", "brief"]
@@ -64,12 +63,10 @@ def literature_startup_check(routes=None) -> dict[str, object]:
     if proc.returncode != 0 or not papers:
         detail = (proc.stderr or proc.stdout or "no paper returned").strip()
         raise RuntimeError(f"Literature startup check failed: {detail[:800]}")
-    marker_probe = subprocess.run([str(marker_bin), "--help"], text=True, capture_output=True, timeout=30, check=False)
-    if marker_probe.returncode != 0:
-        detail = (marker_probe.stderr or marker_probe.stdout or "marker_single --help failed").strip()
-        raise RuntimeError(f"Literature PDF-to-Markdown startup check failed: {detail[:800]}")
     first = papers[0] if isinstance(papers[0], dict) else {}
-    return {"status": "ok", "skills": names, "retrieved": len(papers), "source": first.get("source") or first.get("sources"), "sample_title": first.get("title"), "pdf_to_markdown": "marker-ready", "marker_bin": str(marker_bin), "artifacts": str(output)}
+    conversion_status = ("disabled" if not conversion["enabled"] else
+                         "configured_available" if conversion["available"] else "unavailable")
+    return {"status": "ok", "skills": names, "retrieved": len(papers), "source": first.get("source") or first.get("sources"), "sample_title": first.get("title"), "pdf_to_markdown": conversion_status, "document_conversion": conversion, "artifacts": str(output)}
 
 
 def smoke(live: bool) -> int:

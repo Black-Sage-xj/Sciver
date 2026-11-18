@@ -11,6 +11,15 @@ from theory_master.hypothesis_dossier import (
 )
 from theory_master.workflow import Workflow
 from theory_master.backend_fakes import FakeBackend
+from theory_master.notebook import graph_database_path
+from theory_master.science_canvas_export import canvas_projection
+from theory_master.science_graph_store import ScienceGraphStore
+
+
+def scientific_display(spec):
+    """Inspect the web graph's display independently of the file Canvas cards."""
+    with ScienceGraphStore(graph_database_path(spec.branch_canvas.parent), readonly=True) as store:
+        return canvas_projection(store)
 
 
 class _BriefLeadFake(FakeBackend):
@@ -27,7 +36,8 @@ class _BriefLeadFake(FakeBackend):
 
 class HypothesisDossierProjectionTest(unittest.TestCase):
     def test_existing_graph_lineage_is_checked_in_the_output_contract(self):
-        candidate = {"hypothesis": "H", "scope": "S", "why_now": "W", "goal_advance": "G", "decisive_test": "T"}
+        candidate = {"hypothesis": "H", "scope": "S", "why_now": "W", "goal_advance": "G", "decisive_test": "T",
+                     "transition": {"prior_gap": "The Goal leaves H unknown.", "current_change": "Test H within S."}}
         _minimal_frontier_structure({"candidates": [candidate]}, {"_known_hypothesis_ids": []})
         with self.assertRaisesRegex(ValueError, "requires evolution_operator"):
             _minimal_frontier_structure({"candidates": [candidate]}, {"_known_hypothesis_ids": ["H-0001"]})
@@ -37,6 +47,7 @@ class HypothesisDossierProjectionTest(unittest.TestCase):
         candidate = {
             "hypothesis": "H", "scope": "S", "why_now": "W",
             "goal_advance": "G", "decisive_test": "T",
+            "transition": {"prior_gap": "The Goal leaves H unknown.", "current_change": "Test H within S."},
         }
         _minimal_frontier_structure({"candidates": [candidate]}, {})
         with self.assertRaisesRegex(ValueError, "unsupported fields"):
@@ -71,12 +82,16 @@ class HypothesisDossierProjectionTest(unittest.TestCase):
             prompt = backend.display_prompts[0]
             self.assertIn("frozen_hypothesis", prompt)
             self.assertNotIn('"canvas_access"', prompt)
-            self.assertNotIn('"goal_advance"', prompt)
+            self.assertIn('"frozen_reasoning"', prompt)
+            self.assertIn('"goal_advance"', prompt)
             self.assertEqual(state["hypothesis_display"]["status"], "generated")
             self.assertEqual(state["hypothesis_lock"]["hypothesis"], "smoke-h")
             self.assertEqual(state["hypothesis_lock"]["decisive_test"], "register deterministic smoke evidence")
             canvas = json.loads(spec.branch_canvas.read_text(encoding="utf-8"))
             h = next(node for node in canvas["nodes"] if node.get("id") == "H-0001")
+            self.assertEqual(h["type"], "file")
+            self.assertEqual(h["file"], "notes/hypotheses/H-0001.md")
+            h = next(node for node in scientific_display(spec)["nodes"] if node.get("id") == "H-0001")
             self.assertIn("独立检验下的网络假说", h["text"])
             self.assertIn("主张：网络结构量能否预测目标能量差", h["text"])
             self.assertIn("条件：仅限冻结网络族与决定性检验范围", h["text"])
@@ -103,9 +118,12 @@ class HypothesisDossierProjectionTest(unittest.TestCase):
             self.assertEqual(state["hypothesis_lock"]["hypothesis"], "smoke-h")
             canvas = json.loads(spec.branch_canvas.read_text(encoding="utf-8"))
             h = next(node for node in canvas["nodes"] if node.get("id") == "H-0001")
+            self.assertEqual(h["type"], "file")
+            h = next(node for node in scientific_display(spec)["nodes"] if node.get("id") == "H-0001")
             self.assertIn("完整命题（原文）：smoke-h", h["text"])
             self.assertIn("整体 H 尚未登记裁决", h["text"])
             self.assertNotIn("状态：待检验", h["text"])
+            self.assertIn("研究承接", h["text"])
             self.assertLessEqual(len(h["text"]), 600)
             self.assertEqual(h["text"].count("smoke-h"), 2)  # short title plus frozen full hypothesis
             dossier = (spec.notes_mirror_dir / "hypotheses/H-0001.md").read_text(encoding="utf-8")
@@ -203,7 +221,7 @@ class HypothesisDossierProjectionTest(unittest.TestCase):
             self.assertEqual(dossier.read_text(encoding="utf-8").count("E-18-01"), 1)
 
 
-    def test_existing_sdk_dossier_repairs_parent_list_and_authority_line_without_losing_notes(self):
+    def test_existing_dossier_keeps_all_user_edits_on_retry(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             canvas = root / "exploration.canvas"
@@ -228,10 +246,7 @@ class HypothesisDossierProjectionTest(unittest.TestCase):
             updated_args = {**args, "lineage_anchor_node_ids": ["H-0002", "H-0003"]}
             write_hypothesis_dossier(**updated_args)
             after = dossier.read_text(encoding="utf-8")
-            self.assertIn("SQLite 是科学图谱权威", after)
-            self.assertIn("上游锚点：H-0002、H-0003", after)
-            self.assertIn("上游谱系：H-0002（derive）、H-0003（derive）", after)
-            self.assertIn("Human annotation: retain this note.", after)
+            self.assertEqual(after, text)
 
     def test_real_workflow_fake_backend_generates_compact_h_and_dossier(self):
         from tests.test_core import TheoryMasterTest
@@ -239,7 +254,7 @@ class HypothesisDossierProjectionTest(unittest.TestCase):
             spec, _ = TheoryMasterTest().make(Path(temp), reworks=0)
             state = Workflow(spec, _BriefLeadFake(reworks=0)).run()
             self.assertIn(state["status"], {"over", "completed"})
-            canvas = json.loads(spec.branch_canvas.read_text(encoding="utf-8"))
+            canvas = scientific_display(spec)
             hs = [n for n in canvas["nodes"] if "type: Hypothesis" in (n.get("text") or "")]
             self.assertEqual(len(hs), 1)
             text = hs[0]["text"]
@@ -250,7 +265,7 @@ class HypothesisDossierProjectionTest(unittest.TestCase):
             self.assertNotIn("状态：待检验", text)
             self.assertIn("[[notes/hypotheses/H-0001]]", text)
             self.assertNotIn("**Evidence refs**:", text)
-            self.assertNotIn("deterministic fixture is immediately executable", text)
+            self.assertIn("This H tests the bounded deterministic smoke claim.", text)
             full = (spec.notes_mirror_dir / "hypotheses/H-0001.md").read_text(encoding="utf-8")
             self.assertIn("smoke-h", full)
             self.assertIn("deterministic fixture is immediately executable", full)

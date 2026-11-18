@@ -118,7 +118,7 @@ class ResearchChatTests(unittest.TestCase):
                 })
             self.assertTrue(accepted["streaming"])
             record = json.loads(record_path.read_text(encoding="utf-8"))
-            self.assertEqual([message["role"] for message in record["messages"]], ["assistant", "user"])
+            self.assertEqual([message["role"] for message in record["messages"]], ["user"])
             self.assertEqual(record["messages"][-1]["id"], first_user["id"])
             self.assertEqual(record["messages"][-1]["content"], "修订后的首个问题")
             self.assertEqual(record["title"], "修订后的首个问题")
@@ -149,8 +149,11 @@ class ResearchChatTests(unittest.TestCase):
         send(self.state_dir, self.root, self.state, ident, {"content": "继续核对前沿"}, backend=fake)
         self.assertIsNone(fake.ensured[0][1])
         self.assertIn("此前的科研问题", fake.calls[0][1])
+        self.assertIn("tm_observer.research_chat_literature", fake.calls[0][1])
+        self.assertIn("Shared Literature service binding", fake.calls[0][1])
+        self.assertIn("document_conversion", fake.calls[0][1])
         row = snapshot(self.state_dir, self.state, ident)["session"]
-        self.assertEqual(row["agent_policy_version"], 4)
+        self.assertEqual(row["agent_policy_version"], 8)
         self.assertEqual(row["codex_thread_id"], "native-thread-1")
 
     def test_native_codex_thread_is_resumed_across_chat_turns(self):
@@ -379,6 +382,7 @@ class ResearchChatTests(unittest.TestCase):
 
     def test_web_route_requires_origin_and_serves_chat_page(self):
         cache = StateCache(self.root)
+        cache.get = lambda: self.state
         server = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(cache,
                                       field_notes_state_dir=self.state_dir))
         thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -397,9 +401,9 @@ class ResearchChatTests(unittest.TestCase):
                 self.assertIn('href="/research-chat/?new=1"', html)
                 self.assertIn('<h3>历史对话</h3>', html)
                 self.assertIn('class="tm-research-history"', html)
-                self.assertIn('分析研究进展与科学性', html)
+                self.assertIn('了解研究进展', html)
                 self.assertNotIn('loquix-chat-composer', html)
-                self.assertLess(html.index('data-research-mode="project"'), html.index('data-research-mode="frontier"'))
+                self.assertLess(html.index('data-research-mode="frontier"'), html.index('data-research-mode="project"'))
                 self.assertIn('<details class="tm-research-migrate">', html)
                 self.assertIn('data-research-mode="migration"', html)
             body = json.dumps({"mode": "migration"}).encode("utf-8")

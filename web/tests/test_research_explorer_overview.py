@@ -22,6 +22,24 @@ def test_overview_separates_actions_and_groups_and_keeps_warning_accessible():
     assert warning.has_attr('hidden')
     assert warning['aria-label']
     assert '读取预算' in warning['title']
+    # Header controls open overlays; history/zoom stay at the canvas edges.
+    assert not soup.select('.ex-page-head')
+    for menu_id in ('ex-branches', 'ex-legend-menu'):
+        menu = toolbar.select_one('#' + menu_id)
+        assert menu.name == 'details' and not menu.has_attr('open')
+        assert menu.select_one('summary')
+    assert toolbar.select_one('#ex-branches #ex-tip-panel')
+    assert not soup.select('#ex-refresh, #ex-view-menu')
+    for control in ('ex-fit', 'ex-expand-all', 'ex-view-color'):
+        element = toolbar.select_one('#' + control)
+        assert element and not element.find_parent('details'), control
+    assert toolbar.select_one('#ex-legend-menu > summary #ex-stats')
+    assert toolbar.select_one('#ex-legend-menu #ex-type-legend')
+    assert not soup.select('#ex-graph .ex-toolbar-menu')
+    assert soup.select_one('#ex-graph .ex-zoom-controls #ex-zoom-percent')
+    assert soup.select_one('#ex-workspace > #ex-results')
+    assert graph_content().index('id="ex-help-open"') < graph_content().index('id="ex-help-script"')
+
 
 
 def test_frontier_keys_are_not_duplicated_and_every_outcome_is_counted_once():
@@ -75,4 +93,27 @@ def test_frontier_keys_are_not_duplicated_and_every_outcome_is_counted_once():
 """
     result = subprocess.run(['node', '-e', script, str(SCRIPT)], capture_output=True,
                             text=True, timeout=20)
+    assert result.returncode == 0, result.stderr
+
+
+def test_toolbar_color_control_is_unique_after_index_reload():
+    if not shutil.which('node'):
+        pytest.skip('requires Node.js')
+    prefix = HARNESS.split('  onReady();await tick();', 1)[0]
+    script = prefix + r"""
+  const menu=elem('ex-view-color');
+  ctx.document.querySelector=selector=>selector==='#ex-view-color'?menu:
+    selector==='#ex-color-mode'?menu.children.find(child=>child.id==='ex-color-mode'):null;
+  onReady();await tick();await tick();
+  assert.equal(menu.children.length,1,'color control belongs in the visible toolbar');
+  const toggle=menu.children[0];
+  toggle.onclick();
+  assert.equal(toggle['aria-pressed'],'true');
+  await ctx.window.testReloadIndex();await tick();await tick();
+  assert.equal(menu.children.length,1,'refresh cannot duplicate controls outside the graph');
+  assert.equal(menu.children[0],toggle,'color choice survives the graph reload');
+})().catch(e=>{console.error(e);process.exitCode=1});
+"""
+    result = subprocess.run(['node', '-e', script, str(SCRIPT)], capture_output=True,
+                            text=True, timeout=15)
     assert result.returncode == 0, result.stderr

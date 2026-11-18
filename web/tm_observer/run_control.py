@@ -157,7 +157,7 @@ def _validated_value(action: str, value: Any) -> Any:
             raise OperatorError("无效运行偏好")
         kind, key, selected = value["kind"], value["key"], value["value"]
         if kind == "flag":
-            if key not in {"error_repair", "cycle_audit"} or type(selected) is not bool:
+            if key not in {"error_repair", "cycle_audit", "skill_learning"} or type(selected) is not bool:
                 raise OperatorError("无效运行开关")
         elif kind == "model":
             if key not in {"supervisor", "attention_review", "cycle_audit"} or not isinstance(selected, str) or selected not in {"","gpt-6-luna","gpt-6-sol","gpt-6.1-sol"}:

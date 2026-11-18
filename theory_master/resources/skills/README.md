@@ -42,3 +42,5 @@ Literature 是唯一允许使用 scholarly Skill 写文献中间产物的证据�
 ## 注入
 
 `theory_master.skills.ROLE_SKILLS` 只表示系统级机器白名单；运行某个 Master 时，`role_skills(..., task_config_path=...)` 再把该任务声明的 task-local 白名单合并进来，并保留 `scope=system|task`。身份由 `theory_master.identity` 必加载。Codex 不再预加载 Skill body；新线程的 developer instructions 只暴露两层白名单及具体 `SKILL.md` 路径，Agent 按需读取。
+
+启用 Skill 自提升优化后，兼容的 Investigator / Literature 会话还可接收 SDK 按逻辑调用固定的 learned task-skill 清单。它扩展 task-level 白名单，保留独立的来源、版本和不可变路径，不覆盖本目录或手动任务 Skill。正常调用中可选旁路用于沉淀与修订方法；不启动额外模型、效果评测或科研 Cycle。具体格式由 `theory_master/skill_evolution/protocol.md` 维护。

@@ -36,6 +36,10 @@ def dispatch(specified: dict[str, Any]) -> dict[str, Any]:
         # Verify the server's target before allowing any migration write.
         if action not in {"run", "resume"} or not str(error).startswith("canonical science_graph.sqlite3 is required:"):
             raise
+        if binding.config.get("graph_database"):
+            # An explicitly bound data database must be restored at its own
+            # path; recreating a graph beside the Canvas would hide data loss.
+            raise
         if Path(str(specified["research_root"])).resolve(strict=True) != binding.research_root:
             raise ControlRejected("task research root changed")
         if specified.get("run_id") is not None and int(binding.master_id) != int(specified["run_id"]):
@@ -172,6 +176,9 @@ def dispatch(specified: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(value, dict) or set(value) != {"kind", "key", "value"}:
             raise ControlRejected("invalid operator preference")
         saved = write(spec.research_root, **value)
+        if value["kind"] == "flag" and value["key"] == "skill_learning":
+            return {"saved": saved, "effective_at": "next_safe_invocation",
+                    "extra_model_requests": 0, "effect_tests": 0}
         return {"saved": saved, "effective_at": ("next_run_or_resume" if value["key"] in {"error_repair","cycle_audit"} and value["kind"] == "flag" else "next_use")}
     if action == "set_role_route":
         from .backend_config import save_task_role_override

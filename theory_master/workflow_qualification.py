@@ -14,6 +14,7 @@ from .display import direction_text
 from .runtime import canvas_ts, now
 from .workflow_support import RecoveryStop
 from .scientific_objective import frozen_science_view, require_review_binding
+from .research_transition import validate_transition
 
 
 def _require_reviewed_candidate(candidate: dict[str, Any], review: dict[str, Any]) -> None:
@@ -35,7 +36,7 @@ class _ProposalRetry(Exception):
 
 
 _CHALLENGER_CANDIDATE_FIELDS = (
-    "hypothesis", "scope", "why_now", "goal_advance", "decisive_test",
+    "hypothesis", "scope", "why_now", "goal_advance", "decisive_test", "transition",
     "lineage_anchor_node_id", "lineage_anchor_node_ids", "lineage_main_node_id",
     "lineage_other_node_ids", "evolution_operator", "reconsideration_trigger",
 )
@@ -53,7 +54,8 @@ def _challenger_candidate_seed(candidates: list[dict[str, Any]]) -> list[dict[st
         {
             key: candidate.get(key, "")
             for key in ("id", *_CHALLENGER_CANDIDATE_FIELDS)
-            if key != "evolution_operator" or str(candidate.get("evolution_operator") or "").strip()
+            if (key != "evolution_operator" or str(candidate.get("evolution_operator") or "").strip())
+            and (key != "transition" or key in candidate)
         }
         for candidate in candidates
     ]
@@ -359,6 +361,15 @@ class QualificationMixin:
             state.get("status"), state.get("phase"), state.get("attention"),
         )
         claim = conditions = ""
+        provenance = lock.get("candidate_provenance")
+        provenance = provenance if isinstance(provenance, dict) else {}
+        frozen_reasoning = {
+            key: json.loads(json.dumps(provenance[key]))
+            for key in ("transition", "why_now", "goal_advance", "lineage_main_node_id",
+                        "lineage_other_node_ids", "lineage_anchor_node_id", "lineage_anchor_node_ids",
+                        "evolution_operator")
+            if key in provenance and provenance[key] not in (None, "", [], {})
+        }
         try:
             output = self._call(state, "research_lead", {
                 "mode": "hypothesis_display",
@@ -367,6 +378,7 @@ class QualificationMixin:
                     "scope": lock["scope"],
                     "decisive_test": lock["decisive_test"],
                 },
+                "frozen_reasoning": frozen_reasoning,
             }, output_key="research_lead_hypothesis_display")
             title = str(output["canvas_title"]).strip()
             claim = str(output["canvas_claim"]).strip()
@@ -546,6 +558,9 @@ class QualificationMixin:
             }
             from .hypothesis_lineage import explicit_lineage
             explicit = explicit_lineage(raw)
+            if "transition" in raw:
+                validate_transition(raw["transition"])
+                item["transition"] = json.loads(json.dumps(raw["transition"]))
             if explicit is not None:
                 item["lineage_main_node_id"], item["lineage_other_node_ids"] = explicit
                 item["lineage_anchor_node_ids"] = [explicit[0], *explicit[1]]
@@ -620,7 +635,7 @@ class QualificationMixin:
                         or len(set(blocker_ids)) != len(blocker_ids)
                         or set(repaired.get("addressed_issue_ids") or []) != set(blocker_ids)
                         or any(repaired.get(field, "") != parent.get(field, "")
-                               for field in ("hypothesis", "scope", "goal_advance", "estimand"))
+                               for field in ("hypothesis", "scope", "goal_advance", "estimand", "transition"))
                         or " ".join(str(repaired.get("decisive_test") or "").split())
                            == " ".join(str(parent.get("decisive_test") or "").split())):
                     raise RecoveryStop("legacy pre-H Lock checkpoint cannot safely preserve repaired Candidate identity for current scientific review")
@@ -712,8 +727,34 @@ class QualificationMixin:
                 lead_context["lead_literature_result"] = prior_literature
             lead_context["running_hypotheses"] = self._running_hypotheses_for_lead()
             guidance = state.get("operator_guidance") if state.get("operator_guidance_pending") else None
-            if isinstance(guidance, dict) and guidance.get("text"):
-                lead_context["operator_guidance"] = str(guidance.get("text"))
+            from .operator_direction import claim_conjecture, qualification_guidance
+            try:
+                if "human_direction_checked" not in state:
+                    # A resumed Lead/literature episode must not acquire a newly
+                    # submitted direction halfway through its original proposal.
+                    if frontier_output is None:
+                        from .specification import TaskSpec
+                        live_spec = TaskSpec.load(self.spec.document)
+                        claimed = claim_conjecture(
+                            self._graph_database_path(), cycle_id=str(run_id),
+                            required_context=live_spec.required_context,
+                            research_root=self.spec.research_root,
+                        )
+                        state["human_direction"] = claimed
+                    state["human_direction_checked"] = True
+                    self._persist(state)
+                claimed = state.get("human_direction")
+                record = ({**claimed["record"], "source_references": claimed.get("source_references", [])}
+                          if isinstance(claimed, dict) else None)
+                direction = qualification_guidance(
+                    "",
+                    str(guidance.get("text") or "") if isinstance(guidance, dict) else "",
+                    record=record,
+                )
+            except ValueError as exc:
+                raise RecoveryStop(str(exc)) from exc
+            if direction:
+                lead_context["operator_guidance"] = direction
             frontier_output = self._call(state, "research_lead", lead_context)
             literature_used = (
                 state.get("qualification_literature_used")
@@ -754,6 +795,18 @@ class QualificationMixin:
                 if frontier_output.get("needs_literature") is True:
                     self._pause_exhausted_lead_literature(state, frontier_output)
             state["role_outputs"]["research_lead_frontier"] = frontier_output
+
+        claimed = state.get("human_direction")
+        if isinstance(claimed, dict) and claimed.get("status") == "claimed":
+            from .operator_direction import consume_conjecture
+            # First retain the completed proposal. A crash during the following
+            # idempotent consume cannot send this direction to another Cycle.
+            self._persist(state)
+            consume_conjecture(self._graph_database_path(),
+                              external_id=claimed["record"]["external_id"], cycle_id=str(run_id),
+                              research_root=self.spec.research_root)
+            claimed["status"] = "consumed"
+            self._persist(state)
 
         frontier = [normalize_candidate(item) for item in (frontier_output.get("candidates") or []) if isinstance(item, dict)]
         scientific_anchor_types = _scientific_anchor_types(self)
@@ -989,7 +1042,7 @@ class QualificationMixin:
                 if not candidate.get("decisive_test") or candidate["decisive_test"] == parent["decisive_test"]:
                     raise RecoveryStop("repaired decisive_test is missing or unchanged")
                 if any(candidate.get(field, "") != parent.get(field, "") for field in
-                       ("hypothesis", "scope", "goal_advance", "estimand")):
+                       ("hypothesis", "scope", "goal_advance", "estimand", "transition")):
                     raise RecoveryStop("repair recovery changed frozen scientific identity")
                 blockers = initial_review.get("blocking_issues") or []
                 blocker_ids = {str(issue.get("id") or "") for issue in blockers if isinstance(issue, dict)}
@@ -1194,6 +1247,8 @@ class QualificationMixin:
                     raise ValueError("selection repair may not change the frozen parent goal_advance")
                 if item.get("scope", "") != parent.get("scope", ""):
                     raise ValueError("selection repair may not change the frozen parent scientific scope")
+                if item.get("transition") != parent.get("transition"):
+                    raise ValueError("selection repair may not change the frozen parent transition")
                 if item.get("parent_candidate_id") != parent_id:
                     raise ValueError("selection repair lost its frozen parent candidate")
                 if item["id"] in frontier_by_id:

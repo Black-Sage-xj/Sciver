@@ -30,7 +30,7 @@ class ExplorerVisualConsistencyTest(unittest.TestCase):
         soup = BeautifulSoup(page, 'html.parser')
         toolbar = soup.select_one('#ex-workspace > .ex-toolbar')
         self.assertIsNotNone(toolbar)
-        for control in ('ex-query', 'ex-refresh', 'ex-fullscreen', 'ex-stats',
+        for control in ('ex-query', 'ex-fit', 'ex-expand-all', 'ex-fullscreen', 'ex-stats',
                         'ex-tip-summary', 'ex-type-legend'):
             self.assertIsNotNone(toolbar.select_one('#' + control), control)
         self.assertEqual(len(soup.select('#ex-workspace > .ex-toolbar')), 1)
@@ -74,7 +74,7 @@ class ExplorerVisualConsistencyTest(unittest.TestCase):
   assert.equal(latestGraph.data.edges.find(e=>e.id==='AC').style.opacity,.28);
   // Direct link opened in a new tab also restores selected-edge highlighting.
   const savedEdge=history.state.tmExplorerView;
-  await elements['ex-refresh'].onclick();await tick();
+  await ctx.window.testReloadIndex();await tick();
   assert.equal(history.state.tmExplorerView.selected.kind,'edge');
   assert.equal(history.state.tmExplorerView.selected.id,savedEdge.selected.id);
   assert.equal(latestGraph.data.edges.find(e=>e.id==='AX').style.stroke,'#fef08a');

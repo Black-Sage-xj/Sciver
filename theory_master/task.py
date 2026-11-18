@@ -72,8 +72,11 @@ def effective_path_model(config: dict) -> tuple[Path, Path, Path | None]:
     path_model = config.get("path_model", LEGACY_PATH_MODEL)
     if path_model == PATH_MODEL:
         research_root = configured_root
+        from .notebook import configured_vault_root
+        note_home = configured_vault_root(config)
         vault = note_vault_root(task_home)
         if (research_root == task_home or task_home in research_root.parents or
+                research_root == note_home or note_home in research_root.parents or
                 (vault is not None and (research_root == vault or vault in research_root.parents))):
             raise ValueError("v2 research_root must be outside task_home/vault (non-sync)")
         benchmark_value = config.get("benchmark_root")
@@ -81,6 +84,7 @@ def effective_path_model(config: dict) -> tuple[Path, Path, Path | None]:
             raise ValueError("v2 config requires explicit benchmark_root")
         benchmark = absolute(benchmark_value, "benchmark_root")
         if (benchmark == task_home or task_home in benchmark.parents or
+                benchmark == note_home or note_home in benchmark.parents or
                 (vault is not None and (benchmark == vault or vault in benchmark.parents))):
             raise ValueError("v2 benchmark_root must be outside task_home/vault (non-sync)")
         if benchmark == research_root or research_root in benchmark.parents:
@@ -195,8 +199,9 @@ class TaskBinding:
     def branch_canvas(self) -> Path: return absolute(self.config["branch_canvas"], "branch_canvas")
     @property
     def note_area(self) -> Path:
-        """Human-visible documentation area; currently the Task Home."""
-        return self.task_home
+        """Human-visible notebook, independently relocatable from runtime data."""
+        from .notebook import configured_vault_root
+        return configured_vault_root(self.config)
     @property
     def legacy_research_root(self) -> Path | None:
         value = self.config.get("legacy_research_root")
@@ -223,6 +228,8 @@ class TaskBinding:
         effective_master_id(config)
         task_home, research_root, legacy_research_root = effective_path_model(config)
         allowed_roots = {task_home, research_root}
+        from .notebook import configured_vault_root
+        allowed_roots.add(configured_vault_root(config))
         if legacy_research_root is not None:
             allowed_roots.add(legacy_research_root)
         if root not in allowed_roots:
@@ -253,7 +260,8 @@ def write_binding(root: Path, config_path: Path) -> None:
     path.write_text(json.dumps({"schema": TASK_SCHEMA, "config_path": str(config_path.resolve())},
                                ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-def bootstrap(plan: Path, *, allocation_root: Path | None = None) -> TaskBinding:
+def bootstrap(plan: Path, *, allocation_root: Path | None = None,
+              vault_root: Path | None = None) -> TaskBinding:
     """One-input startup for the current Research Plan format."""
     plan = plan.expanduser().resolve()
     if plan.name != "research_plan.md" or not plan.is_file():
@@ -263,6 +271,12 @@ def bootstrap(plan: Path, *, allocation_root: Path | None = None) -> TaskBinding
     if plan_text.startswith("---\n"):
         raise ValueError("new research_plan.md must be plain scientific Markdown")
     scientific_sections(plan_text, allow_missing_scientific_model=True)
+    if vault_root is not None and vault_root.expanduser().resolve() != plan.parent:
+        destination = vault_root.expanduser().resolve()
+        if (plan.parent / SYSTEM_CONFIG_NAME).exists():
+            raise ValueError("use the notebook move action to relocate an existing task")
+        if destination.exists() and (not destination.is_dir() or any(destination.iterdir())):
+            raise ValueError("new notebook destination must be empty")
     note_area = plan.parent
     ensure_runtime_outside_package(note_area / TASK_DIR_NAME / "research")
     config_path = note_area / SYSTEM_CONFIG_NAME
@@ -291,7 +305,9 @@ def bootstrap(plan: Path, *, allocation_root: Path | None = None) -> TaskBinding
                     "schema": SYSTEM_SCHEMA, "path_model": PATH_MODEL,
                     "task_id": allocated_id, "goal_id": goal_id,
                     "task_home": str(note_area), "plan_path": str(plan),
+                    "vault_root": str(note_area),
                     "research_root": str(research_root),
+                    "graph_database": str(research_root / "science_graph.sqlite3"),
                     "benchmark_root": str(data_area / "benchmark"),
                     "branch_canvas": str(note_area / "exploration.canvas"),
                     "notes_dir": str(note_area / "notes"), "max_cycles": 5,
@@ -316,7 +332,7 @@ def bootstrap(plan: Path, *, allocation_root: Path | None = None) -> TaskBinding
             raise ValueError("new task human-visible files must share one note area")
     branch = absolute(config["branch_canvas"], "branch_canvas")
     branch.parent.mkdir(parents=True, exist_ok=True)
-    graph_path = branch.with_name("science_graph.sqlite3")
+    graph_path = absolute(config.get("graph_database") or branch.with_name("science_graph.sqlite3"), "graph_database")
     if is_new_task and not graph_path.exists():
         # Initialize the canonical data layer first; the Canvas is exported from it.
         from .science_graph_store import ScienceGraphStore
@@ -327,12 +343,6 @@ def bootstrap(plan: Path, *, allocation_root: Path | None = None) -> TaskBinding
             f"canonical science_graph.sqlite3 is required: {graph_path}; "
             "runtime will not create an empty database to mask a legacy Canvas"
         )
-    if not branch.exists():
-        from .science_graph_store import ScienceGraphStore
-        from .science_canvas_export import canvas_projection
-        with ScienceGraphStore(graph_path, readonly=True) as store:
-            projection = canvas_projection(store)
-        branch.write_text(json.dumps(projection, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     absolute(config["notes_dir"], "notes_dir").mkdir(parents=True, exist_ok=True)
     root = ensure_runtime_outside_package(absolute(config["research_root"], "research_root"))
     if is_new_task:
@@ -345,6 +355,12 @@ def bootstrap(plan: Path, *, allocation_root: Path | None = None) -> TaskBinding
     write_binding(root, config_path)
     if root != note_area:
         write_binding(note_area, config_path)
+    from .vault_canvas import refresh_canvas, register_canvas_binding
+    register_canvas_binding(graph_path, vault_root=branch.parent, canvas_path=branch)
+    refresh_canvas(graph_path, vault_root=branch.parent, canvas_path=branch)
+    if vault_root is not None and vault_root.expanduser().resolve() != plan.parent:
+        from .notebook_move import move_notebook
+        move_notebook(plan.parent, vault_root)
     return TaskBinding.load(root)
 
 def discover_task_root(start: Path | None = None) -> Path:
