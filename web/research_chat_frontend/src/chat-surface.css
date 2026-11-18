@@ -45,8 +45,8 @@ html[data-sciver-theme="white"] :is(.tm-research-chat,.sc-selection-popover){
 #tm-research-chat-app .sc-codex-top-tools .sc-codex-tool-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-width:29px;height:29px;padding:5px 7px;background:transparent;border:0;border-radius:7px;font-size:11px;color:var(--sc-chat-muted);box-shadow:none;white-space:nowrap}
 #tm-research-chat-app .sc-codex-top-tools .sc-codex-tool-button:hover,#tm-research-chat-app .sc-codex-top-tools .sc-codex-tool-button[aria-expanded="true"]{background:var(--sc-chat-hover);color:var(--sc-chat-text)}
 #tm-research-chat-app .sc-codex-top-tools .sc-notifications-on{color:var(--sc-chat-accent)}
-#tm-research-chat-app .sc-codex-branch-picker{gap:5px;color:var(--sc-chat-muted);font-size:10px;padding:0 4px}
-#tm-research-chat-app .sc-codex-branch-picker select{max-width:160px;min-height:27px;background:transparent;border:0;border-radius:6px;font-size:10px;padding:4px;color:var(--sc-chat-muted)}
+#tm-research-chat-app .sc-codex-branch-picker{gap:5px;color:var(--sc-chat-muted);font-size:10px;padding:0 4px;min-width:0;white-space:nowrap}
+#tm-research-chat-app .sc-codex-branch-picker select{max-width:160px;min-width:0;min-height:27px;background:transparent;border:0;border-radius:6px;font-size:10px;padding:4px;color:var(--sc-chat-muted)}
 #tm-research-chat-app .sc-codex-search-panel{display:flex;align-items:center;gap:5px;flex:0 0 auto;align-self:center;width:calc(100% - 32px);max-width:calc(var(--sc-chat-reading-width) - 32px);box-sizing:border-box;margin:0 0 9px;padding:5px 7px 5px 12px;border:1px solid var(--sc-chat-border);border-radius:10px;background:var(--sc-chat-panel);font-size:11px;color:var(--sc-chat-muted)}
 #tm-research-chat-app .sc-codex-search-panel[hidden]{display:none}
 .sc-codex-search-panel .sc-chat-search{min-width:0;flex:1}
@@ -115,7 +115,7 @@ html[data-sciver-theme="white"] :is(.tm-research-chat,.sc-selection-popover){
 .sc-chat-utility .sc-chat-files>header>span{flex-basis:100%;order:1}
 .sc-chat-utility .sc-chat-files>header>strong{flex:1}
 .sc-chat-utility .sc-chat-files>p{line-height:1.65;color:var(--sc-chat-muted);margin:15px 0 4px}
-[data-preparation-inline-slot]:empty,[data-preparation-secondary-slot]:empty{display:none}
+[data-preparation-inline-slot]:empty,[data-preparation-secondary-slot]:empty,[data-chat-literature-slot]:empty{display:none}
 .sc-codex-shell .sc-attachment-card .sc-attachment-name{color:var(--sc-chat-text)}
 .sc-codex-shell .sc-attachment-card small{color:var(--sc-chat-muted)}
 .sc-codex-shell .sc-attachment-card a{color:var(--sc-chat-accent)}

@@ -822,9 +822,10 @@ function App({ sessionId, mode }: { sessionId: string; mode: string }) {
       if (!(event.target instanceof Node)) return;
       const wrapper = openPopover === 'model' ? modelPopoverRef.current : morePopoverRef.current;
       if (openPopover && !wrapper?.contains(event.target)) setOpenPopover(null);
-      if (!utilityRef.current?.contains(event.target)) { setSearchOpen(false); setShowFiles(false); }
+      if (!utilityRef.current?.contains(event.target) || event.target instanceof Element && event.target.closest('[data-chat-literature-open]')) { setSearchOpen(false); setShowFiles(false); }
     };
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && document.querySelector('dialog:modal')) return;
       if (event.key === 'Escape' && openPopover) {
         event.preventDefault(); event.stopPropagation();
         const trigger = openPopover === 'model' ? modelTriggerRef.current : moreTriggerRef.current;
@@ -868,7 +869,7 @@ function App({ sessionId, mode }: { sessionId: string; mode: string }) {
         {!isSupervisor && <>
           <div className="sc-chat-utility" ref={utilityRef}>
           <div className={`sc-chat-tools sc-codex-top-tools${searchOpen ? ' sc-codex-search-open' : ''}`}>
-            <div className="sc-codex-tool-spacer" /><div data-preparation-secondary-slot />
+            <div className="sc-codex-tool-spacer" /><div data-chat-literature-slot /><div data-preparation-secondary-slot />
             <button ref={searchTriggerRef} type="button" className="sc-codex-tool-button" aria-label="查找对话内容" title="查找对话内容（Ctrl / ⌘ + F）" aria-expanded={searchOpen} aria-controls="sc-codex-search-panel" onClick={() => { setShowFiles(false); setSearchOpen((value) => !value); if (!searchOpen) requestAnimationFrame(() => searchInputRef.current?.focus()); }}><Search size={16} /><span>查找</span></button>
             {branches.length > 1 && <label className="sc-branch-picker sc-codex-branch-picker"><span>版本</span><select aria-label="对话版本" value={branchId} disabled={isRunning || settingsBusy} onChange={(event) => void switchBranch(event.target.value)}>{branches.map((branch, index) => <option key={branch.id} value={branch.id}>{branch.label || `版本 ${index + 1}`} · {branch.message_count ?? '—'} 条</option>)}</select></label>}
             <button ref={filesTriggerRef} type="button" className="sc-codex-tool-button" aria-controls="sc-chat-files-panel" aria-haspopup="dialog" aria-label="本聊天文件" title="本聊天文件" aria-expanded={showFiles} onClick={() => void loadFiles()}><Paperclip size={16} /><span>文件</span></button>

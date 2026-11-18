@@ -11,12 +11,14 @@ def literature_panel(session: dict) -> str:
         return ''
     return r'''<aside class="tm-chat-literature" data-chat-literature-session="''' + html.escape(ident, quote=True) + r'''"
       aria-label="Literature 文献调研" hidden>
-      <button type="button" class="tm-chat-literature-open" data-chat-literature-open aria-haspopup="dialog" aria-controls="tm-literature-detail">
-        <span class="tm-chat-literature-head"><strong data-chat-literature-label role="status" aria-live="polite">Literature</strong>
-          <span class="tm-chat-literature-more">查看进展 <span aria-hidden="true">›</span></span></span>
-        <span class="tm-chat-literature-query" data-chat-literature-query></span>
-        <span class="tm-chat-literature-counts" data-chat-literature-counts></span>
+      <button type="button" class="tm-chat-literature-open" data-chat-literature-open aria-label="文献调研"
+        aria-haspopup="dialog" aria-expanded="false" aria-controls="tm-literature-detail" aria-describedby="tm-literature-summary">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 7v14m0-14C9 4 5 4 2 5v14c3-1 7-1 10 2m0-14c3-3 7-3 10-2v14c-3-1-7-1-10 2" /></svg>
+        <span class="tm-chat-literature-text" aria-hidden="true">文献</span>
+        <span class="tm-chat-literature-dot" aria-hidden="true"></span>
       </button>
+      <strong class="tm-chat-literature-status" data-chat-literature-label role="status" aria-live="polite">Literature</strong>
+      <span id="tm-literature-summary" hidden><span data-chat-literature-query></span> · <span data-chat-literature-counts></span></span>
       <dialog id="tm-literature-detail" class="tm-literature-detail" data-chat-literature-dialog aria-labelledby="tm-literature-title">
         <header class="tm-literature-detail-head"><h2 id="tm-literature-title">文献调研详情</h2>
           <button type="button" data-chat-literature-close aria-label="关闭文献调研详情">×</button></header>
@@ -46,15 +48,15 @@ def literature_panel(session: dict) -> str:
       </dialog>
     </aside>
     <style>
-    .tm-chat-literature { flex:0 0 auto; margin:0 0 8px; min-width:0; }
-    .tm-chat-literature-open { display:block; box-sizing:border-box; width:100%; min-width:0; padding:10px 12px;
-      border:1px solid var(--chat-line,var(--tm-border,#41414a)); border-radius:10px; cursor:pointer;
-      background:var(--chat-panel,var(--tm-panel,#18181c)); color:var(--chat-text,var(--tm-text,#e4e4e7)); font:inherit; text-align:left; }
-    .tm-chat-literature-open:hover { border-color:var(--chat-muted,#8c8c98); }
-    .tm-chat-literature-head { display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:12px; }
-    .tm-chat-literature-more { flex-shrink:0; color:var(--chat-muted,var(--tm-muted,#a1a1aa)); font-size:11px; }
-    .tm-chat-literature-query,.tm-chat-literature-counts { display:block; color:var(--chat-muted,var(--tm-muted,#a1a1aa));
-      font-size:11px; line-height:1.5; margin:4px 0 0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    .tm-chat-literature { display:flex; flex:0 0 auto; margin:0; min-width:0; }
+    .tm-chat-literature[hidden] { display:none; }
+    #tm-research-chat-app .tm-chat-literature-open { display:inline-flex; align-items:center; justify-content:center; gap:6px; box-sizing:border-box;
+      height:29px; padding:5px 7px; border:0; border-radius:7px; cursor:pointer; white-space:nowrap;
+      background:transparent; color:var(--chat-muted,var(--tm-muted,#a1a1aa)); font:inherit; font-size:11px; }
+    #tm-research-chat-app .tm-chat-literature-open:hover { background:var(--sc-chat-hover,#ffffff0d); color:var(--chat-text,var(--tm-text,#e4e4e7)); }
+    .tm-chat-literature-dot { width:5px; height:5px; border-radius:50%; background:currentColor; opacity:.55; }
+    .tm-chat-literature[data-state="running"] .tm-chat-literature-dot { background:var(--chat-effort,#b6a1f5); opacity:1; }
+    .tm-chat-literature-status { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
     .tm-literature-detail { box-sizing:border-box; width:min(740px,calc(100vw - 28px)); max-width:none; max-height:84dvh; padding:0;
       border:1px solid var(--chat-line,var(--tm-border,#41414a)); border-radius:16px;
       background:var(--chat-bg,var(--tm-panel,#18181c)); color:var(--chat-text,var(--tm-text,#e4e4e7)); box-shadow:0 24px 80px #0005; }
@@ -81,11 +83,12 @@ def literature_panel(session: dict) -> str:
     .tm-literature-source-meta { display:block; margin-top:3px; color:var(--chat-muted,var(--tm-muted,#a1a1aa)); font-size:12px; }
     .tm-literature-detail details summary { cursor:pointer; margin-top:12px; color:var(--chat-muted,var(--tm-muted,#a1a1aa)); }
     .tm-chat-literature :is(button,select,a):focus-visible { outline:2px solid var(--chat-effort,#b6a1f5); outline-offset:3px; }
-    @media(max-width:540px) { .tm-chat-literature-open { padding:8px 10px; } .tm-literature-detail-head { padding:13px 16px; }
-      .tm-literature-detail-body { padding:4px 16px 16px; } .tm-chat-literature-counts { white-space:normal; } }
+    @media(max-width:540px) { .tm-chat-literature-text { display:none; } .tm-literature-detail-head { padding:13px 16px; }
+      .tm-literature-detail-body { padding:4px 16px 16px; } }
     </style><script>(function(){
       const panel=document.querySelector('[data-chat-literature-session]');
       if(!panel)return;
+      const root=panel.closest('.tm-research-chat');
       const session=panel.dataset.chatLiteratureSession;
       const get=name=>panel.querySelector('[data-chat-literature-'+name+']');
       const label=get('label'),query=get('query'),counts=get('counts'),dialog=get('dialog'),opener=get('open');
@@ -95,6 +98,13 @@ def literature_panel(session: dict) -> str:
       const accessLabels={metadata:'题录可用',abstract:'摘要可读',full_text:'正文可读'};
       const stopLabels={cancelled:'调研已停止，已有进展保留。',round_budget_exhausted:'本轮调研已结束，仍有问题待继续调研。',source_budget_exhausted:'本轮阅读已结束，仍有文献待继续调研。',source_access_unverified:'部分来源仍待核实。'};
       let pending=false,controller=null,jobs=[],selected='',detailController=null,detailVersion=0,detailLoading=false,optionsSignature='';
+      function present(){
+        const slot=root?.querySelector('[data-chat-literature-slot]');
+        if(slot&&panel.parentElement!==slot)slot.append(panel);
+        panel.hidden=!slot||!jobs.length;
+      }
+      const layout=new MutationObserver(present);
+      if(root)layout.observe(root,{childList:true,subtree:true});
       const valid=id=>/^[a-f0-9]{32}$/.test(String(id||''));
       const summary=job=>{const access=job.source_access_counts||{};return '候选 '+Number(job.source_count||0)+' 篇 · 可读正文 '+Number(access.full_text||0)
         +' 篇 · Agent 已完成 '+Number(job.agent_turns||0)+' 次阅读与综合';};
@@ -167,9 +177,9 @@ def literature_panel(session: dict) -> str:
       function selectJob(id){
         detailVersion++;detailController?.abort();detailLoading=false;selected=id;content.hidden=true;notice.textContent='正在读取调研进展…';loadDetail();
       }
-      opener.addEventListener('click',()=>{if(dialog.open)return;dialog.showModal();selected=jobs[0]?.job_id||'';selector.value=selected;selectJob(selected);});
+      opener.addEventListener('click',()=>{if(dialog.open)return;dialog.showModal();opener.setAttribute('aria-expanded','true');selected=jobs[0]?.job_id||'';selector.value=selected;selectJob(selected);});
       get('close').addEventListener('click',()=>dialog.close());
-      dialog.addEventListener('close',()=>{detailVersion++;detailController?.abort();detailLoading=false;opener.focus();});
+      dialog.addEventListener('close',()=>{detailVersion++;detailController?.abort();detailLoading=false;opener.setAttribute('aria-expanded','false');opener.focus();});
       dialog.addEventListener('click',event=>{if(event.target!==dialog)return;const box=dialog.getBoundingClientRect();if(event.clientX<box.left||event.clientX>box.right||event.clientY<box.top||event.clientY>box.bottom)dialog.close();});
       selector.addEventListener('change',()=>selectJob(selector.value));
       async function refresh(){
@@ -181,18 +191,20 @@ def literature_panel(session: dict) -> str:
           if(!response.ok||!data.ok)throw new Error('unavailable');
           jobs=(Array.isArray(data.jobs)?data.jobs:[]).filter(job=>valid(job.job_id));
           const job=jobs[0];
-          if(!job){panel.hidden=true;if(dialog.open)dialog.close();return;}
-          panel.hidden=false;label.textContent='Literature · '+(labels[job.status]||'状态待核实');
+          if(!job){present();if(dialog.open)dialog.close();return;}
+          present();panel.dataset.state=job.status;label.textContent='Literature · '+(labels[job.status]||'状态待核实');
           query.textContent=String(job.query||'');query.title=query.textContent;counts.textContent=summary(job)+(job.remaining_scientific_question?' · 仍有问题待核实':'');
+          opener.setAttribute('aria-label','文献调研 · '+(labels[job.status]||'状态待核实'));
+          opener.title=label.textContent+'\n'+query.textContent+'\n'+counts.textContent;
           const signature=JSON.stringify(jobs.map(item=>[item.job_id,item.status,item.query]));
           if(signature!==optionsSignature){optionsSignature=signature;selector.replaceChildren();jobs.forEach(item=>{const option=document.createElement('option');option.value=item.job_id;option.textContent=(labels[item.status]||'状态待核实')+' · '+String(item.query||'').slice(0,80);selector.append(option);});selector.value=selected||job.job_id;}
           get('jobs-label').hidden=jobs.length<2;
           if(dialog.open){if(!jobs.some(item=>item.job_id===selected))selectJob(job.job_id);else loadDetail();}
-        }catch(error){if(!panel.hidden)label.textContent='Literature · 状态暂时无法读取';}
+        }catch(error){if(!panel.hidden){label.textContent='Literature · 状态暂时无法读取';opener.setAttribute('aria-label','文献调研 · 状态暂时无法读取');opener.title=label.textContent;}}
         finally{clearTimeout(timeout);pending=false;controller=null;}
       }
       const timer=setInterval(refresh,4000);
       document.addEventListener('visibilitychange',refresh);
-      window.addEventListener('pagehide',()=>{clearInterval(timer);controller?.abort();detailController?.abort();});
+      window.addEventListener('pagehide',()=>{clearInterval(timer);controller?.abort();detailController?.abort();layout.disconnect();});
       refresh();
     })();</script>'''
