@@ -25,7 +25,7 @@ node_modules/
 *.p12
 *.pfx
 auth.json
-config/local/
+/config/local
 config/*secrets*
 config/*.env
 !.env.example
@@ -44,9 +44,9 @@ workspace/
 runtime/
 logs/
 cache/
-audit/
+/audit
 change_requests/
-changes/
+/changes
 # Only original Test0 is published; all other case directories are excluded.
 /regression_cases/*
 !/regression_cases/README.md

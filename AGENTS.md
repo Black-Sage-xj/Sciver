@@ -4,6 +4,31 @@ This Git repository contains the public Sciver SDK, Web UI, tests,
 design and original Test0 teaching example. It has its **own** Git history
 and GitHub remote; private research workspaces have separate histories and remotes.
 
+## Shared public development baseline
+
+`main` tracks `origin/main`; they are the shared baseline for everyday SDK,
+Web, tests and documentation work. Start each `codex/*` feature branch from
+an up-to-date `main`. Develop and review changes in this public history directly;
+do not maintain a separate development tree that must be copied into a public
+release tree for every change.
+
+Integrate reviewed features with `git merge --ff-only` or a reviewed squash
+commit onto current `main`. `scripts/public_release_guard.py` rejects merge
+commits in the new release history, so do not use ordinary merge commits.
+Keep its tree, history and artifact checks intact. Pushes still require the
+explicit authorization described below.
+
+Retired `master` and other private-history archives are local recovery material,
+never a development base or a branch to push or merge into public history.
+Keep any recovery `git bundle` outside the checkout in private storage. Apply
+any needed legacy fix as a reviewed, scoped change on the current public base.
+
+Keep credentials, private configuration, research workspaces and local audit
+or change-register data outside the checkout in private directories with mode
+`0700`. Existing local integrations may use ignored compatibility symlinks at
+repository-root `config/local`, `audit` and `changes`. Preserve their external
+targets and never force-add these links, their contents, bundles or private data.
+
 ## Development completion / scoped Commit policy
 
 When a user authorizes an implementation in this repository, each

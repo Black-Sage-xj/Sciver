@@ -11,6 +11,36 @@ instructions change, and run `python scripts/check_readme_sync.py` to check
 that sections, commands, and links stay aligned. This structural check does
 not replace reviewing the English translation for meaning.
 
+## Branches and the public baseline
+
+Use `main`, tracking `origin/main`, as the common baseline for daily development.
+After preserving any local work, update it and create a feature branch:
+
+```bash
+git fetch origin
+git switch main
+git merge --ff-only origin/main
+git switch -c codex/describe-change
+```
+
+Develop directly in this public history. A separate copy-and-sanitize release
+tree is not part of the routine development workflow. Once the change has been
+reviewed and verified, integrate it with `git merge --ff-only` or a reviewed
+squash commit onto current `main`. If a fast-forward is unavailable, use the
+squash path after reviewing the resulting diff. The public release guard rejects
+merge commits in new release history; keep that guard enabled. A local commit,
+branch integration and a push remain separate actions with their existing
+review and authorization requirements.
+
+Retired private-history branches, including an archived `master`, are local
+recovery references. Do not push them, merge their ancestry into `main`, or use
+them as feature-branch bases. Keep a recovery `git bundle`, private configuration,
+credentials, audit/change registers and research workspaces in external private
+storage with directory mode `0700`. Repository-root `config/local`, `audit` and
+`changes` may remain ignored compatibility symlinks to that storage. Preserve
+existing data and never force-add private files or those links. New work starts
+from `main`; it does not require repeating a migration or publication-tree copy.
+
 ## Development installation
 
 Use Python 3.12+ on Linux, macOS, or Windows with WSL2. Clone the repository and
