@@ -412,32 +412,39 @@ def _tui_summary(raw: str, *, attention: dict[str, Any] | None = None,
             return _codex_quota_metric_card(quota_snapshot, worker_account=worker_account)
         if label == "State":
             key = str(value).upper().replace(" ", "_")
+            action_hint = ""
             tone = "tm-tui-process-green" if key in {"RUNNING", "ACTIVE", "ALIVE"} else (
                 "tm-tui-process-red" if key in {"STOPPED", "FAILED", "FAILED_RECOVERY", "NEEDS_ATTENTION", "ORPHANED", "DEAD", "EXITED", "CANCELLED"} else "tm-tui-process-amber")
             if worker_state_actions:
                 content = (f'<button type="button" data-worker-state-open '
                            f'class="tm-tui-process {tone}" title="管理当前 Agent" '
-                           f'aria-haspopup="dialog">{_e(value)}'
+                           f'aria-label="当前状态 {_e(value)}，打开 Agent 操作" aria-haspopup="dialog">{_e(value)}'
                            '<span aria-hidden="true" class="tm-process-chevron">▾</span></button>')
+                action_hint = "点击状态查看 Agent 操作"
             elif allow_process_actions and key == "RUNNING" and process_active:
                 content = (f'<button type="button" data-tui-process-actions '
                            f'class="tm-tui-process {tone}" title="打开 Workflow 操作弹窗"'
-                           f' aria-haspopup="dialog">{_e(value)}'
+                           f' aria-label="当前状态 {_e(value)}，打开运行操作" aria-haspopup="dialog">{_e(value)}'
                            '<span aria-hidden="true" class="tm-process-chevron">▾</span></button>')
+                action_hint = "点击状态查看暂停和结束选项"
             elif (allow_process_actions and key in {"PAUSED", "INTERRUPTED", "NEEDS_ATTENTION", "FAILED",
                          "FAILED_RECOVERY", "ORPHANED", "CHECKPOINT_REACHED",
                          "RECOVERABLE", "UNRESPONSIVE"} and resume_available):
                 content = (f'<button type="button" data-tui-process-actions '
                            f'class="tm-tui-process {tone}" title="打开 Resume 恢复任务弹窗"'
-                           f' aria-haspopup="dialog">{_e(value)}'
+                           f' aria-label="当前状态 {_e(value)}，打开恢复操作" aria-haspopup="dialog">{_e(value)}'
                            '<span aria-hidden="true" class="tm-process-chevron">▾</span></button>')
+                action_hint = "点击状态查看恢复操作"
             elif allow_process_actions and run_available and key in {"OVER", "CANCELLED", "STOPPED", "NEW", "IDLE"}:
                 content = (f'<button type="button" data-tui-process-actions '
                            f'class="tm-tui-process {tone}" title="启动一个新的 Cycle"'
-                           f' aria-haspopup="dialog">{_e(value)}'
+                           f' aria-label="当前状态 {_e(value)}，打开启动操作" aria-haspopup="dialog">{_e(value)}'
                            '<span aria-hidden="true" class="tm-process-chevron">▾</span></button>')
+                action_hint = "点击状态查看启动操作"
             else:
                 content = f'<span class="tm-tui-process {tone}">{_e(value)}</span>'
+            if action_hint:
+                content += f'<span class="tm-tui-action-hint" aria-hidden="true">{_e(action_hint)}</span>'
             content += worker_controls
         elif label == "Cycle":
             raw_ordinal, raw_limit = value.split(' / ', 1)

@@ -18,6 +18,8 @@ class ProcessQuickControlsTests(unittest.TestCase):
         trigger = soup.select_one('button.tm-tui-process-green[data-tui-process-actions]')
         self.assertIsNotNone(trigger)
         self.assertIn("RUNNING", trigger.get_text(" ", strip=True))
+        self.assertIn("打开运行操作", trigger["aria-label"])
+        self.assertIn("点击状态查看暂停和结束选项", soup.select_one('.tm-tui-action-hint').get_text())
         self.assertIsNone(soup.select_one(".tm-process-action-menu"))
         from tm_observer.run_controls_ui import control_panel
         dialog = BeautifulSoup(control_panel({"observer_id":"a"*16,"cycle":"4",
@@ -39,6 +41,7 @@ class ProcessQuickControlsTests(unittest.TestCase):
                     "Process RUNNING", f"Process {process}")), "html.parser")
                 self.assertIsNone(soup.select_one("[data-tui-process-actions]"))
                 self.assertIsNotNone(soup.select_one(".tm-tui-process"))
+                self.assertIsNone(soup.select_one(".tm-tui-action-hint"))
 
     def test_click_delegates_to_existing_confirmed_operator_not_new_api(self):
         page = run_detail_body({"observer_id": "a" * 16,

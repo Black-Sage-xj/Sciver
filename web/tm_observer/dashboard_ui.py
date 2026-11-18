@@ -420,6 +420,7 @@ a.tm-explore-map:focus-visible { outline:2px solid #93c5fd; outline-offset:3px; 
 .tm-tui-kv:nth-child(4) dd, .tm-tui-kv:nth-child(6) dd { font-weight:550; font-size:12px; }
 .tm-tui-process { display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:6px; font-size:12px; font-weight:700; letter-spacing:.015em; }
 .tm-tui-process:before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
+.tm-tui-action-hint { display:block; margin-top:6px; color:var(--tm-muted); font-size:11px; font-weight:400; line-height:1.4; }
 /* RUNNING launches a native modal; action buttons are never embedded
    inside the narrow Process metric tile. */
 .tm-tui-process[data-tui-process-actions] { appearance:none; font:inherit; font-weight:700;
@@ -843,6 +844,7 @@ a.tm-explore-map:focus-visible { outline:2px solid #93c5fd; outline-offset:3px; 
   .tm-tui-kv-grid { gap:7px; }
   .tm-tui-kv { padding:10px; }
   .tm-tui-panel { padding:14px 13px; }
+  .tm-tui-history-panel .tm-run-events-scroll { height:auto; max-height:50dvh; }
   .tm-tui-title-main > strong { font-size:19px; }
   .tm-token-scopes { grid-template-columns:1fr; }
   .tm-log-item { grid-template-columns:58px minmax(0,1fr); gap:6px; }
@@ -1151,7 +1153,7 @@ body.stage-height-focus .tm-content { padding:0; max-width:none; }
   .tm-sidebar.tm-mobile-nav-open .tm-nav { display:flex; }
   .tm-nav-link { min-height:41px; padding:8px 12px; gap:11px; width:100%; min-width:0; }
   .tm-main { margin-left:0; width:100%; min-width:0; max-width:100%; }
-  .tm-topbar { height:50px; padding:0 17px; }
+  .tm-topbar { height:auto; min-height:50px; padding:8px 17px; gap:8px; }
   .tm-content { padding:22px 17px 35px; }
   .tm-content .stage-layout { min-width:0; }
   .tm-content .stage-canvas { min-height:460px; }
