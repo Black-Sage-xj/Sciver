@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -162,7 +163,9 @@ def test_missing_binding_or_broken_database_does_not_invent_context_or_block_cha
     assert "Inspect the binding before task writes" in backend.calls[1][0]
 
 
-def test_chat_handbook_and_skill_catalog_reach_actual_sdk_developer_prompt(tmp_path):
+def test_chat_handbook_and_skill_catalog_reach_actual_sdk_developer_prompt(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
+    monkeypatch.setenv("THEORYMASTER_COMPUTE_PYTHON", sys.executable)
     refs = role_skills("research_chat")
     assert {ref.directory for ref in refs} == set(chat.CHAT_SKILLS) | {chat.PREPARATION_SKILL}
     sdk = SimpleNamespace(Sandbox=SimpleNamespace(full_access="full", workspace_write="write", read_only="read"))
