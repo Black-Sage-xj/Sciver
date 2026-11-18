@@ -21,7 +21,7 @@ Supervisor 是一个运行保障角色，而非 Runtime / Incident 两个独立 
 ## 持续恢复状态机
 
 ```text
-Worker FAILED
+Worker FAILED / 白名单工程依赖 NEEDS_ATTENTION
   → Runtime triage
   → recoverable → guarded resume → 验证实际模型/工具活动
   → needs engineering → Engineering repair → 离线验证 → 重新 triage
@@ -39,6 +39,8 @@ Worker FAILED
 工程候选接收与失败 invocation 绑定的紧凑公开证据，包括冻结科学、最近相关交付和已观察加载 Skill 的当前规则/哈希；当前规则不冒充历史版本证明。记录不授予修改科学状态或受保护策略的权限。普通代码候选继续通过独立差分验收；`repair_plan.json` 也可返回 `needs_dependency / needs_rule_revision / needs_configuration`、具体原因和缺失依赖，此类诊断必须无源码/测试变更，不安装文件、不授权 Resume。缺计划文件即使进程退出 0 也属于未交付；脱敏退出信息和输出片段随候选证据保留。
 
 明确依赖等待仍保留恢复 owner，排程定期做无模型条件检查。源代码、相关已加载 Skill、身份/配置、checkpoint 或恢复控制记录变化后可重新诊断；时间到达本身不触发相同的付费工程重试。外部输入变化可通过更新来源配置或 SDK recovery_control 通知恢复 owner。Console 对单任务及 Worker 均投影当前失败绑定的持久恢复记录，分别展示诊断、等待依赖、受控恢复及已核实活动；活跃对话和 PID 均不能单独证明科研已恢复。
+
+`lead_literature_unavailable` 表示 Lead 已授权的检索没有交付结果，属于上述工程依赖白名单。Attention 阶段确定性记录 `hold` 并交回运行恢复 owner，不调用只能选择 `hold` 的模型审查。即使 Runner 正常退出 0，管理进程仍进入持久恢复循环：诊断、工程交接或带依赖的 `RECOVERY_WAIT`，由 SDK 安全恢复同一请求。这个分类不授予额外科学 Literature detour、替换来源或修改 Lead 决策的权限。`lead_literature_detour_exhausted`、未知 Attention、真实科学停止和预算停止不因此获得自动恢复权限；Supervisor 关闭、用户暂停/终止和既有恢复守卫仍然有效。
 
 ## 不可逾越的边界
 

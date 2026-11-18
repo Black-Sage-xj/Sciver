@@ -24,7 +24,7 @@ from .supervisor_intervention import SupervisorSession, supervisor_model
 
 REVIEW_MODEL = "gpt-6-luna"
 REVIEW_PROVIDER = "CodexHTTPS"
-POLICY_VERSION = 5
+POLICY_VERSION = 6
 MAX_SCIENTIFIC_CONTINUES = 1
 TECHNICAL_BUDGET_REVIEW_CODES = frozenset({
     "investigator_budget_review_failed",
@@ -41,6 +41,7 @@ HARD_CODES = frozenset({
     "runtime_failure", "supervisor_unrecoverable",
     "provider_model_capacity_timeout",
     "investigator_native_goal_unexpected_blocked",
+    "lead_literature_unavailable",
 })
 MAX_QUALIFICATION_RETRIES = 1
 
@@ -124,6 +125,10 @@ def review_supervisor_attention(
                 "Unexpected native Goal blocked: no Investigator scientific stop authority; "
                 "retain the checkpoint for operational recovery without preservation."
                 if code == "investigator_native_goal_unexpected_blocked" else
+                "Requested scholarly Literature was not delivered. Retain the same "
+                "Lead checkpoint and source request for operational dependency diagnosis; "
+                "this hold grants no scientific retry or source substitution."
+                if code == "lead_literature_unavailable" else
                 "Budget Reviewer technical delivery or contract failure: SDK exhausted "
                 "its bounded retries without a valid approval/rejection. Preserve the "
                 "scientific checkpoint and budget ledger; recheck provider and safely "

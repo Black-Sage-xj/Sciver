@@ -20,6 +20,10 @@ OPERATIONAL_ATTENTION = frozenset({
     'runtime_failure', 'supervisor_unrecoverable', 'provider_model_capacity_timeout',
     'investigator_native_goal_unexpected_blocked', 'runtime_retry_exhausted',
     'runtime_no_recoverable_checkpoint',
+    # No Literature result was delivered. Keep the operational owner until the
+    # dependency is repaired or waiting is recorded; this grants no extra
+    # scientific detour and does not include lead_literature_detour_exhausted.
+    'lead_literature_unavailable',
 })
 RETRY_WINDOW = 3
 BASE_DELAY = 300
