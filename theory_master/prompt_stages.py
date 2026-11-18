@@ -23,7 +23,7 @@ STAGE_CONTEXT_FIELDS: dict[tuple[str, str], tuple[str, ...]] = {
     ("research_lead", "frontier_proposal"): (
         "goal", "research_contract", "final_gate", "scientific_model_summary",
         "agent_graph", "agent_graph_reuse", "science_graph_tools", "running_hypotheses",
-        "operator_guidance",
+        "operator_guidance", "recent_execution_limits",
         "qualification_feedback", "lead_literature_result", "workspace_access",
     ),
     ("research_lead", "hypothesis_display"): ("frozen_hypothesis", "frozen_reasoning"),
@@ -573,6 +573,7 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
             **_graph_access(context),
             "science_graph_tools": context.get("science_graph_tools"),
             "running_hypotheses": context.get("running_hypotheses"),
+            "recent_execution_limits": context.get("recent_execution_limits"),
             "operator_guidance": context.get("operator_guidance"),
             "qualification_feedback": feedback,
             "lead_literature_result": _literature_digest(context.get("lead_literature_result")),

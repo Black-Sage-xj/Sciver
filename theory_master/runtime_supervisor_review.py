@@ -101,6 +101,10 @@ def resume_blocker(state: dict[str, Any], *, for_repair: bool = False,
     if isinstance(budget, dict) and (budget.get("exhausted") or budget.get("rejected")):
         return "Investigator budget guard is active; Supervisor cannot override it."
     native = state.get("native_goal") or {}
+    if native.get("runtime_failure_kind") == "native_goal_dependency_blocked":
+        from .supervisor_repair_receipts import execution_limit_protocol_reentry_key
+        if execution_limit_protocol_reentry_key(state) in (state.get("supervisor_execution_limit_protocol_reentries") or []):
+            return "The retained-thread execution-limit protocol delivery opportunity was already used; another reentry requires review."
     if (native.get("runtime_failure_kind") in {
             "native_goal_dependency_blocked", "repeated_unexpected_block"}
             and not runtime_revalidated):
@@ -112,8 +116,11 @@ def resume_blocker(state: dict[str, Any], *, for_repair: bool = False,
     if not (valid_checkpoint or state.get("role_outputs")):
         return "No existing safe checkpoint or committed role boundary exists for managed resume."
     from .supervisor_repair_receipts import unused_repair_credit
+    # A blocked native Goal's delivery migration uses the ordinary resume
+    # allowance. It is not another engineering-repair spending credit.
     if (int(state.get(_COUNT_KEY) or 0) >= MAX_RUNTIME_RESUMES and not for_repair
-            and not (runtime_revalidated and unused_repair_credit(state))):
+            and not (runtime_revalidated and unused_repair_credit(state)
+                     and native.get('runtime_failure_kind') != 'native_goal_dependency_blocked')):
         return (f"The {MAX_RUNTIME_RESUMES} authorized Supervisor runtime resumes "
                 "for this Cycle were used; repeated failure requires review.")
     return None
@@ -181,11 +188,21 @@ def review_runtime_failure(
     reconciled = None
     validated_repair = None
     if not readonly_provider_probe_only:
-        from .supervisor_repair_receipts import inspect_repair_receipt, validate_existing_method, validate_existing_judge_projection
+        from .supervisor_repair_receipts import (inspect_repair_receipt, validate_existing_method,
+            validate_existing_judge_projection, validate_existing_execution_limit_protocol)
         try:
             validated_repair = inspect_repair_receipt(cycle_dir, state)
         except (OSError, ValueError, TypeError, KeyError):
             pass
+        if validated_repair is None:
+            import subprocess
+            try:
+                validated_repair = validate_existing_execution_limit_protocol(
+                    cycle_dir, state, engine=Path(__file__).resolve().parent)
+                if validated_repair:
+                    write_json(state_path, state)
+            except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired):
+                pass
         if validated_repair is None:
             import subprocess
             try:
@@ -407,8 +424,12 @@ def review_runtime_failure(
                       "diagnosis": result.get("diagnosis", ""), "repair_suggestion": ""}
     if result["action"] == "resume":
         if validated_repair:
-            from .supervisor_repair_receipts import repair_credit_key
+            from .supervisor_repair_receipts import (repair_credit_key, EXECUTION_LIMIT_PROTOCOL_VALIDATOR,
+                execution_limit_protocol_reentry_key)
             state.setdefault('supervisor_consumed_repairs', []).append(repair_credit_key(state))
+            if validated_repair.get('validator') == EXECUTION_LIMIT_PROTOCOL_VALIDATOR:
+                state.setdefault('supervisor_execution_limit_protocol_reentries', []).append(
+                    execution_limit_protocol_reentry_key(state))
         state[_COUNT_KEY] = int(state.get(_COUNT_KEY) or 0) + 1
         state["supervisor_runtime_review"] = {"at": now(), "session_id": session.session_id,
                                               "action": "resume", "policy_version": POLICY_VERSION}

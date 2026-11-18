@@ -24,6 +24,7 @@ ATTRIBUTE_VALIDATOR = 'python-method-availability/v1'
 CANDIDATE_VALIDATOR = 'differential-engine-repair/v1'
 CONFIG_VALIDATOR = 'local-route-configuration/v1'
 CONTRACT_PROJECTION_VALIDATOR = 'judge-terminal-projection/v1'
+EXECUTION_LIMIT_PROTOCOL_VALIDATOR = 'native-execution-limit-protocol/v1'
 # Import-only, non-instantiating probes; expanding this map requires review.
 _ATTRIBUTE_CLASSES = {'Workflow': 'workflow'}
 RECEIPT_KEY = 'supervisor_repair_receipt'
@@ -141,7 +142,7 @@ def inspect_repair_receipt(cycle: Path, state: dict, *, engine: Path | None = No
     receipt = json.loads(path.read_text())
     if (not isinstance(receipt, dict) or _digest(receipt) != ref.get('sha256')
             or receipt.get('schema') != SCHEMA
-            or receipt.get('validator') not in {CANVAS_VALIDATOR, ATTRIBUTE_VALIDATOR, CANDIDATE_VALIDATOR, CONFIG_VALIDATOR, CONTRACT_PROJECTION_VALIDATOR}
+            or receipt.get('validator') not in {CANVAS_VALIDATOR, ATTRIBUTE_VALIDATOR, CANDIDATE_VALIDATOR, CONFIG_VALIDATOR, CONTRACT_PROJECTION_VALIDATOR, EXECUTION_LIMIT_PROTOCOL_VALIDATOR}
             or receipt.get('phase') != 'repair_validated'
             or receipt.get('failure_binding') != failure_binding(cycle, state)
             or receipt.get('source_root') != str(engine.resolve())
@@ -154,7 +155,7 @@ def inspect_repair_receipt(cycle: Path, state: dict, *, engine: Path | None = No
         path = Path(name)
         if not path.is_absolute() or _file_hash(path) != expected:
             raise ValueError('Repair validation inputs changed')
-    if receipt['validator'] in {CANDIDATE_VALIDATOR, CONFIG_VALIDATOR, CONTRACT_PROJECTION_VALIDATOR}:
+    if receipt['validator'] in {CANDIDATE_VALIDATOR, CONFIG_VALIDATOR, CONTRACT_PROJECTION_VALIDATOR, EXECUTION_LIMIT_PROTOCOL_VALIDATOR}:
         return receipt
     from .supervisor_runtime_repair import _SAFE_MODULES
     modules = (_SAFE_MODULES if receipt['validator'] == CANVAS_VALIDATOR else
@@ -162,6 +163,173 @@ def inspect_repair_receipt(cycle: Path, state: dict, *, engine: Path | None = No
     if receipt.get('module') not in modules:
         raise ValueError('Unsupported repair module')
     return receipt
+
+
+def validate_existing_execution_limit_protocol(cycle: Path, state: dict, *, engine: Path) -> dict | None:
+    """Permit one retained-thread delivery opportunity under the new protocol.
+
+    The historical public message proves only which blocked invocation spoke.
+    Its scientific explanation is neither evaluated nor promoted to a handoff.
+    A fresh Investigator must author any execution-limit record itself.
+    """
+    recovery, native = state.get('recovery') or {}, state.get('native_goal') or {}
+    if (state.get('status') != 'failed' or state.get('execution_active')
+            or recovery.get('action') != 'error' or recovery.get('kind') != 'NativeGoalRuntimeFailure'
+            or native.get('status') != 'blocked'
+            or native.get('runtime_failure_kind') != 'native_goal_dependency_blocked'
+            or native.get('provider_failure')
+            or state.get('scientific_verdict') is not None):
+        return None
+    from .runtime_supervisor_review import resume_blocker
+    if resume_blocker(state, runtime_revalidated=True) is not None:
+        return None
+    invocation, thread = str(state.get('active_invocation_id') or ''), str(native.get('thread_id') or '')
+    if (not invocation or Path(invocation).name != invocation or not thread
+            or (state.get('threads') or {}).get('investigator') != thread
+            or (recovery.get('invocation_id') and recovery['invocation_id'] != invocation)
+            or (recovery.get('thread_id') and recovery['thread_id'] != thread)):
+        return None
+    digest = native.get('objective_sha256')
+    if not isinstance(digest, str) or re.fullmatch('[0-9a-f]{64}', digest) is None:
+        return None
+    paths = [cycle / name for name in ('events.jsonl', 'runtime_events.jsonl', 'invocations.jsonl')]
+    checked = [cycle, cycle / 'research_state.json', *paths]
+    checkpoint = state.get('last_safe_checkpoint')
+    if checkpoint:
+        checked += [cycle / 'checkpoints', Path(str(checkpoint))]
+    if any(p.is_symlink() or not p.exists() or (p.is_file() and p.stat().st_size > 16_000_000)
+           for p in checked) or any(not p.is_file() for p in paths):
+        return None
+    manifest, binding = source_manifest(engine), failure_binding(cycle, state)
+    inputs = {str(p.resolve()): _file_hash(p) for p in paths}
+    rows = [[json.loads(line) for line in p.read_text().splitlines() if line.strip()] for p in paths]
+    if any(not isinstance(row, dict) for group in rows for row in group):
+        return None
+    events, runtime, ledger = rows
+    failed = {}
+    for row in ledger:
+        if row.get('invocation_id') == invocation:
+            failed.update(row)
+    stage = failed.get('stage')
+    if (failed.get('state') != 'failed' or failed.get('commit_state') != 'not_committed'
+            or failed.get('error_type') != 'NativeGoalRuntimeFailure'
+            or failed.get('role') != 'investigator' or stage not in {'investigate', 'judge_rework', 'integrate_literature'}
+            or failed.get('thread_id') != thread):
+        return None
+    starts = [(index, row) for index, row in enumerate(events) if row.get('type') == 'role.started'
+              and (row.get('payload') or {}).get('invocation_id') == invocation]
+    if len(starts) != 1:
+        return None
+    index, started = starts[0]
+    payload = started.get('payload') or {}
+    subsequent = events[index + 1:]
+    if (payload.get('role') != 'investigator' or payload.get('stage') != stage
+            or payload.get('thread_id') != thread
+            or any(row.get('type') == 'role.started' for row in subsequent)):
+        return None
+    failures = [row for row in subsequent if row.get('type') == 'run.failed']
+    if (len(failures) != 1
+            or (failures[0].get('payload') or {}).get('error_kind') != 'NativeGoalRuntimeFailure'):
+        return None
+    from datetime import datetime
+    def timestamp(value):
+        result = datetime.fromisoformat(str(value or ''))
+        if result.tzinfo is None:
+            raise ValueError('Execution-limit protocol evidence needs timezone-aware timestamps')
+        return result
+    start, finish = timestamp(started.get('at')), timestamp(failures[0].get('at'))
+    if start > finish:
+        return None
+    scoped = []
+    for row in runtime:
+        if not row.get('ts') and not row.get('at'):
+            continue
+        at = timestamp(row.get('ts') or row.get('at'))
+        if start <= at <= finish:
+            scoped.append(row)
+    def bound(row, *, require_thread=True):
+        return ((row.get('role') or row.get('agent')) == 'investigator'
+                and (row.get('thread_id') == thread if require_thread else
+                     not row.get('thread_id') or row['thread_id'] == thread)
+                and (not row.get('invocation_id') or row['invocation_id'] == invocation))
+    # Old AGENT_INPUT records lack thread/invocation IDs. The unique exact
+    # role.started interval and persisted objective hash supply that binding.
+    objectives = [row for row in scoped if row.get('event') == 'AGENT_INPUT'
+                  and row.get('input_kind') == 'native_goal_objective'
+                  and row.get('stage') == stage and bound(row, require_thread=False)]
+    marker = 'SDK_EXECUTION_LIMIT_HANDOFF_V1'
+    if (len(objectives) != 1 or not isinstance(objectives[0].get('content'), str)
+            or marker in objectives[0]['content']
+            or hashlib.sha256(objectives[0]['content'].encode()).hexdigest() != digest):
+        return None
+    relevant = [row for row in scoped if bound(row)]
+    if any(row.get('event') in {'LLM_FAILED', 'LLM_TURN_FAILED', 'CAPACITY_RETRY_EXHAUSTED'}
+           and row.get('thread_id') == thread
+           and (not row.get('invocation_id') or row['invocation_id'] == invocation)
+           for row in scoped):
+        return None
+    reports = [row for row in relevant if row.get('event') == 'LLM_MESSAGE'
+               and row.get('message_role') == 'assistant' and row.get('turn_id')
+               and isinstance(row.get('content'), str) and row['content'].strip()]
+    if not reports:
+        return None
+    report = reports[-1]
+    if not any(row.get('event') == 'LLM_TURN_COMPLETED' and row.get('turn_id') == report['turn_id']
+               and timestamp(row.get('ts') or row.get('at')) >= timestamp(report.get('ts') or report.get('at'))
+               for row in relevant):
+        return None
+    # A long-lived Supervisor may hold old module objects. Probe installed
+    # source in a clean process without networking or further child processes.
+    script = '''import ast, json, pathlib, sys
+def offline(event, args):
+    if event in {'socket.connect', 'socket.getaddrinfo', 'subprocess.Popen', 'os.system', 'os.posix_spawn', 'ctypes.dlopen'} or event.startswith('os.exec'):
+        raise RuntimeError('Execution-limit protocol validation forbids network/process execution')
+sys.addaudithook(offline)
+sys.path.insert(0, sys.argv[1])
+from theory_master.native_goal import (EXECUTION_LIMIT_PROTOCOL_MARKER, EXECUTION_LIMIT_SCHEMA,
+    NativeGoalExecutionLimit, read_execution_limit_handoff, investigator_goal)
+assert EXECUTION_LIMIT_PROTOCOL_MARKER == 'SDK_EXECUTION_LIMIT_HANDOFF_V1'
+assert EXECUTION_LIMIT_SCHEMA == 'theory-master/execution-limit-handoff/v1'
+assert issubclass(NativeGoalExecutionLimit, RuntimeError) and callable(read_execution_limit_handoff)
+for layout in ('v1', 'v2'):
+    for stage in ('investigate', 'judge_rework', 'integrate_literature'):
+        for size in (1, 5000):
+            context = {'frozen_objective': {'hypothesis': 'H' * size, 'scope': 'S', 'decisive_test': 'D'},
+                       'judge_objections': [{'requested_resolution': 'R'}]}
+            goal = investigator_goal(stage, context, layout=layout, allow_setup_reference=True)
+            assert EXECUTION_LIMIT_PROTOCOL_MARKER in goal
+root = pathlib.Path(sys.argv[1]) / 'theory_master'
+workflow = ast.parse((root / 'workflow_invocation.py').read_text())
+assert any(isinstance(n, ast.Constant) and n.value == 'sdk_execution_limit_handoff' for n in ast.walk(workflow))
+backend = ast.parse((root / 'codex_backend.py').read_text())
+assert any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'read_execution_limit_handoff' for n in ast.walk(backend))
+print(json.dumps({'marker': EXECUTION_LIMIT_PROTOCOL_MARKER, 'schema': EXECUTION_LIMIT_SCHEMA,
+                  'fresh_protocol_probe': 'passed', 'resume_preparation': 'retained_thread_delivery_only'}))
+'''
+    with tempfile.TemporaryDirectory(prefix='tm-execution-limit-protocol-') as td:
+        proc = subprocess.run([sys.executable, '-I', '-B', '-c', script, str(engine.parent)],
+                              cwd=td, env={'PATH': os.defpath, 'HOME': td, 'LANG': 'C.UTF-8'},
+                              capture_output=True, text=True, timeout=30, check=False)
+    if proc.returncode:
+        return None
+    evidence = json.loads(proc.stdout)
+    if evidence.get('fresh_protocol_probe') != 'passed':
+        return None
+    if (source_manifest(engine) != manifest or failure_binding(cycle, state) != binding
+            or any(_file_hash(Path(p)) != expected for p, expected in inputs.items())):
+        raise ValueError('Execution-limit protocol validation inputs changed')
+    evidence.update(invocation_id=invocation, thread_id=thread, historical_objective_sha256=digest,
+                    public_report_sha256=hashlib.sha256(report['content'].encode()).hexdigest(),
+                    public_report_turn_id=report['turn_id'], evidence_paths=sorted(inputs))
+    return _record_validation(cycle, state, engine, validator=EXECUTION_LIMIT_PROTOCOL_VALIDATOR,
+        module='native_goal.py', change_id='existing-source:' + _digest(manifest),
+        tests=json.dumps(evidence, sort_keys=True), manifest=manifest,
+        disposition='already_fixed', extra_inputs=inputs)
+
+
+def execution_limit_protocol_reentry_key(state: dict) -> str:
+    native = state.get('native_goal') or {}
+    return _digest([state.get('active_invocation_id'), native.get('thread_id'), native.get('objective_sha256')])
 
 
 def validate_existing_judge_projection(cycle: Path, state: dict, *, engine: Path) -> dict | None:

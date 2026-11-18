@@ -845,6 +845,8 @@ class CodexBackend:
             run_native_goal, read_goal_findings, NativeGoalIncomplete,
             NativeGoalBudgetExceeded, CODEX_GOAL_MAX_CHARS,
             verify_native_goal_context_reference, native_goal_setup_turn,
+            NativeGoalExecutionLimit, NativeGoalDeliveryError,
+            execution_limit_setup_binding, read_execution_limit_handoff,
         )
         # Fail before the paid/setup model Turn if a Native Goal reference is
         # inconsistent with the complete immutable objective supplied in Context.
@@ -853,6 +855,7 @@ class CodexBackend:
                 f"native Goal objective exceeds Codex's {CODEX_GOAL_MAX_CHARS}-character limit: {len(goal_objective)}"
             )
         verify_native_goal_context_reference(goal_objective, context_prompt)
+        limit_binding = execution_limit_setup_binding(context_prompt, Path(handoff_path))
         identifier = self.ensure_thread(role, thread_id, model, provider)
         thread = self.threads[identifier]
         from .provider_capacity import (
@@ -1035,9 +1038,32 @@ class CodexBackend:
             if goal.status == "complete":
                 capacity_window.clear()
                 thread._client.thread_goal_clear(thread.id)
+                if limit_binding is not None:
+                    limit = read_execution_limit_handoff(
+                        goal, Path(handoff_path), invocation_id=limit_binding["invocation_id"],
+                        frozen_objective_sha256=limit_binding["frozen_objective_sha256"],
+                        workspace_path=Path(limit_binding["workspace_path"]),
+                    )
+                    if limit is not None:
+                        self.last_native_goal["execution_limit_kind"] = limit["kind"]
+                        raise NativeGoalExecutionLimit(identifier, limit, Path(handoff_path))
                 return identifier, read_goal_findings(goal, Path(handoff_path))
             if goal.status == "blocked" and not capacity_error and not terminal_provider_error:
                 capacity_window.clear()
+                if limit_binding is not None:
+                    try:
+                        limit = read_execution_limit_handoff(
+                            goal, Path(handoff_path), invocation_id=limit_binding["invocation_id"],
+                            frozen_objective_sha256=limit_binding["frozen_objective_sha256"],
+                            workspace_path=Path(limit_binding["workspace_path"]),
+                        )
+                    except NativeGoalDeliveryError as exc:
+                        self.last_native_goal["execution_limit_delivery_error"] = exc.detail
+                    else:
+                        if limit is not None:
+                            self.last_native_goal["execution_limit_kind"] = limit["kind"]
+                            thread._client.thread_goal_clear(thread.id)
+                            raise NativeGoalExecutionLimit(identifier, limit, Path(handoff_path))
                 from .supervisor_incident import NativeGoalRuntimeFailure, _safe
                 self.last_native_goal.update(
                     runtime_failure_kind="native_goal_dependency_blocked",

@@ -14,6 +14,8 @@ from .evidence import scientific_evidence_producer
 from .investigator_budget import budget_status, BUDGET_ATTENTION_CODE, format_k_tokens
 from .internal_budget_review import review_budget_in_sdk
 from .provider_errors import ProviderQuotaExhausted
+from .native_goal import NativeGoalExecutionLimit, NativeGoalResult, read_execution_limit_handoff
+from .scientific_objective import frozen_science_digest
 
 from .role_registry import CAPABILITIES
 from .runtime import now, write_json
@@ -1028,6 +1030,7 @@ class InvestigationMixin:
         kind: str,
         reason: str,
         transport: dict[str, Any] | None = None,
+        execution_limit: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], str]:
         """Close an execution attempt without manufacturing a scientific verdict."""
         branch["status"] = "not_adjudicated"
@@ -1037,6 +1040,7 @@ class InvestigationMixin:
         state["closure_reason"] = kind
         state["resource_disposition"] = (
             "operational_blocked" if kind == "literature_transport_blocked"
+            else "input_support_unavailable" if kind == "input_support_unavailable"
             else "external_source_gap_unresolved" if kind == "external_artifact_source_unavailable"
             else "readiness_incomplete" if kind.startswith("readiness_incomplete")
             else "no_scientific_evidence"
@@ -1047,6 +1051,7 @@ class InvestigationMixin:
             "at": now(),
             "source_gap_id": str(((transport or {}).get("source_gap_id") or "")),
             **({"transport": transport} if isinstance(transport, dict) else {}),
+            **({"execution_limit": execution_limit} if isinstance(execution_limit, dict) else {}),
         }
         record["readiness"] = {
             **(record.get("readiness") or {}),
@@ -1071,6 +1076,25 @@ class InvestigationMixin:
             "closure_reason": kind,
             "resource_disposition": state.get("resource_disposition"),
         }, "open"
+
+    def _close_delivered_execution_limit(
+        self, state: dict[str, Any], branch: dict[str, Any], record: dict[str, Any],
+    ) -> tuple[dict[str, Any], str]:
+        """Recheck persisted source bytes before consuming an interrupted delivery."""
+        delivered = state["execution_limit_handoff"]
+        limit = read_execution_limit_handoff(
+            NativeGoalResult(str((state.get("native_goal") or {}).get("status") or ""),
+                             str(delivered["thread_id"]), 0, 0),
+            Path(delivered["handoff_path"]), invocation_id=str(delivered["invocation_id"]),
+            frozen_objective_sha256=frozen_science_digest(state["hypothesis_lock"]),
+            workspace_path=Path(self.cycle_workspace),
+        )
+        if limit is None or limit != delivered["execution_limit"]:
+            raise ValueError("persisted execution-limit delivery changed before execution closure")
+        return self._mark_non_scientific_closure(
+            state, branch, record, kind="input_support_unavailable", reason=limit["reason"],
+            execution_limit=limit,
+        )
 
     def _finalize_non_scientific_cycle(
         self, state: dict[str, Any], branch: dict[str, Any], active_title: str, active_hypothesis: str
@@ -1120,6 +1144,10 @@ class InvestigationMixin:
             self._start_investigation_attempt(state, capability, migrate=True)
         else:
             self._migrate_legacy_specialists(state, f"attempt-{state['investigation_attempt']:04d}")
+        if state.get("execution_limit_handoff"):
+            return self._close_delivered_execution_limit(
+                state, branch, state["investigation_attempts"][f"attempt-{state['investigation_attempt']:04d}"],
+            )
         while True:
             key = f"attempt-{state['investigation_attempt']:04d}"
             record = state["investigation_attempts"][key]
@@ -1277,7 +1305,10 @@ class InvestigationMixin:
                 # Literature is a fresh verification episode. External network
                 # transport has already been completed by the SDK host runner.
                 logical_round = state["investigation_round_count"] + 1
-                output = self._call(state, capability, context, fresh_thread=(capability == "literature"))
+                try:
+                    output = self._call(state, capability, context, fresh_thread=(capability == "literature"))
+                except NativeGoalExecutionLimit:
+                    return self._close_delivered_execution_limit(state, branch, record)
                 if capability == "literature":
                     self._complete_literature_task(state, output)
                 invocation_id = str(state.get("last_invocation_id") or "")

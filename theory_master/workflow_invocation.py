@@ -28,10 +28,13 @@ from .role_registry import CAPABILITIES
 from .runtime import atomic, now, write_json
 from .skills import WRITE_ROLES, role_skills, thread_cycle_prefix, write_rule
 from .workflow_support import RecoveryStop
-from .native_goal import NativeGoalIncomplete, NativeGoalBudgetExceeded, NativeGoalDeliveryError
+from .native_goal import (
+    NativeGoalIncomplete, NativeGoalBudgetExceeded, NativeGoalDeliveryError,
+    NativeGoalExecutionLimit, EXECUTION_LIMIT_SCHEMA,
+)
 from .investigator_budget import budget_status, BUDGET_ATTENTION_CODE
 from .provider_errors import ProviderQuotaExhausted
-from .scientific_objective import frozen_science_view, review_binding, require_review_binding
+from .scientific_objective import frozen_science_view, frozen_science_digest, review_binding, require_review_binding
 
 
 def _review_subjects(context: dict[str, Any], stage: str) -> dict[str, dict[str, Any]]:
@@ -855,8 +858,15 @@ class InvocationMixin:
             handoff_path.parent.mkdir(parents=True, exist_ok=True)
             if handoff_path.exists():
                 raise RuntimeError("refusing to reuse an earlier Investigator handoff")
+            limit_binding = {
+                "schema": EXECUTION_LIMIT_SCHEMA,
+                "invocation_id": invocation_id,
+                "frozen_objective_sha256": frozen_science_digest(prompt_context["frozen_objective"]),
+                "workspace_path": str(handoff_path.parent.parent),
+                "handoff_path": str(handoff_path),
+            }
             setup_context = (
-                json.dumps(prompt_context, ensure_ascii=False, default=str)
+                json.dumps({**prompt_context, "sdk_execution_limit_handoff": limit_binding}, ensure_ascii=False, default=str)
                 + "\n\nSDK DELIVERY INTERFACE (not scientific evaluation criteria): "
                 + f"Only after completing the frozen science, write {handoff_path} "
                 + "as JSON following the current output contract:\n"
@@ -867,7 +877,22 @@ class InvocationMixin:
                 + "Choose the count and content yourself; preserve distinct scientific claims. "
                 + "Put detailed proofs, scripts, numbers and other material in arbitrary research files, "
                 + "but make each submitted claim scientifically self-contained. "
-                + "Do not submit a handoff while blocked, paused or unfinished."
+                + "Do not submit Findings while blocked, paused or unfinished. "
+                + "NARROW EXECUTION-LIMIT DELIVERY: If an indispensable frozen-test input or eligible "
+                + "support remains unavailable after a bounded audit of authorized local source/recovery "
+                + "alternatives, use this same invocation's handoff path for a separate JSON object "
+                + "{execution_limit:{kind:'input_support_unavailable',invocation_id:string,"
+                + "frozen_objective_sha256:string,reason:string,checked_alternatives:[string],"
+                + "unexecuted_test:string,required_dependency:string,evidence:[{path:string,sha256:string}]}}. "
+                + "Copy invocation_id and frozen_objective_sha256 exactly from sdk_execution_limit_handoff. "
+                + "Describe the completed source-recovery audit in checked_alternatives. Cite nonempty "
+                + "existing regular evidence files by canonical workspace-relative path and actual SHA-256; "
+                + "no symlinks, outside paths, or more than 16 MiB per file / 32 MiB total. "
+                + "Do not mix this object with findings. Only this input limitation permits ending the "
+                + "native operation after administrative delivery while the test remains unexecuted. "
+                + "It is not scientific completion, an inconclusive result or a Judge verdict. "
+                + "Method failure, scientific difficulty or cost alone do not qualify. Preserve frozen "
+                + "science, lawful inputs and resource guards; do not repeatedly audit unchanged sources."
                 + skill_addendum
             )
         if use_native_goal:
@@ -1087,6 +1112,33 @@ class InvocationMixin:
                 fresh_thread=False, contract_role=contract_role,
                 output_key=output_key,
             )
+        except NativeGoalExecutionLimit as exc:
+            if (not use_native_goal or exc.handoff_path != str(handoff_path)
+                    or exc.execution_limit.get("invocation_id") != invocation_id
+                    or exc.execution_limit.get("frozen_objective_sha256") != limit_binding["frozen_objective_sha256"]):
+                raise RuntimeError("execution-limit exception is not bound to this invocation") from exc
+            state["native_goal"] = dict(getattr(self.backend, "last_native_goal", {}) or {})
+            state["execution_limit_handoff"] = {
+                "execution_limit": exc.execution_limit,
+                "handoff_path": exc.handoff_path,
+                "invocation_id": invocation_id,
+                "thread_id": exc.thread_id,
+            }
+            state.update(execution_active=False, scientific_verdict=None,
+                         phase="investigator:execution_limited", last_invocation_id=invocation_id,
+                         active_invocation_id=None)
+            invocation_ledger.transition(
+                invocation_id, "interrupted", role=role, thread_id=exc.thread_id,
+                reason="validated input-support execution limitation",
+                execution_limit=exc.execution_limit, handoff_path=exc.handoff_path,
+            )
+            if artifact_tracker is not None:
+                artifact_tracker.finalize(status="interrupted")
+            self._emit(state, "investigation.execution_limit_delivered", {
+                **state["execution_limit_handoff"], "scientific_verdict": None,
+            })
+            self._persist(state)
+            raise
         except NativeGoalDeliveryError as exc:
             state["native_goal"] = dict(getattr(self.backend, "last_native_goal", {}) or {})
             state.update(status="needs_attention", phase="investigator:handoff_invalid",

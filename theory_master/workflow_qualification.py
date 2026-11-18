@@ -726,6 +726,10 @@ class QualificationMixin:
             if isinstance(prior_literature, dict):
                 lead_context["lead_literature_result"] = prior_literature
             lead_context["running_hypotheses"] = self._running_hypotheses_for_lead()
+            from .execution_limit_history import recent_execution_limits
+            lead_context["recent_execution_limits"] = recent_execution_limits(
+                self.spec.research_root, current_cycle=str(run_id),
+            )
             guidance = state.get("operator_guidance") if state.get("operator_guidance_pending") else None
             from .operator_direction import claim_conjecture, qualification_guidance
             try:

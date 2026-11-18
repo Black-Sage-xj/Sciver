@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -46,6 +48,16 @@ class NativeGoalDeliveryError(NativeGoalIncomplete):
         self.args = (f"Investigator Goal completed, but findings handoff is invalid: {detail}",)
 
 
+class NativeGoalExecutionLimit(RuntimeError):
+    """An invocation-bound input limitation, never Findings or a Judge verdict."""
+
+    def __init__(self, thread_id: str, execution_limit: dict[str, Any], handoff_path: Path):
+        self.thread_id = thread_id
+        self.execution_limit = execution_limit
+        self.handoff_path = str(handoff_path)
+        super().__init__(execution_limit["reason"])
+
+
 @dataclass(frozen=True)
 class NativeGoalResult:
     status: str
@@ -61,6 +73,15 @@ CODEX_GOAL_MAX_CHARS = 4000
 NATIVE_GOAL_SAFE_CHARS = 3800
 FROZEN_CONTEXT_SHA_MARKER = "FROZEN_OBJECTIVE_CONTEXT_SHA256="
 JUDGE_REQUESTS_SHA_MARKER = "JUDGE_REQUESTS_CONTEXT_SHA256="
+EXECUTION_LIMIT_PROTOCOL_MARKER = "SDK_EXECUTION_LIMIT_HANDOFF_V1"
+EXECUTION_LIMIT_SCHEMA = "theory-master/execution-limit-handoff/v1"
+EXECUTION_LIMIT_MAX_EVIDENCE_BYTES = 16 * 1024 * 1024
+EXECUTION_LIMIT_INSTRUCTION = (
+    f"{EXECUTION_LIMIT_PROTOCOL_MARKER}: Only an indispensable input/support gap "
+    "remaining after a bounded source-recovery audit permits Setup's execution_limit "
+    "handoff. Method failure or cost alone does not. This closes execution without "
+    "a completed test, Findings or scientific verdict; keep frozen science unchanged. "
+)
 
 
 def verify_native_goal_context_reference(goal: str, setup_context: str) -> None:
@@ -218,7 +239,8 @@ def investigator_goal(stage: str, context: dict[str, Any], *, layout: str = "v1"
             "silently weaken the frozen "
             "estimand/scope. Unperformed tests are not inconclusive. Resource "
             "guards are token/usage/operator, NOT elapsed time. Native Goal "
-            "completion does not replace independent Judge adjudication."
+            "completion does not replace independent Judge adjudication. "
+            + EXECUTION_LIMIT_INSTRUCTION
         )
         guidance = context.get("operator_guidance")
         directed = bool(isinstance(guidance, dict) and str(guidance.get("text") or "").strip())
@@ -257,7 +279,8 @@ def investigator_goal(stage: str, context: dict[str, Any], *, layout: str = "v1"
             "interruption for SDK diagnosis, never scientific completion. Do not claim Goal complete or "
             "submit findings[] for unfinished science. "
             "On real Goal completion, preserve reproducible science and hand off the authored "
-            "claims according to the separate setup delivery instruction; then an INDEPENDENT Judge adjudicates.")
+            "claims according to the separate setup delivery instruction; then an INDEPENDENT Judge adjudicates. "
+            + EXECUTION_LIMIT_INSTRUCTION)
     return _bounded_goal(
         objective, stage=stage, scientific_objective=context["frozen_objective"],
         allow_setup_reference=allow_setup_reference, short_target=target,
@@ -266,6 +289,7 @@ def investigator_goal(stage: str, context: dict[str, Any], *, layout: str = "v1"
             "preserve evidence for independent Judge review. Do not voluntarily "
             "block/stop this Goal for scientific difficulty; report precise "
             "gaps, try valid alternatives, and obey SDK/operator resource guards. "
+            + EXECUTION_LIMIT_INSTRUCTION
         ),
         judge_requests=requests if stage == "judge_rework" else None,
     )
@@ -368,6 +392,130 @@ def run_native_goal(thread: Any, objective: str, *,
     return NativeGoalResult(status=status, thread_id=thread.id,
                             physical_turns=turns, tools_started=tools,
                             final_response=final_response)
+
+
+def _safe_workspace_bytes(workspace_path: Path, relative: Path, *, max_bytes: int) -> bytes:
+    """Read a bounded regular file through directory FDs, without following links."""
+    root = Path(workspace_path)
+    if (not root.is_absolute() or ".." in root.parts or relative.is_absolute()
+            or not relative.parts or ".." in relative.parts):
+        raise ValueError("execution-limit files require safe workspace-relative paths")
+    parts = (*root.parts[1:], *relative.parts)
+    directory = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in parts[:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+            os.close(directory)
+            directory = child
+        descriptor = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= max_bytes:
+                raise ValueError("execution-limit source must be a nonempty bounded regular file")
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                data = stream.read(max_bytes + 1)
+            if not 0 < len(data) <= max_bytes:
+                raise ValueError("execution-limit source changed size or exceeds its limit")
+            return data
+        finally:
+            os.close(descriptor)
+    finally:
+        os.close(directory)
+
+
+def execution_limit_setup_binding(context_prompt: str, handoff_path: Path) -> dict[str, str] | None:
+    """Read trusted SDK Setup metadata; historical/findings-only callers have none."""
+    try:
+        context, _ = json.JSONDecoder().raw_decode(context_prompt.lstrip())
+    except (ValueError, TypeError):
+        return None
+    binding = context.get("sdk_execution_limit_handoff") if isinstance(context, dict) else None
+    if binding is None:
+        return None
+    expected = {"schema", "invocation_id", "frozen_objective_sha256", "workspace_path", "handoff_path"}
+    if not isinstance(binding, dict) or set(binding) != expected or binding.get("schema") != EXECUTION_LIMIT_SCHEMA:
+        raise ValueError("invalid SDK execution-limit binding")
+    if any(not isinstance(binding[key], str) or not binding[key].strip() for key in expected):
+        raise ValueError("empty SDK execution-limit binding")
+    path = Path(handoff_path)
+    if (binding["handoff_path"] != str(path)
+            or path != Path(binding["workspace_path"]) / ".tm-handoff" / (binding["invocation_id"] + ".json")):
+        raise ValueError("SDK execution-limit binding does not match this invocation handoff")
+    digest = binding["frozen_objective_sha256"]
+    if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+        raise ValueError("invalid SDK frozen-objective digest")
+    if (isinstance(context.get("frozen_objective"), dict)
+            and frozen_science_digest(context["frozen_objective"]) != digest):
+        raise ValueError("SDK execution-limit frozen-objective binding changed")
+    return binding
+
+
+def read_execution_limit_handoff(
+    result: NativeGoalResult, handoff_path: Path, *, invocation_id: str,
+    frozen_objective_sha256: str, workspace_path: Path,
+) -> dict[str, Any] | None:
+    """Validate authored input limits, never infer a limitation from public prose.
+
+    This attests the invocation, frozen text and local source bytes only. The
+    scientific sufficiency of the author's recovery audit is not machine certified.
+    """
+    if result.status not in {"complete", "blocked"}:
+        raise NativeGoalIncomplete(result.status, result.thread_id)
+    path = Path(handoff_path)
+    root = Path(workspace_path)
+    try:
+        if (not invocation_id or path != root / ".tm-handoff" / (invocation_id + ".json")
+                or len(frozen_objective_sha256) != 64
+                or any(ch not in "0123456789abcdef" for ch in frozen_objective_sha256)):
+            raise ValueError("execution-limit handoff has no exact invocation/frozen-objective binding")
+        try:
+            raw = _safe_workspace_bytes(root, path.relative_to(root), max_bytes=1024 * 1024)
+        except FileNotFoundError:
+            return None
+        authored = json.loads(raw)
+        if not isinstance(authored, dict) or "execution_limit" not in authored:
+            return None
+        if set(authored) != {"execution_limit"}:
+            raise ValueError("execution_limit cannot be mixed with Findings or other handoffs")
+        limit = authored["execution_limit"]
+        fields = {"kind", "invocation_id", "frozen_objective_sha256", "reason", "checked_alternatives",
+                  "unexecuted_test", "required_dependency", "evidence"}
+        if not isinstance(limit, dict) or set(limit) != fields:
+            raise ValueError("execution_limit requires the exact SDK input-limit schema")
+        if (limit["kind"] != "input_support_unavailable" or limit["invocation_id"] != invocation_id
+                or limit["frozen_objective_sha256"] != frozen_objective_sha256):
+            raise ValueError("execution_limit kind, invocation or frozen objective does not match")
+        for key in ("reason", "unexecuted_test", "required_dependency"):
+            if not isinstance(limit[key], str) or not 0 < len(limit[key].strip()) <= 12_000:
+                raise ValueError(f"execution_limit.{key} requires bounded nonempty text")
+        alternatives = limit["checked_alternatives"]
+        if (not isinstance(alternatives, list) or not 0 < len(alternatives) <= 32
+                or any(not isinstance(row, str) or not 0 < len(row.strip()) <= 4000 for row in alternatives)):
+            raise ValueError("execution_limit requires a bounded, nonempty source-recovery audit")
+        evidence = limit["evidence"]
+        if not isinstance(evidence, list) or not 0 < len(evidence) <= 32:
+            raise ValueError("execution_limit requires existing local evidence")
+        seen = set()
+        total = 0
+        for row in evidence:
+            if not isinstance(row, dict) or set(row) != {"path", "sha256"}:
+                raise ValueError("execution-limit evidence requires exactly path and sha256")
+            if not isinstance(row["path"], str) or not row["path"].strip():
+                raise ValueError("execution-limit evidence path must be nonempty")
+            relative = Path(row["path"])
+            if (relative.as_posix() != row["path"] or row["path"] in seen
+                    or relative == path.relative_to(root)):
+                raise ValueError("execution-limit evidence path must be unique, canonical and independent of the handoff")
+            data = _safe_workspace_bytes(root, relative, max_bytes=EXECUTION_LIMIT_MAX_EVIDENCE_BYTES)
+            total += len(data)
+            if total > 32 * 1024 * 1024:
+                raise ValueError("execution-limit evidence exceeds total size limit")
+            if not isinstance(row["sha256"], str) or hashlib.sha256(data).hexdigest() != row["sha256"]:
+                raise ValueError("execution-limit evidence SHA-256 does not match existing source bytes")
+            seen.add(row["path"])
+        return limit
+    except (OSError, UnicodeError, ValueError, TypeError) as exc:
+        raise NativeGoalDeliveryError(result.thread_id, "execution_limit: " + str(exc)) from exc
 
 
 def read_goal_findings(result: NativeGoalResult, handoff_path: Path) -> str:
