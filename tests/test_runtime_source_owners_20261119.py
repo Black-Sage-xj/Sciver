@@ -18,6 +18,8 @@ from theory_master.runtime_manager import runtime_source_provenance
     ('theory_master.submission_rework', 'submission_rework.py'),
     ('theory_master.invocation_execution', 'invocation_execution.py'),
     ('theory_master.evidence', 'evidence.py'),
+    ('theory_master.evidence_provenance', 'evidence_provenance.py'),
+    ('theory_master.contract_stages', 'contract_stages.py'),
     ('theory_master.delivery_repair', 'delivery_repair.py'),
     ('tm_observer.http_handler', 'web/tm_observer/http_handler.py'),
 ])

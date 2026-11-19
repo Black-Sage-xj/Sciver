@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .evidence_provenance import normalize_provenance
+from .evidence_provenance import normalize_provenance, preflight_finding_provenance
 from .specification import cycle_number
 
 
@@ -315,6 +315,13 @@ class EvidenceRegistry:
             return [str(resolved)]
         except (OSError, RuntimeError, ValueError):
             return []
+
+    def preflight_finding_provenance(self, output: dict[str, Any]) -> list[dict[str, str]]:
+        """Read-only delivery check using the same roots as Evidence registration."""
+        return preflight_finding_provenance(
+            output, workspace=self.workspace,
+            resolve_local_ref=self._provenance_declaration_matches,
+        )
 
     def _provenance_declaration_matches(self, ref: str) -> list[str]:
         source = Path(str(ref or "")).expanduser()

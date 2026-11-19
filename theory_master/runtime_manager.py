@@ -63,6 +63,8 @@ _RUNTIME_SOURCE_MODULES = {
     "supervisor_attention_review.py": "theory_master.supervisor_attention_review",
     "delivery_repair.py": "theory_master.delivery_repair",
     "evidence.py": "theory_master.evidence",
+    "evidence_provenance.py": "theory_master.evidence_provenance",
+    "contract_stages.py": "theory_master.contract_stages",
     "native_delivery_journal.py": "theory_master.native_delivery_journal",
     "native_delivery_reprocessing.py": "theory_master.native_delivery_reprocessing",
     "supervisor_benchmark_recovery.py": "theory_master.supervisor_benchmark_recovery",

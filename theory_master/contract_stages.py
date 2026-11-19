@@ -242,7 +242,11 @@ MINIMAL_INVESTIGATOR_STAGE_SCHEMA = {
         "provenance": {
             "source": "optional declaration: benchmark_provided|pre_specified_synthetic|agent_generated|external_source; not verified source authority",
             "split": "optional declared split: none|fit|validation|holdout|gate; unverified holdout/gate cannot be treated as frozen",
-            "declaration_ref": "required for benchmark_provided or pre_specified_synthetic; path alone never proves pre-Cycle freeze",
+            "declaration_ref": (
+                "required for benchmark_provided or pre_specified_synthetic: the original "
+                "input/source declaration outside this Cycle workspace, not a result, script "
+                "or recomputation output created in this turn; path alone never proves pre-Cycle freeze"
+            ),
             "frozen_before_current_cycle": "optional boolean self-declaration only; SDK does not treat it as independent attestation",
         },
     }],

@@ -1,6 +1,7 @@
 """InvocationOutputValidation: a single explicit phase owner for InvocationSession."""
 
 from __future__ import annotations
+import copy
 import json
 from .output_normalization import (
     NormalizationResult,
@@ -24,6 +25,60 @@ class InvocationOutputValidation:
 
     def __init__(self, session: InvocationSession):
         self.session = session
+
+    @staticmethod
+    def _provenance_repair_identity(output, fields) -> str:
+        """Only explicitly reported bad fields may differ in metadata repair."""
+        captured = copy.deepcopy(output)
+        findings = captured.get("findings") if isinstance(captured, dict) else None
+        for index, field in fields:
+            if isinstance(findings, list) and index < len(findings):
+                finding = findings[index]
+                provenance = (
+                    finding.get("provenance") if isinstance(finding, dict) else None
+                )
+                if isinstance(provenance, dict):
+                    provenance.pop(field, None)
+        return json.dumps(
+            captured, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+
+    def validate_output(self, output) -> ValidationResult:
+        """Check the contract and read-only registration preconditions together."""
+        validation = validate_agent_output(
+            self.session.role,
+            self.session.stage,
+            output,
+            self.session.state,
+            self.session.validation_context,
+            self.session.contract,
+        )
+        if self.session.role != "investigator" or not isinstance(output, dict):
+            return validation
+        findings = output.get("findings")
+        if not isinstance(findings, list) or not any(
+            isinstance(item, dict) and "provenance" in item for item in findings
+        ):
+            return validation
+        errors = self.session.owner._evidence_registry().preflight_finding_provenance(
+            output
+        )
+        if not errors:
+            return validation
+        return ValidationResult(
+            False,
+            validation.errors
+            + tuple(
+                ValidationError(
+                    item["path"],
+                    "provenance_invalid",
+                    "provenance satisfying the existing Evidence registration rules",
+                    "invalid authored declaration",
+                    item["message"],
+                )
+                for item in errors
+            ),
+        )
 
     def normalize_with_audit(self, raw_text: str, input_kind: str):
         try:
@@ -219,14 +274,7 @@ class InvocationOutputValidation:
             and self.session.stage == "frontier_proposal"
             else []
         )
-        validation = validate_agent_output(
-            self.session.role,
-            self.session.stage,
-            self.session.output,
-            self.session.state,
-            self.session.validation_context,
-            self.session.contract,
-        )
+        validation = self.validate_output(self.session.output)
         if not validation.valid:
             self._repair_contract(
                 validation,
@@ -258,6 +306,47 @@ class InvocationOutputValidation:
                 "paths": [item.path for item in validation.errors],
             },
         )
+        if self.session.use_native_goal:
+            # Native delivery already has its own completion authority. Keep
+            # the existing zero-extra-Turn policy and retain exact diagnostics.
+            self.session.owner._contract_repair_failed(
+                self.session.state,
+                invocation_id=self.session.invocation_id,
+                role=self.session.role,
+                stage=self.session.stage,
+                thread_id=self.session.identifier,
+                raw_outputs=raw_outputs,
+                errors=errors,
+                repair_prompt="",
+                invocation_ledger=self.session.invocation_ledger,
+                artifact_tracker=self.session.artifact_tracker,
+            )
+        provenance_only = all(
+            item.code == "provenance_invalid" for item in validation.errors
+        )
+        repair_fields = (
+            [
+                (int(parts[2]), parts[4])
+                for item in validation.errors
+                if len(parts := item.path.split("/")) == 5
+                and parts[1] == "findings"
+                and parts[2].isdigit()
+                and parts[3] == "provenance"
+            ]
+            if provenance_only
+            else []
+        )
+        protected_body = (
+            self._provenance_repair_identity(self.session.output, repair_fields)
+            if provenance_only
+            else None
+        )
+        protected_lock = json.dumps(
+            self.session.state.get("hypothesis_lock"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         repaired_output = None
         for repair_attempt in range(1, CONTRACT_REPAIR_LIMIT + 1):
             self.session.state["contract_repair_count"] = (
@@ -273,6 +362,15 @@ class InvocationOutputValidation:
                 repair_attempt=repair_attempt,
                 repair_limit=CONTRACT_REPAIR_LIMIT,
             )
+            if protected_body is not None:
+                repair_prompt += (
+                    "\nThis repair concerns only the reported provenance fields. Preserve the Finding count, "
+                    "order, statement, method, result and every other scientific field exactly. Do not rerun "
+                    "research, rewrite scientific files, change the frozen H, or invent a source declaration. "
+                    "Keep the provenance declaration and every source/split field not reported as invalid; "
+                    "do not remove or downgrade source identity to bypass the reported requirement. "
+                    "Correct the authored provenance from the actual retained source records.\n"
+                )
             if protected_lineage:
                 repair_prompt += (
                     "\nProtected source decisions from the original parsed proposal; preserve valid IDs, main/other roles and valid contributions without reordering candidates. "
@@ -392,14 +490,34 @@ class InvocationOutputValidation:
                         invocation_ledger=self.session.invocation_ledger,
                         artifact_tracker=self.session.artifact_tracker,
                     )
-            repaired_validation = validate_agent_output(
-                self.session.role,
-                self.session.stage,
-                repaired_output,
-                self.session.state,
-                self.session.validation_context,
-                self.session.contract,
-            )
+            repaired_validation = self.validate_output(repaired_output)
+            if protected_body is not None:
+                repaired_body = self._provenance_repair_identity(
+                    repaired_output, repair_fields
+                )
+                if (
+                    repaired_body != protected_body
+                    or json.dumps(
+                        self.session.state.get("hypothesis_lock"),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
+                    != protected_lock
+                ):
+                    repaired_validation = ValidationResult(
+                        False,
+                        repaired_validation.errors
+                        + (
+                            ValidationError(
+                                "/findings",
+                                "provenance_repair_content_loss",
+                                "unchanged scientific content and frozen H",
+                                "changed scientific content",
+                                "Provenance-only repair must preserve the original scientific body and frozen H.",
+                            ),
+                        ),
+                    )
             try:
                 assert_repair_lineage_preserved(protected_lineage, repaired_output)
             except ValueError as exc:
