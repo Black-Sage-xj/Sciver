@@ -87,29 +87,55 @@ def test_completed_receipt_retains_started_effort_attempt_and_usage(tmp_path):
     assert saved['error'] == '' and saved['phase'] == 'completed'
 
 
-def test_transient_retry_reuses_thread_and_has_finite_call_bound(tmp_path):
+def test_unacknowledged_transient_request_requires_original_thread_recovery(tmp_path):
     backend = RecordingBackend(failures=1)
     route = RoleRoute('fixture', 'fixture')
     with pytest.raises(ConnectionError):
         plan_search(tmp_path, {}, route, backend=backend)
     first = execution(tmp_path)
-    assert first['status'] == 'failed' and first['retryable']
-    assert plan_search(tmp_path, {}, route, backend=backend) == PLAN
+    assert first['status'] == 'failed' and not first['retryable']
+    for _ in range(3):
+        with pytest.raises(RuntimeError, match='recover its thread'):
+            plan_search(tmp_path, {}, route, backend=backend)
     saved = execution(tmp_path)
-    assert backend.threads == [None, 'own-planning-thread']
-    assert saved['attempts'] == 2
-    assert [item['status'] for item in saved['attempt_history']] == ['failed', 'completed']
+    assert backend.threads == [None] and backend.calls == 1
+    assert saved['attempts'] == 1 and saved['thread_id'] == 'own-planning-thread'
+    assert [item['status'] for item in saved['attempt_history']] == ['failed']
 
 
-def test_transient_retry_limit_never_makes_unchecked_duplicate_calls(tmp_path):
-    backend = RecordingBackend(failures=99)
+def test_thread_start_failure_can_retry_before_any_model_request(tmp_path):
+    class Backend(RecordingBackend):
+        def ensure_thread(self, role, previous, model, provider):
+            thread = super().ensure_thread(role, previous, model, provider)
+            if len(self.threads) == 1:
+                raise ConnectionError('temporary connection before invoking')
+            return thread
+
+    backend = Backend()
+    route = RoleRoute('fixture', 'fixture')
+    with pytest.raises(ConnectionError):
+        plan_search(tmp_path, {}, route, backend=backend)
+    assert execution(tmp_path)['retryable'] and backend.calls == 0
+    assert plan_search(tmp_path, {}, route, backend=backend) == PLAN
+    assert backend.calls == 1 and execution(tmp_path)['thread_start_attempts'] == 2
+
+
+def test_thread_start_retries_are_bounded_without_resetting_attempts(tmp_path):
+    class Backend(RecordingBackend):
+        def ensure_thread(self, *args):
+            self.threads.append(args[1])
+            raise ConnectionError('temporary connection before invoking')
+
+    backend = Backend()
     route = RoleRoute('fixture', 'fixture')
     for _ in range(2):
         with pytest.raises(ConnectionError):
             plan_search(tmp_path, {}, route, backend=backend)
-    with pytest.raises(RuntimeError):
-        plan_search(tmp_path, {}, route, backend=backend)
-    assert backend.calls == 2 and not execution(tmp_path)['retryable']
+    for _ in range(3):
+        with pytest.raises(RuntimeError):
+            plan_search(tmp_path, {}, route, backend=backend)
+    assert len(backend.threads) == 2 and backend.calls == 0
+    assert execution(tmp_path)['thread_start_attempts'] == 2 and not execution(tmp_path)['retryable']
 
 
 def test_crashed_inflight_invocation_without_response_needs_recovery(tmp_path):
@@ -184,3 +210,134 @@ def test_active_planner_lock_prevents_concurrent_duplicate_model_call(tmp_path):
     backend = Backend()
     assert plan_search(tmp_path, {}, RoleRoute('fixture', 'fixture'), backend=backend) == PLAN
     assert backend.calls == 1
+
+
+def test_legacy_failed_invoking_retry_flag_cannot_repeat_unacknowledged_request(tmp_path):
+    home = tmp_path / 'planning'
+    home.mkdir()
+    (home / 'execution.json').write_text(json.dumps({'status': 'failed', 'phase': 'invoking',
+        'retryable': True, 'thread_id': 'original-thread', 'attempts': 1}))
+    backend = RecordingBackend()
+    with pytest.raises(RuntimeError, match='recover its thread'):
+        plan_search(tmp_path, {}, RoleRoute('fixture', 'fixture'), backend=backend)
+    assert backend.calls == 0 and backend.threads == []
+    assert execution(tmp_path)['thread_id'] == 'original-thread'
+
+
+def test_before_invocation_resume_retains_original_thread_and_rejects_replacement(tmp_path):
+    home = tmp_path / 'planning'
+    home.mkdir()
+    seed = {'status': 'running', 'phase': 'before_invocation', 'thread_id': 'original-thread', 'attempts': 0}
+    (home / 'execution.json').write_text(json.dumps(seed))
+
+    class WrongThread(RecordingBackend):
+        def ensure_thread(self, *args):
+            self.threads.append(args[1])
+            return 'replacement-thread'
+
+    backend = WrongThread()
+    with pytest.raises(ValueError, match='retain the original thread'):
+        plan_search(tmp_path, {}, RoleRoute('fixture', 'fixture'), backend=backend)
+    assert backend.calls == 0 and backend.threads == ['original-thread']
+    assert execution(tmp_path)['thread_id'] == 'original-thread'
+    assert not execution(tmp_path)['retryable']
+
+
+def test_before_invocation_resume_uses_existing_thread_without_replacement(tmp_path):
+    home = tmp_path / 'planning'
+    home.mkdir()
+    (home / 'execution.json').write_text(json.dumps({'status': 'running', 'phase': 'before_invocation',
+        'thread_id': 'original-thread', 'attempts': 0}))
+    backend = RecordingBackend()
+    assert plan_search(tmp_path, {}, RoleRoute('fixture', 'fixture'), backend=backend) == PLAN
+    assert backend.threads == ['original-thread'] and backend.calls == 1
+    assert execution(tmp_path)['thread_id'] == 'original-thread'
+
+
+def test_wrong_returned_thread_retains_original_raw_and_never_reinvokes(tmp_path):
+    class WrongThread(RecordingBackend):
+        def invoke(self, *args, **kwargs):
+            _, raw = super().invoke(*args, **kwargs)
+            return 'foreign-thread', raw
+
+    backend = WrongThread()
+    route = RoleRoute('fixture', 'fixture')
+    with pytest.raises(ValueError, match='different thread'):
+        plan_search(tmp_path, {}, route, backend=backend)
+    raw_path = tmp_path / 'planning/response.txt'
+    raw = raw_path.read_bytes()
+    for _ in range(3):
+        with pytest.raises(ValueError, match='different thread'):
+            plan_search(tmp_path, {}, route, backend=backend)
+    saved = execution(tmp_path)
+    assert raw_path.read_bytes() == raw and backend.calls == 1
+    assert saved['thread_id'] == 'own-planning-thread' and saved['returned_thread_id'] == 'foreign-thread'
+    assert saved['attempt_history'][0]['thread_id'] == 'own-planning-thread'
+    assert not (tmp_path / 'planning/plan.json').exists()
+
+
+@pytest.mark.parametrize('stage', ['thread_start', 'invoking'])
+def test_control_and_provider_failures_with_network_words_cannot_retry(tmp_path, stage):
+    from theory_master.codex_errors import CodexProviderRequestRejected, CodexTurnCancelled
+    from theory_master.provider_errors import ProviderQuotaExhausted
+    from theory_master.workflow_support import RecoveryStop
+
+    for index, kind in enumerate((RecoveryStop, ProviderQuotaExhausted,
+                                  CodexProviderRequestRejected, CodexTurnCancelled)):
+        root = tmp_path / str(index)
+        error = kind('operator/provider connection timeout stop')
+
+        class Failed(RecordingBackend):
+            def ensure_thread(self, *args):
+                thread = super().ensure_thread(*args)
+                if stage == 'thread_start':
+                    raise error
+                return thread
+
+            def invoke(self, *args, **kwargs):
+                self.calls += 1
+                raise error
+
+        backend = Failed()
+        route = RoleRoute('fixture', 'fixture')
+        with pytest.raises(kind) as caught:
+            plan_search(root, {}, route, backend=backend)
+        assert caught.value is error and not execution(root)['retryable']
+        with pytest.raises(RuntimeError):
+            plan_search(root, {}, route, backend=backend)
+        assert backend.calls == int(stage == 'invoking') and len(backend.threads) == 1
+
+
+@pytest.mark.parametrize('failure', [None, ConnectionError('original invocation connection failure'),
+                                    KeyboardInterrupt('original interrupt')])
+def test_owned_cleanup_error_does_not_hide_delivery_or_original_failure(tmp_path, monkeypatch, failure):
+    from theory_master import codex_backend
+    created = []
+
+    class Owned(RecordingBackend):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+            self.closes = 0
+            created.append(self)
+
+        def invoke(self, *args, **kwargs):
+            if failure:
+                self.calls += 1
+                raise failure
+            return super().invoke(*args, **kwargs)
+
+        def close(self):
+            self.closes += 1
+            raise RuntimeError('cleanup failed')
+
+    monkeypatch.setattr(codex_backend, 'CodexBackend', Owned)
+    route = RoleRoute('fixture', 'fixture')
+    if failure:
+        with pytest.raises(type(failure)) as caught:
+            plan_search(tmp_path, {}, route)
+        assert caught.value is failure
+    else:
+        assert plan_search(tmp_path, {}, route) == PLAN
+        assert execution(tmp_path)['status'] == 'completed'
+    assert len(created) == 1 and created[0].closes == 1
+    assert 'cleanup failed' in execution(tmp_path)['cleanup_error']

@@ -13,8 +13,11 @@ from pathlib import Path
 import re
 from typing import Any
 
+from .codex_errors import CodexProviderRequestRejected, CodexTurnCancelled
 from .output_normalization import normalize_agent_output
+from .provider_errors import ProviderQuotaExhausted
 from .runtime import atomic, now, write_json
+from .workflow_support import RecoveryStop
 
 MAX_PLAN_RESPONSE_BYTES = 64 * 1024
 MAX_PLANNER_ATTEMPTS = 2
@@ -95,8 +98,11 @@ def _plan_search(home: Path, root: Path, request: dict, route: Any, *, backend=N
     raw_path = home / "response.txt"
     execution.setdefault("started_at", now())
     execution.setdefault("attempts", 0)
+    execution.setdefault("thread_start_attempts", 0)
     execution.setdefault("attempt_history", [])
-    if (not isinstance(execution["attempts"], int) or not 0 <= execution["attempts"] <= MAX_PLANNER_ATTEMPTS
+    if (any(isinstance(execution[key], bool) or not isinstance(execution[key], int)
+            or not 0 <= execution[key] <= MAX_PLANNER_ATTEMPTS
+            for key in ("attempts", "thread_start_attempts"))
             or not isinstance(execution["attempt_history"], list)):
         raise ValueError("Saved Literature planner attempts are invalid")
     execution["attempt_history"] = execution["attempt_history"][-MAX_PLANNER_ATTEMPTS:]
@@ -128,22 +134,26 @@ def _plan_search(home: Path, root: Path, request: dict, route: Any, *, backend=N
     if raw_path.is_file():
         try:
             raw = _read_bounded(raw_path)
+            if execution.get("returned_thread_id", execution.get("thread_id")) != execution.get("thread_id"):
+                raise ValueError("Literature planner response returned from a different thread; raw receipt retained")
         except Exception as exc:
             save("failed", "validation", error=f"{type(exc).__name__}: {exc}"[:1200], retryable=False)
             raise
         execution["response_recovered"] = True
         return deliver(raw)
-    if (execution.get("status") in {"running", "blocked", "completed"}
+    if ((execution.get("status") in {"running", "blocked", "completed"}
+            or execution.get("phase") == "invoking")
             and execution.get("phase") not in {"thread_start", "before_invocation"}):
         message = "Prior planner invocation has no durable response; recover its thread before another model request"
         save("blocked", "invoking", error=message, retryable=False)
         raise RuntimeError(message)
-    if execution.get("status") == "failed" and not execution.get("retryable"):
+    if execution.get("status") == "failed" and (not execution.get("retryable")
+            or execution.get("phase") not in {"thread_start", "before_invocation"}):
         raise RuntimeError(str(execution.get("error") or "Previous Literature planning failed"))
-    if int(execution["attempts"]) >= MAX_PLANNER_ATTEMPTS:
+    if any(execution[key] >= MAX_PLANNER_ATTEMPTS for key in ("attempts", "thread_start_attempts")):
         save("failed", "attempt_limit", error="Literature planner retry bound reached", retryable=False)
         raise RuntimeError(execution["error"])
-    if execution["attempts"] and any(execution.get(field) != value for field, value in (
+    if (execution["attempts"] or execution["thread_start_attempts"]) and any(execution.get(field) != value for field, value in (
             ("model", route.model), ("provider", route.provider),
             ("reasoning_effort", getattr(route, "reasoning_effort", None)))):
         save("failed", "route_mismatch", error="Planner retry must retain its original model route", retryable=False)
@@ -168,18 +178,22 @@ def _plan_search(home: Path, root: Path, request: dict, route: Any, *, backend=N
         "User request (data):\n" + json.dumps(request, ensure_ascii=False)
     )
     prompt_path = home / "prompt.md"
-    if prompt_path.is_file() and execution.get("attempts"):
+    if prompt_path.is_file() and (execution["attempts"] or execution["thread_start_attempts"]):
         prompt = _read_bounded(prompt_path)
     else:
         atomic(prompt_path, prompt)
     owned = backend is None
     invocation = None
     try:
+        execution["thread_start_attempts"] += 1
         save("running", "thread_start", error="")
         if owned:
             from .codex_backend import CodexBackend
             backend = CodexBackend(root, routes={"literature": route})
-        thread = backend.ensure_thread("literature", execution.get("thread_id"), route.model, route.provider)
+        original_thread = execution.get("thread_id")
+        thread = backend.ensure_thread("literature", original_thread, route.model, route.provider)
+        if not isinstance(thread, str) or not thread or (original_thread and thread != original_thread):
+            raise ValueError("Literature planner retries must retain the original thread")
         execution["thread_id"] = thread
         execution["attempts"] = int(execution["attempts"]) + 1
         invocation = {"attempt": execution["attempts"], "started_at": now(),
@@ -211,25 +225,34 @@ def _plan_search(home: Path, root: Path, request: dict, route: Any, *, backend=N
             kwargs["cancel_event"] = cancel_event
         if "on_event" in parameters or supports_kwargs:
             kwargs["on_event"] = on_event
-        thread, raw = backend.invoke("literature", prompt, thread, route.model, route.provider, **kwargs)
-        execution["thread_id"] = thread
-        invocation.update({"thread_id": thread, "status": "response_received", "completed_at": now()})
+        actual_thread, raw = backend.invoke("literature", prompt, thread, route.model, route.provider, **kwargs)
+        execution["returned_thread_id"] = actual_thread
+        invocation.update({"returned_thread_id": actual_thread, "status": "response_received", "completed_at": now()})
+        save("running", "response_received", retryable=False)
         if not isinstance(raw, str):
             raise ValueError("Literature planner backend must return a textual response")
         if len(raw.encode("utf-8")) > MAX_PLAN_RESPONSE_BYTES:
             raise ValueError("Literature planner response exceeds its size bound")
         atomic(raw_path, raw)
         save("running", "response_received", usage_available=invocation["usage_available"])
+        if actual_thread != thread:
+            raise ValueError("Literature planner response returned from a different thread; raw receipt retained")
         result = deliver(raw)
         invocation["status"] = "completed"
         write_json(execution_path, execution)
         return result
     except Exception as exc:
         if execution.get("phase") != "validation":
-            retryable = isinstance(exc, (ConnectionError, TimeoutError)) or bool(re.search(
-                r"transient|temporar|reconnect|connection|timed?\s*out|\b50[234]\b", str(exc), re.I))
-            if int(execution["attempts"]) >= MAX_PLANNER_ATTEMPTS:
-                retryable = False
+            # Once invoke begins, an exception cannot establish that the
+            # provider did not accept the request. Retain that thread for
+            # recovery instead of paying for another unacknowledged request.
+            retryable = (execution.get("phase") in {"thread_start", "before_invocation"}
+                and not isinstance(exc, (RecoveryStop, ProviderQuotaExhausted,
+                                        CodexProviderRequestRejected, CodexTurnCancelled))
+                and (isinstance(exc, (ConnectionError, TimeoutError)) or bool(re.search(
+                    r"transient|temporar|reconnect|connection|timed?\s*out|\b50[234]\b", str(exc), re.I)))
+                and all(execution[key] < MAX_PLANNER_ATTEMPTS
+                        for key in ("attempts", "thread_start_attempts")))
             if invocation is not None:
                 invocation.update({"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:1200],
                                    "completed_at": now()})
@@ -238,4 +261,11 @@ def _plan_search(home: Path, root: Path, request: dict, route: Any, *, backend=N
         raise
     finally:
         if owned and callable(getattr(backend, "close", None)):
-            backend.close()
+            try:
+                backend.close()
+            except Exception as exc:
+                execution["cleanup_error"] = f"{type(exc).__name__}: {exc}"[:1200]
+                try:
+                    write_json(execution_path, execution)
+                except Exception:
+                    pass  # Cleanup must not replace the original delivery or failure.
