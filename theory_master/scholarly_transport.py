@@ -132,23 +132,20 @@ def retrieve_scholarly(
     if task_type in {"landscape", "novelty_check"}:
         sources = "openalex,crossref,semanticscholar,pubmed,arxiv"
     limit = "30" if task_type == "landscape" else "20"
-    merged: dict[str, dict[str, Any]] = {}
-    fetched_keys: set[str] = set()
+    merged: list[dict[str, Any]] = []
     query_runs: list[dict[str, Any]] = []
     all_stdout: list[str] = []
     all_stderr: list[str] = []
     requested_sources = [item for item in sources.split(",") if item]
     blocked_runs = 0
     returncodes: list[int] = []
-    locked_key = ""
     quality_rejections: list[dict[str, Any]] = []
     raw_metadata_count = 0
     identity = _identity_helpers()
-    if source_lock:
-        locked_record = _source_lock_record(source_lock)
-        locked_key = _paper_key(locked_record)
-        if locked_key:
-            merged[locked_key] = locked_record
+    # A requested source is not a provider observation. Keep it out of the
+    # candidate merge so a colliding title/identifier cannot overwrite its
+    # identity before the explicit source-lock reconciliation below.
+    locked_record = _source_lock_record(source_lock) if source_lock else None
     for index, query_item in enumerate(query_variants, 1):
         run_dir = retrieval_dir / f"query-{index:02d}"
         command = [
@@ -202,41 +199,26 @@ def retrieve_scholarly(
                     if isinstance(raw_row, dict) else ""})
                 continue
             assert row is not None
+            for field in ("source_locked", "source_lock_status", "identity_resolution", "requested_source"):
+                row.pop(field, None)
             row["discovery_queries"] = [query_item]
-            key = _paper_key(row)
-            fetched_keys.add(key)
-            previous = merged.get(key)
-            if previous is None:
-                # A provider lacking DOI can still match a DOI-bearing record
-                # through compatible exact title/year/author metadata.
-                matches = [other_key for other_key, other in merged.items()
-                           if other.get("source") != "source-lock" and identity.same_paper(other, row)]
-                if len(matches) == 1:
-                    previous_key = matches[0]
-                    previous = merged.pop(previous_key)
-                    fetched_keys.add(previous_key)
-                    if previous.get("doi") and not row.get("doi"):
-                        key = previous_key
-            if previous is None:
-                merged[key] = row
-            else:
+            # Keys are navigation aids, not identity evidence: even a shared
+            # DOI can carry a conflicting arXiv ID. A weak record matching
+            # several identities must remain independent, never bridge them.
+            matches = [position for position, other in enumerate(merged)
+                       if identity.same_paper(other, row)]
+            if len(matches) == 1:
+                position = matches[0]
+                previous = merged[position]
                 item = identity.merge_paper(previous, row)
                 item["discovery_queries"] = list(dict.fromkeys(
                     list(previous.get("discovery_queries") or []) + [query_item]))
-                merged[key] = item
-            if locked_key and key == locked_key:
-                enriched = dict(merged.get(key) or {})
-                for field, value in dict(row).items():
-                    if value not in (None, "", [], {}):
-                        enriched[field] = value
-                enriched["source_locked"] = True
-                enriched["source_lock_status"] = str(source_lock.get("status") or "locked")
-                if "is_open_access" in source_lock:
-                    enriched["is_open_access"] = bool(source_lock.get("is_open_access"))
-                    enriched["open_access_url"] = str(source_lock.get("open_access_url") or "")
-                merged[key] = enriched
+                merged[position] = item
+            else:
+                merged.append(row)
 
-    papers = _reconcile_locked_source(list(merged.values()), source_lock)
+    papers = _reconcile_locked_source(
+        [locked_record, *merged] if locked_record is not None else merged, source_lock)
     if task_type == "targeted_source":
         focus_query = " ".join(query_variants[:2])
         for paper in papers:
@@ -289,7 +271,7 @@ def retrieve_scholarly(
         for run in query_runs if (Path(run["output_dir"]) / "errors.log").is_file()
     )
     transport_ok = bool(query_runs) and blocked_runs < len(query_runs)
-    retrieved_papers = [row for row in papers if _paper_key(row) in fetched_keys]
+    retrieved_papers = [row for row in papers if row is not locked_record]
     # User-provided source locks are search targets, not independent provider hits.
     status = "blocked" if not transport_ok else ("ready" if retrieved_papers else "empty")
     errors_path = retrieval_dir / "errors.log"

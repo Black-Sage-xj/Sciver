@@ -284,6 +284,7 @@ def _reconcile_locked_source(papers: list[dict], source_lock: dict) -> list[dict
         return papers
     identity = _identity_helpers()
     requested_doi = identity.doi_key(source_lock.get("doi"))
+    requested_arxiv = identity.arxiv_key(source_lock.get("arxiv_id"))
     requested_title = identity.title_key(source_lock.get("title"))
     candidates = []
     for paper in papers:
@@ -291,7 +292,10 @@ def _reconcile_locked_source(papers: list[dict], source_lock: dict) -> list[dict
             continue
         actual_doi = identity.doi_key(paper.get("doi"))
         if requested_doi:
-            matches = actual_doi == requested_doi
+            matches = actual_doi == requested_doi and identity.same_paper(source_lock, paper)
+        elif requested_arxiv:
+            matches = (identity.arxiv_key(paper.get("arxiv_id")) == requested_arxiv
+                       and identity.same_paper(source_lock, paper))
         else:
             matches = bool(requested_title and identity.title_key(paper.get("title")) == requested_title)
             if source_lock.get("year") and paper.get("year"):
@@ -300,11 +304,13 @@ def _reconcile_locked_source(papers: list[dict], source_lock: dict) -> list[dict
                 matches = matches and identity.authors_compatible(source_lock["authors"], paper["authors"])
         if matches:
             candidates.append(paper)
-    stable_ids = {identity.doi_key(paper.get("doi")) or identity.arxiv_key(paper.get("arxiv_id"))
-                  or (identity.title_key(paper.get("title")), paper.get("year"), tuple(paper.get("authors") or []))
-                  for paper in candidates}
     seeds = [paper for paper in papers if paper.get("source") == "source-lock"]
-    if len(stable_ids) != 1:
+    # A shared primary key cannot hide conflicting secondary identifiers, nor
+    # can a title-only row bridge two distinct stable identities.
+    unambiguous = bool(candidates) and all(
+        identity.same_paper(left, right)
+        for index, left in enumerate(candidates) for right in candidates[index + 1:])
+    if not unambiguous:
         for seed in seeds:
             seed["identity_resolution"] = "ambiguous" if candidates else "unresolved"
         return papers
@@ -313,8 +319,9 @@ def _reconcile_locked_source(papers: list[dict], source_lock: dict) -> list[dict
         provider = identity.merge_paper(provider, paper)
     provider["source_locked"] = True
     provider["source_lock_status"] = str(source_lock.get("status") or "locked")
-    provider["identity_resolution"] = "exact_doi" if requested_doi else "unique_exact_title_candidate"
-    provider["requested_source"] = {key: source_lock.get(key) for key in ("doi", "title", "year", "authors") if source_lock.get(key)}
+    provider["identity_resolution"] = ("exact_doi" if requested_doi else
+                                       "exact_arxiv" if requested_arxiv else "unique_exact_title_candidate")
+    provider["requested_source"] = {key: source_lock.get(key) for key in ("doi", "arxiv_id", "title", "year", "authors") if source_lock.get(key)}
     if "is_open_access" in source_lock and not source_lock["is_open_access"]:
         provider["is_open_access"] = False
     return [provider, *(paper for paper in papers if paper not in candidates and paper not in seeds)]
