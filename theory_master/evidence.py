@@ -842,11 +842,17 @@ class EvidenceRegistry:
             return False
         if producer != "literature":
             return True
+        from .literature_source_access import PROTOCOL
         access = record.get("source_access")
         return (
             isinstance(access, dict)
+            and access.get("protocol") == PROTOCOL
             and access.get("verification_status") == "verified"
             and access.get("verified") in {"metadata", "abstract", "full_text"}
+            and access.get("quote_located") is True
+            and isinstance(access.get("artifact_hashes"), dict)
+            and bool(access["artifact_hashes"])
+            and (record.get("integrity_current") or {}).get("status") == "verified"
         )
 
     def rebuild(self) -> dict[str, Any]:

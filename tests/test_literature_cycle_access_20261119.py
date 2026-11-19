@@ -326,3 +326,17 @@ def test_legacy_metadata_enrichment_alone_does_not_grant_verified_access(corpus)
     assert closed["evidence_records"][0]["doi_or_url"] == DOI
     access = assess_source_access("abstract", DOI, transport, {"exact_quote": QUOTE}, workspace=corpus.workspace)
     assert access["verified"] == "unavailable" and access["verification_status"] == "unverified"
+
+
+@pytest.mark.parametrize("missing", ["protocol", "quote_located", "artifact_hashes"])
+def test_legacy_access_label_without_current_proof_remains_audit_only(corpus, missing):
+    registry, record = register(corpus)
+    assert record["adjudicable"] is True
+    rows = [json.loads(line) for line in registry.records_path.read_text().splitlines()]
+    rows[0]["source_access"].pop(missing)
+    registry.records_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    legacy_bytes = registry.records_path.read_bytes()
+    projected = registry.context()["evidence_manifest"]["payload"]["records"][0]
+    assert projected["source_access"]["verified"] == "full_text"
+    assert projected["adjudicable"] is False
+    assert registry.records_path.read_bytes() == legacy_bytes
