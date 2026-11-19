@@ -34,6 +34,15 @@ def shell() -> str:
 .tm-stage-reply-time { font-size:11px; }
 .tm-stage-milestone { background:transparent; border:0; border-radius:0; padding:4px 0; font-size:11px; }
 .tm-stage-milestone strong { font-size:12px; }
+.tm-stage-timeline > .tm-stage-sdk-node { display:block; padding:0 12px; margin:-4px 0; border:0; border-radius:0; background:transparent; color:var(--tm-muted); }
+.tm-stage-sdk-node details { width:100%; }
+.tm-stage-sdk-node summary { display:flex; align-items:baseline; gap:10px; padding:5px 0; font-size:11px; line-height:1.5; }
+.tm-stage-sdk-node summary::before { content:'▸'; flex:none; }
+.tm-stage-sdk-node details[open] > summary::before { content:'▾'; }
+.tm-stage-sdk-node summary span { overflow-wrap:anywhere; }
+.tm-stage-sdk-node summary time { margin-left:auto; white-space:nowrap; }
+.tm-stage-sdk-node details[open] { padding-bottom:8px; }
+html[data-sciver-theme="white"] .tm-stage-reader .tm-stage-timeline > .tm-stage-sdk-node { background:transparent; color:var(--tm-muted); }
 .tm-stage-reader :focus-visible { outline:2px solid #60a5fa; outline-offset:3px; }
 html[data-sciver-theme="white"] .tm-stage-reader .tm-stage-toolbar { background:#f8f9fb; }
 html[data-sciver-theme="white"] .tm-stage-reader .tm-stage-heading > strong { color:var(--tm-text); }
@@ -180,13 +189,14 @@ def script(ident: str) -> str:
           LLM_TURN_STARTED:'模型 Turn 开始',
           LLM_TURN_COMPLETED:'模型 Turn 结束',
           LLM_RECONNECTING:'模型连接恢复中',
-          LLM_FAILED:'模型调用失败'
+          LLM_FAILED:'模型调用失败',
+          OPERATOR_ROUTE_APPLIED:'路由已应用'
         };
         const raw='<details class="tm-stage-raw"'+(density==="raw"?' open':'')+
           '><summary>原始事件字段 · Thread / Turn / 来源</summary>'+
           jsonViewer(JSON.stringify({event:kind,seq:item.seq,thread_id:item.thread_id,
             turn_id:item.turn_id,time:item.time,meta:meta}))+'</details>';
-        if(Object.prototype.hasOwnProperty.call(eventTitles,kind) && kind!=="AGENT_COMPLETED" && !isSkill){
+        if(Object.prototype.hasOwnProperty.call(eventTitles,kind) && kind!=="AGENT_COMPLETED" && !isSkill && (kind!=="OPERATOR_ROUTE_APPLIED" || !item.content)){
           let summary=eventTitles[kind];
           return '<div class="tm-stage-milestone"><strong>'+summary+'</strong>'+
             '<span>'+esc(context||meta.role||'当前 Stage')+'</span>'+
@@ -565,8 +575,8 @@ def script(ident: str) -> str:
               const node=document.createElement("section");
               node.className="tm-stage-sdk-node";
               node.dataset.sdkSeq=String(item.sdk.seq);
-              node.innerHTML='<span>SDK · '+esc(item.sdk.kind)+'</span><time>'+time(item.sdk.time)+'</time>'+
-                '<details><summary>查看 SDK 决策与原始证据</summary><pre>按需读取完整事件…</pre></details>';
+              node.innerHTML='<details><summary><span>SDK · '+esc(item.sdk.kind)+'</span><time>'+time(item.sdk.time)+'</time></summary>'+
+                '<pre>按需读取完整事件…</pre></details>';
               const detail=node.querySelector('details');
               detail.addEventListener('toggle',async()=>{
                 if(!detail.open||detail.dataset.loaded)return;

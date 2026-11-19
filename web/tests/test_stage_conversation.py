@@ -240,6 +240,12 @@ const sdk=eventCard({kind:'AGENT_STARTED',side:'system',content:'',
   time:'2026-10-11T19:48:58+08:00',meta:{role:'research_lead'}},'normal',s);
 assert(sdk.includes('Agent 调用开始'));
 assert(!sdk.includes('SDK / 生命周期'));
+const route=eventCard({kind:'OPERATOR_ROUTE_APPLIED',side:'system',content:'',
+  time:'2026-10-11T19:48:58+08:00',meta:{role:'research_lead'}},'normal',s);
+assert(route.includes('tm-stage-milestone') && route.includes('路由已应用'));
+assert(!route.includes('此事件未提供文本正文'));
+const routeWithContent=eventCard({kind:'OPERATOR_ROUTE_APPLIED',side:'system',content:'路由详情'},'normal',s);
+assert(routeWithContent.includes('路由详情'));
 const tokens=eventCard({kind:'TOKEN_USAGE',side:'system',content:'',
   time:'2026-10-11T19:50:00+08:00',meta:{tokens_in:16080,tokens_out:73,tokens_total:16153}},
  'normal',s);
