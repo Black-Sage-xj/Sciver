@@ -26,7 +26,9 @@ def test_console_navigation_and_safe_controls(tmp_path, status, action, width, h
     }), encoding="utf-8")
     task = {"observer_id": "a" * 16, "research_root": str(tmp_path),
             "cycle_dir": str(cycle), "task_name": "任务界面检查",
-            "run_id": 1, "cycle": "1", "state": status}
+            "run_id": 1, "cycle": "1",
+            "state": "LIVE" if status == "RUNNING" else status,
+            "raw_status": status, "pid_alive": status == "RUNNING"}
     header = (f"Process {'RUNNING' if status == 'RUNNING' else 'STOPPED'}   State {status}\n"
               "Cycle 1 / 3     Phase investigator  Elapsed 36:50\n"
               "Started 11-18T16:26:08  Cycle start 11-18T16:26:08  Cost —")
@@ -58,10 +60,23 @@ def test_console_navigation_and_safe_controls(tmp_path, status, action, width, h
                 assert crumb["y"] >= bar["y"] - 1
                 assert crumb["y"] + crumb["height"] <= bar["y"] + bar["height"] + 1
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-                trigger = page.locator("[data-tui-process-actions]").first
+                agent = page.locator("button.tm-worker-tab.is-selected[data-tui-process-actions]")
+                playwright.expect(agent.locator("small")).to_have_text(status)
+                playwright.expect(agent.locator(".tm-worker-dot")).to_have_attribute("data-status", status)
+                quick = page.locator("#tm-operator-quick-dialog")
+                assert quick.count() == 1
+                original_url = page.url
+                agent.focus()
+                agent.press("Enter")
+                playwright.expect(quick).to_be_visible()
+                assert not requests
+                assert page.url == original_url
+                quick.locator("[data-operator-quick-close]").click()
+                playwright.expect(quick).to_be_hidden()
+                trigger = page.locator(".tm-tui-header [data-tui-process-actions]")
+                playwright.expect(trigger).to_have_text(f"{status}▾")
                 trigger.focus()
                 trigger.press("Enter")
-                quick = page.locator("#tm-operator-quick-dialog")
                 playwright.expect(quick).to_be_visible()
                 quick.locator(f'[data-tui-quick-action="{action}"]').click()
                 confirm = page.locator("#tm-operator-confirm-dialog")

@@ -145,7 +145,8 @@ def requested_worker_slots(run: dict[str, Any], worker_count: int) -> int:
     return worker_count
 
 
-def tab_bar(run: dict[str, Any], workers: list[dict[str, Any]], selected: str | None) -> str:
+def tab_bar(run: dict[str, Any], workers: list[dict[str, Any]], selected: str | None, *,
+            effective_status: str | None = None, state_actions: bool = False) -> str:
     """Worker tabs with a distinct global add action and safe close controls."""
     ident = quote(str(run.get("observer_id") or ""), safe="")
     links = []
@@ -169,11 +170,14 @@ def tab_bar(run: dict[str, Any], workers: list[dict[str, Any]], selected: str | 
     if not workers:
         # Legacy single-Agent consoles still have one real Task console, not
         # an invented parallel Worker process.
-        status = html.escape(str(run.get("state") or run.get("raw_status") or "IDLE").upper())
+        status = html.escape(str(effective_status or run.get("state") or run.get("raw_status") or "IDLE").upper())
+        tag = 'button' if state_actions else 'a'
+        action = ('type="button" data-tui-process-actions aria-haspopup="dialog" title="打开运行操作"'
+                  if state_actions else f'href="/run/{ident}/"')
         links.append('<span class="tm-worker-card">'
-                     f'<a class="tm-worker-tab is-selected" href="/run/{ident}/">'
+                     f'<{tag} class="tm-worker-tab is-selected" aria-current="page" {action}>'
                      f'<span class="tm-worker-dot" data-status="{status}"></span>'
-                     f'Agent 1<small>{status}</small></a></span>')
+                     f'Agent 1<small>{status}</small></{tag}></span>')
     else:
         if live_task_runner(run, workers):
             # The independently running Task is not a third Agent. Keep an
@@ -187,15 +191,21 @@ def tab_bar(run: dict[str, Any], workers: list[dict[str, Any]], selected: str | 
         for index, worker in enumerate(workers):
             worker_id = worker["worker_id"]
             number = worker_id.split("-")[1]
-            status = html.escape(str(worker.get("status") or "UNKNOWN").upper())
-            label = {"CLOSING": "关闭中…", "CLOSE_FAILED": "关闭失败 · 重试"}.get(status, status)
+            status = html.escape(str((effective_status if worker_id == selected else None)
+                                     or worker.get("status") or "UNKNOWN").upper())
+            label = (status if worker_id == selected else
+                     {"CLOSING": "关闭中…", "CLOSE_FAILED": "关闭失败 · 重试"}.get(status, status))
             cls = "is-selected" if worker_id == selected else ""
             href = f"/run/{ident}/?worker={quote(worker_id)}"
+            button = state_actions and worker_id == selected
+            tag = 'button' if button else 'a'
+            action = ('type="button" data-worker-state-open aria-haspopup="dialog" title="打开 Agent 操作"'
+                      if button else f'href="{href}"')
             links.append(f'<span class="tm-worker-card{" tm-worker-first" if index == 0 else ""}">'
-                         f'<a class="tm-worker-tab {cls}" href="{href}" '
+                         f'<{tag} class="tm-worker-tab {cls}" {action} '
                          f'aria-current="{"page" if worker_id == selected else "false"}">'
                          f'<span class="tm-worker-dot" data-status="{status}"></span>'
-                         f'Agent {number}<small>{label}</small></a>'
+                         f'Agent {number}<small>{label}</small></{tag}>'
                          f'{close(worker, number)}</span>')
     count = len(workers)
     waiting = max(0, requested_worker_slots(run, count) - count)
@@ -233,6 +243,8 @@ STYLE = '''
 .tm-worker-tab{display:flex;align-items:center;gap:7px;white-space:nowrap;flex:0 0 auto;
  border-radius:9px;padding:9px 13px;background:#1e2836;border:1px solid #435269;
  color:#e6edf7;text-decoration:none;font-size:13px}
+button.tm-worker-tab{font-family:inherit;cursor:pointer}
+.tm-worker-tab:focus-visible{outline:2px solid #93c5fd;outline-offset:2px}
 .tm-worker-tab.is-selected{background:#344861;border-color:#8baacf;font-weight:650}
 .tm-worker-tab small{font-size:10px;color:#aebaca;font-weight:400}
 .tm-worker-dot{width:7px;height:7px;border-radius:50%;background:#97a2b0}

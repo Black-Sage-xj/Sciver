@@ -1640,7 +1640,6 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
     from .model_preset_ui import dialog_html as preset_dialog, script as preset_script, CSS as PRESET_STYLE
     master_run = run
     run, workers, selected_worker = select_worker(run, worker_id)
-    worker_tabs = tab_bar(master_run, workers, selected_worker)
     worker_cycle_progress = worker_batch_cycle_progress(master_run, selected_worker)
     master_running = live_task_runner(master_run, workers)
     pinned_worker_account = next(
@@ -1707,6 +1706,9 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
     if selected_worker and not secondary and not parts.get("header") and worker_actions:
         state_note += '<button type="button" data-worker-state-open>Agent 操作</button>'
     status_key = str(status or "").upper()
+    worker_tabs = tab_bar(master_run, workers, selected_worker,
+                          effective_status=status_key,
+                          state_actions=not secondary and (not selected_worker or bool(worker_actions)))
     runtime_verified = ((not selected_worker and master_running) or
                         (bool(selected_worker) and status_key in {"RUNNING", "ACTIVE", "STARTING", "RECOVERING"}))
     short_identity = (str(parts.get("identity") or "").split("Supervisor:", 1)[0]

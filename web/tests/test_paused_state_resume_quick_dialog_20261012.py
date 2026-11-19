@@ -82,6 +82,9 @@ class PausedStateResumeDialogTests(unittest.TestCase):
              patch('tm_observer.run_controls_ui.run_monitor.data',return_value=state):
             page=run_detail_body(run)
         soup=BeautifulSoup(page,'html.parser')
+        agent=soup.select_one('.tm-worker-tab.is-selected')
+        self.assertEqual(agent.select_one('small').get_text(strip=True),'PAUSE REQUESTED')
+        self.assertEqual(agent.select_one('.tm-worker-dot')['data-status'].replace('_',' '),'PAUSE REQUESTED')
         self.assertEqual(soup.select_one('.tm-tui-screen')['data-tui-status'],'PAUSE REQUESTED')
         self.assertEqual(soup.select_one('.tm-tui-process').get_text(strip=True),'PAUSE REQUESTED')
         self.assertIn('等待安全检查点后才会暂停',page)
@@ -97,6 +100,12 @@ class PausedStateResumeDialogTests(unittest.TestCase):
              patch('tm_observer.run_controls_ui.run_monitor.data',return_value=state):
             page=run_detail_body(run)
         soup=BeautifulSoup(page,'html.parser')
+        agent=soup.select_one('.tm-worker-tab.is-selected')
+        self.assertEqual(agent.name,'button')
+        self.assertTrue(agent.has_attr('data-tui-process-actions'))
+        self.assertEqual(agent.get('aria-haspopup'),'dialog')
+        self.assertEqual(agent.select_one('small').get_text(strip=True),'PAUSED')
+        self.assertEqual(agent.select_one('.tm-worker-dot')['data-status'],'PAUSED')
         self.assertIsNotNone(soup.select_one('.tm-tui-header [data-tui-process-actions]'))
         self.assertEqual([b['data-tui-quick-action'] for b in soup.select('#tm-operator-quick-dialog [data-tui-quick-action]')],['resume','kill'])
         self.assertIn("box.after(quickDialog,confirmDialog)",page)

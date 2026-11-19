@@ -64,5 +64,14 @@ def test_genuine_live_task_retains_running_projection(tmp_path):
         "status": "RUNNING", "cycle_id": "2", "parts": {"header": HEADER},
     }):
         doc = BeautifulSoup(run_detail_body(run), "html.parser")
+    agent = doc.select_one(".tm-worker-tab.is-selected")
+    assert agent.name == "button"
+    assert agent.has_attr("data-tui-process-actions")
+    assert agent.get("aria-haspopup") == "dialog"
+    assert agent.select_one("small").get_text(strip=True) == "RUNNING"
+    assert agent.select_one(".tm-worker-dot")["data-status"] == "RUNNING"
     assert doc.select_one(".tm-tui-screen")["data-tui-status"] == "RUNNING"
     assert doc.select_one(".tm-tui-process-green").get_text(strip=True).startswith("RUNNING")
+    assert doc.select_one(".tm-tui-header [data-tui-process-actions]")
+    assert len(doc.select("#tm-operator-quick-dialog")) == 1
+    assert run["state"] == "LIVE"  # Collector lifecycle remains the process authority.
