@@ -4,7 +4,52 @@ import html
 import json
 
 def shell() -> str:
-    return '''<div class="tm-stage-reader" data-tui-pane="secondary" aria-label="Stage Conversation">
+    return '''<style>
+/* The conversation is the reading surface; controls and provenance support it. */
+.tm-stage-reader { gap:16px; }
+.tm-stage-intro { display:flex; align-items:baseline; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+.tm-stage-intro h2 { margin:0; font-size:20px; line-height:1.3; color:var(--tm-text); }
+.tm-stage-intro p { margin:0; color:var(--tm-muted); font-size:12px; line-height:1.6; }
+.tm-stage-toolbar { gap:10px; padding:14px; border:1px solid var(--tm-border); border-radius:10px; background:var(--tm-hover); }
+.tm-stage-toolbar label { font-size:12px; gap:6px; }
+.tm-stage-toolbar select,.tm-stage-toolbar input { min-height:38px; }
+.tm-stage-toolbar button { min-height:38px; }
+.tm-stage-status { font-size:12px; line-height:1.5; }
+.tm-stage-timeline { gap:12px; }
+.tm-stage-section { border:1px solid var(--tm-border); border-radius:10px; }
+.tm-stage-heading { gap:8px 12px; padding:16px 18px; }
+.tm-stage-heading > strong { font-size:15px; color:var(--tm-text); overflow-wrap:anywhere; }
+.tm-stage-heading[aria-expanded="true"] { background:var(--tm-hover); }
+.tm-stage-round,.tm-stage-heading > span:nth-last-child(2) { font-size:12px; }
+.tm-stage-meta { display:block; padding:0 18px; border:0; font-size:12px; }
+.tm-stage-meta summary { cursor:pointer; padding:9px 0; }
+.tm-stage-meta-fields { display:flex; flex-wrap:wrap; gap:6px 18px; padding:0 0 12px; overflow-wrap:anywhere; }
+.tm-stage-messages { padding:20px 18px 28px; background:none; }
+.tm-stage-coverage { padding:0; border:0; background:transparent; margin-bottom:18px; line-height:1.6; }
+.tm-stage-dialogue { gap:20px; }
+.tm-stage-bubble { max-width:min(92%,850px); }
+.tm-stage-agent-message { border:1px solid var(--tm-border); padding:14px 16px; }
+.tm-stage-bubble pre { font-size:14px; line-height:1.8; }
+.tm-stage-preview { font-size:14px!important; line-height:1.8; color:var(--tm-text)!important; white-space:pre-wrap; overflow-wrap:anywhere; }
+.tm-stage-reply-time { font-size:11px; }
+.tm-stage-milestone { background:transparent; border:0; border-radius:0; padding:4px 0; font-size:11px; }
+.tm-stage-milestone strong { font-size:12px; }
+.tm-stage-reader :focus-visible { outline:2px solid #60a5fa; outline-offset:3px; }
+html[data-sciver-theme="white"] .tm-stage-reader .tm-stage-toolbar { background:#f8f9fb; }
+html[data-sciver-theme="white"] .tm-stage-reader .tm-stage-heading > strong { color:var(--tm-text); }
+html[data-sciver-theme="white"] .tm-stage-reader .tm-stage-coverage { background:transparent; border:0; color:var(--tm-muted); }
+@media(max-width:780px) {
+  .tm-stage-intro { display:block; }
+  .tm-stage-intro p { margin-top:5px; }
+  .tm-stage-toolbar label { flex:1 1 130px; min-width:0; }
+  .tm-stage-toolbar select,.tm-stage-toolbar input { width:100%; min-width:0; }
+  .tm-stage-toolbar .tm-stage-search { flex-basis:100%; }
+  .tm-stage-heading { padding:13px; }
+  .tm-stage-messages { padding:16px 12px 24px; }
+  .tm-stage-prompt,.tm-stage-agent-message { width:100%; max-width:100%; }
+}
+</style><div class="tm-stage-reader" data-tui-pane="secondary" aria-label="Stage Conversation">
+      <div class="tm-stage-intro"><h2>运行对话</h2><p>按执行顺序查看每个阶段的输入、回复和工具活动。</p></div>
       <div class="tm-stage-toolbar">
         <label>Cycle <select data-stage-cycle aria-label="选择 Cycle"></select></label>
         <label>视图 <select data-stage-density><option value="normal">对话模式</option>
@@ -13,7 +58,6 @@ def shell() -> str:
         <label class="tm-stage-search">搜索 Stage <input data-stage-search type="search" placeholder="角色、阶段、状态…" /></label>
         <button type="button" data-stage-refresh>刷新最新记录</button>
       </div>
-      <p class="tm-stage-help">按实际 Invocation 执行顺序展开 Stage。右侧为 Agent 收到的 Prompt，左侧为模型回复和工具活动；SDK 路由作为独立过渡节点。</p>
       <div class="tm-stage-status" role="status" aria-live="polite">正在读取 Stage 与 Invocation 记录…</div>
       <div class="tm-stage-current-notice" data-stage-current-notice hidden role="status">
         <span data-stage-current-text></span>
@@ -45,11 +89,11 @@ def script(ident: str) -> str:
         return r.json();
       }
       function meta(stage){
-        return '<div class="tm-stage-meta"><span>Invocation '+esc(stage.id)+'</span>'+
+        return '<details class="tm-stage-meta"><summary>查看阶段来源与标识</summary><div class="tm-stage-meta-fields"><span>Invocation '+esc(stage.id)+'</span>'+
           '<span>Thread '+esc(stage.thread_id||"未记录")+'</span>'+
           '<span>Stage '+esc(stage.stage||"未记录")+'</span>'+
           '<span>State '+esc(stage.state||"unknown")+'</span>'+
-          '<span>'+time(stage.start)+'</span></div>';
+          '<span>开始时间 '+time(stage.start)+'</span></div></details>';
       }
       function continuation(stage){
         if(Number(stage.round||1)<=1)return "";
