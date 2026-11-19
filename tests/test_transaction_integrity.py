@@ -330,22 +330,25 @@ class InvocationCommitReuseTest(unittest.TestCase):
 
 class ScholarlyTransportReuseTest(unittest.TestCase):
     def test_reuses_matching_test_transport_but_not_other_gap(self):
-        state = {
-            "last_sdk_scholarly_retrieval": {
-                "schema": "theory-master/scholarly-transport/v1",
-                "status": "test_stub",
-                "transport_ok": True,
-                "source_gap_id": "gap-1",
-                "task_type": "targeted_source",
-            }
-        }
-        reused = InvestigationMixin._reusable_scholarly_transport(
-            state, {"source_gap_id": "gap-1", "task_type": "targeted_source"},
-        )
-        self.assertIsNotNone(reused)
-        self.assertIsNone(InvestigationMixin._reusable_scholarly_transport(
-            state, {"source_gap_id": "gap-2", "task_type": "targeted_source"},
-        ))
+        from theory_master.scholarly_transport import fake_scholarly_retrieval
+
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            task = {"source_gap_id": "gap-1", "task_type": "targeted_source"}
+            state = {"last_sdk_scholarly_retrieval": fake_scholarly_retrieval(task, workspace)}
+            reused = InvestigationMixin._reusable_scholarly_transport(state, task, workspace=workspace)
+            self.assertIsNotNone(reused)
+            self.assertIsNone(InvestigationMixin._reusable_scholarly_transport(
+                state, {"source_gap_id": "gap-2", "task_type": "targeted_source"}, workspace=workspace,
+            ))
+
+    def test_legacy_test_transport_without_request_or_hash_receipt_is_not_reused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = {"source_gap_id": "gap-1", "task_type": "targeted_source"}
+            state = {"last_sdk_scholarly_retrieval": {**task, "status": "test_stub", "transport_ok": True}}
+            self.assertIsNone(InvestigationMixin._reusable_scholarly_transport(
+                state, task, workspace=Path(directory),
+            ))
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ CATEGORIES = ("invariant", "architecture", "regression", "ui")
 MODULE_CATEGORIES: dict[str, str] = {
     "test_literature_candidate_identity_20261119": "invariant",
     "test_literature_cycle_access_20261119": "invariant",
+    "test_literature_request_identity_20261119": "invariant",
     "test_provenance_delivery_preflight_20261119": "invariant",
     "test_worker_resume_preparation_20261119": "invariant",
     "test_native_goal_resume_recovery_20261119": "invariant",

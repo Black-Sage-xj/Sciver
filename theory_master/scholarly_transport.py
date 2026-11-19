@@ -19,6 +19,9 @@ from typing import Any, Callable
 
 CONDA_PYTHON = Path(os.environ.get("THEORYMASTER_SCHOLARLY_PYTHON") or sys.executable)
 from .skills import skills_root
+from .scholarly_request import (
+    pin_scholarly_transport, retrieval_directory, scholarly_request_identity,
+)
 
 # Installed wheels contain the bundled resource mirror, not the source-tree skills/ directory.
 SCRIPTS_DIR = skills_root() / "tm-scholar" / "scripts"
@@ -100,21 +103,17 @@ def retrieve_scholarly(
         def run_with_cancellation(command, **kwargs):
             return _run_scholarly_command(command, cancel_event=cancel_event, **kwargs)
         runner = run_with_cancellation
-    source_gap_id = str(task.get("source_gap_id") or task.get("gap_id") or "external-gap")
-    task_type = str(task.get("task_type") or "targeted_source")
-    search_target = str(task.get("search_target") or "").strip()
-    new_lead = str(task.get("new_search_lead") or "").strip()
-    domain_context = str(task.get("domain_context") or "").strip()
-    source_lock = task.get("source_lock") if isinstance(task.get("source_lock"), dict) else {}
-    if task_type == "targeted_source" and (source_lock.get("doi") or source_lock.get("title")):
-        exact = str(source_lock.get("doi") or source_lock.get("title") or "").strip()
-        query_variants = [exact]
-    else:
-        query_variants = _query_variants(task_type, source_gap_id, search_target, new_lead, domain_context,
-                                         task.get("search_queries"))
+    request_identity = scholarly_request_identity(task)
+    request = request_identity["request"]
+    source_gap_id = request["source_gap_id"]
+    task_type = request["task_type"]
+    search_target = request["search_target"]
+    domain_context = request["domain_context"]
+    source_lock = request["source_lock"]
+    query_variants = request["search_queries"]
     query = query_variants[0]
 
-    root = workspace / "literature" / "sdk_retrieval" / _slug(source_gap_id)
+    root = retrieval_directory(workspace, request_identity)
     retrieval_dir = root / "retrieval"
     reading_dir = root / "reading"
     retrieval_dir.mkdir(parents=True, exist_ok=True)
@@ -236,8 +235,7 @@ def retrieve_scholarly(
             reverse=True,
         )
     else:
-        terms = task.get("relevance_terms")
-        relevance_terms = terms if isinstance(terms, list) else []
+        relevance_terms = request["relevance_terms"]
         for paper in papers:
             paper["landscape_relevance"] = _landscape_relevance(
                 paper, query_variants, domain_context, relevance_terms)
@@ -248,10 +246,7 @@ def retrieve_scholarly(
         papers.sort(key=lambda row: (float(row.get("score") or 0),
                                      int(row.get("year") or 0)), reverse=True)
     candidate_count_before_limit = len(papers)
-    try:
-        candidate_limit = max(1, min(100, int(task.get("max_candidates") or 60)))
-    except (TypeError, ValueError, OverflowError):
-        candidate_limit = 60
+    candidate_limit = request["max_candidates"]
     papers = papers[:candidate_limit]
     quality_path = retrieval_dir / "metadata_quality.json"
     quality_path.write_text(json.dumps({"raw_metadata_count": raw_metadata_count,
@@ -367,6 +362,7 @@ def retrieve_scholarly(
 
     result = {
         "schema": "theory-master/scholarly-transport/v1",
+        "request_identity": request_identity,
         "status": status, "transport_ok": transport_ok,
         "source_gap_id": source_gap_id, "task_type": task_type, "query": query,
         "domain_context": domain_context,
@@ -400,12 +396,12 @@ def retrieve_scholarly(
         "traces": trace_runs,
     }
     (root / "transport.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return result
+    return pin_scholarly_transport(task, result, workspace)
 
 
 def fake_scholarly_retrieval(task: dict[str, Any], workspace: Path) -> dict[str, Any]:
     """Deterministic no-network transport used with TheoryMaster fake backends."""
-    return {
+    return pin_scholarly_transport(task, {
         "schema": "theory-master/scholarly-transport/v1",
         "status": "test_stub", "transport_ok": True,
         "source_gap_id": str(task.get("source_gap_id") or task.get("gap_id") or "external-gap"),
@@ -413,4 +409,4 @@ def fake_scholarly_retrieval(task: dict[str, Any], workspace: Path) -> dict[str,
         "query": str(task.get("search_target") or ""),
         "paper_count": 0,
         "output_dir": str(workspace / "literature" / "sdk_retrieval" / "test-stub"),
-    }
+    }, workspace)

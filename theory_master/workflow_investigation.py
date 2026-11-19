@@ -16,6 +16,9 @@ from .internal_budget_review import review_budget_in_sdk
 from .provider_errors import ProviderQuotaExhausted
 from .native_goal import NativeGoalExecutionLimit, NativeGoalResult, read_execution_limit_handoff
 from .scientific_objective import frozen_science_digest
+from .scholarly_request import (
+    pin_scholarly_transport, reusable_scholarly_transport, scholarly_request_identity,
+)
 
 from .role_registry import CAPABILITIES
 from .runtime import now, write_json
@@ -507,7 +510,7 @@ class InvestigationMixin:
 
     @staticmethod
     def _normalize_literature_task(task: dict[str, Any], *, triggered_by: str) -> dict[str, Any]:
-        return {
+        normalized = {
             "gap_id": str(task.get("gap_id") or "external-gap").strip(),
             "source_gap_id": str(task.get("source_gap_id") or task.get("gap_id") or "external-gap").strip(),
             "objection_id": str(task.get("objection_id") or "").strip(),
@@ -520,11 +523,16 @@ class InvestigationMixin:
             "source_lock": json.loads(json.dumps(task.get("source_lock") or {})),
             "triggered_by": triggered_by,
         }
+        for key in ("search_queries", "relevance_terms", "max_candidates"):
+            if key in task:
+                normalized[key] = json.loads(json.dumps(task[key]))
+        return normalized
 
     def _queue_literature_task(self, state: dict[str, Any], task: dict[str, Any]) -> tuple[bool, str]:
         normalized = self._normalize_literature_task(task, triggered_by=str(task.get("triggered_by") or "investigator"))
         if not normalized.get("domain_context"):
             normalized["domain_context"] = self._literature_domain_context(state)
+        normalized["request_identity"] = scholarly_request_identity(normalized)
         history = state.setdefault("literature_task_history", [])
         previous = [item for item in history if isinstance(item, dict)
                     and (item.get("source_gap_id") or item.get("gap_id")) == normalized["source_gap_id"]
@@ -609,6 +617,9 @@ class InvestigationMixin:
         task = state.get("pending_literature_task")
         if not isinstance(task, dict):
             return False, "missing_pending_literature_task"
+        if (task.get("request_identity") is not None
+                and task["request_identity"] != scholarly_request_identity(task)):
+            return False, "literature_request_identity_changed"
         if self._literature_task_is_external_artifact(task):
             source_gap_id = str(task.get("source_gap_id") or task.get("gap_id") or "external-artifact")
             reclassified = {
@@ -633,6 +644,7 @@ class InvestigationMixin:
     @staticmethod
     def _reusable_scholarly_transport(
         state: dict[str, Any], task: dict[str, Any],
+        *, workspace: Path | None = None,
     ) -> dict[str, Any] | None:
         """Reuse the host retrieval that fed an unconsumed committed Literature invocation."""
         transport = state.get("last_sdk_scholarly_retrieval")
@@ -644,16 +656,18 @@ class InvestigationMixin:
         expected_type = str(task.get("task_type") or "targeted_source")
         if str(transport.get("task_type") or "targeted_source") != expected_type:
             return None
-        if str(transport.get("status") or "") == "test_stub":
-            return json.loads(json.dumps(transport))
-        papers_path = Path(str(transport.get("papers_json") or ""))
-        if not papers_path.is_file():
-            return None
-        reading = transport.get("reading") if isinstance(transport.get("reading"), dict) else {}
-        manifest_text = str(reading.get("pdf_manifest") or "").strip()
-        if manifest_text and not Path(manifest_text).is_file():
+        if workspace is None or not reusable_scholarly_transport(transport, task, workspace):
             return None
         return json.loads(json.dumps(transport))
+
+    def _retrieve_literature_transport(self, task: dict[str, Any]) -> dict[str, Any]:
+        """Bind one newly acquired corpus before handing it to Literature."""
+        transport = self.scholarly_retriever(task, self.cycle_workspace)
+        if "request_identity" not in transport:
+            return pin_scholarly_transport(task, transport, self.cycle_workspace)
+        if transport["request_identity"] != scholarly_request_identity(task):
+            raise ValueError("Scholarly retrieval returned a different frozen request")
+        return transport
 
     def _complete_literature_task(self, state: dict[str, Any], output: dict[str, Any]) -> None:
         pending = state.get("pending_literature_task") if isinstance(state.get("pending_literature_task"), dict) else None
@@ -830,8 +844,8 @@ class InvestigationMixin:
             raise RecoveryStop(reason)
 
         literature_task = state.get("pending_literature_task") or task
-        transport = (self._reusable_scholarly_transport(state, literature_task)
-                     or self.scholarly_retriever(literature_task, self.cycle_workspace))
+        transport = (self._reusable_scholarly_transport(state, literature_task, workspace=self.cycle_workspace)
+                     or self._retrieve_literature_transport(literature_task))
         state["last_sdk_scholarly_retrieval"] = transport
         self._emit(state, "scholarly.transport_prepared", {
             "status": transport.get("status"),
@@ -1271,9 +1285,10 @@ class InvestigationMixin:
                         recovery_literature_dedup = True
                         break
                     context["literature_task"] = state.get("pending_literature_task") or task
-                    transport = self._reusable_scholarly_transport(state, context["literature_task"])
+                    transport = self._reusable_scholarly_transport(
+                        state, context["literature_task"], workspace=self.cycle_workspace)
                     if transport is None:
-                        transport = self.scholarly_retriever(context["literature_task"], self.cycle_workspace)
+                        transport = self._retrieve_literature_transport(context["literature_task"])
                         transport_event = "scholarly.transport_prepared"
                     else:
                         transport_event = "scholarly.transport_reused"
