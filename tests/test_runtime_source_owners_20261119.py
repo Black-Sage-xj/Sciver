@@ -14,6 +14,8 @@ from theory_master.runtime_manager import runtime_source_provenance
     ('theory_master.supervisor_native_goal_recovery', 'supervisor_native_goal_recovery.py'),
     ('theory_master.supervisor_lineage_recovery', 'supervisor_lineage_recovery.py'),
     ('theory_master.supervisor_delivery_alias_recovery', 'supervisor_delivery_alias_recovery.py'),
+    ('theory_master.public_submission', 'public_submission.py'),
+    ('theory_master.submission_rework', 'submission_rework.py'),
     ('theory_master.invocation_execution', 'invocation_execution.py'),
     ('theory_master.evidence', 'evidence.py'),
     ('theory_master.delivery_repair', 'delivery_repair.py'),

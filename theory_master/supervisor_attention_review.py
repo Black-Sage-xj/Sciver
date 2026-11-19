@@ -43,6 +43,7 @@ HARD_CODES = frozenset({
     "investigator_native_goal_unexpected_blocked",
     "lead_literature_unavailable",
     "contract_repair_failed",
+    "public_submission_incomplete",
 })
 MAX_QUALIFICATION_RETRIES = 1
 

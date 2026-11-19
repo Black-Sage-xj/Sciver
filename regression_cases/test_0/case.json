@@ -14,7 +14,8 @@
   "scientific_fixture": {
     "plan": "research_plan.md",
     "benchmark_root": "benchmark",
-    "source_manifest": "benchmark/source_manifest.json"
+    "source_manifest": "benchmark/source_manifest.json",
+    "submission_contract": "benchmark/submission_contract.json"
   },
   "separation": {
     "materialized_into_new_task": [

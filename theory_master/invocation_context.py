@@ -22,6 +22,11 @@ class InvocationContextPreparation:
             "final_gate": self.session.owner.spec.final_gate,
             "required_context": self.session.owner.spec.required_context,
         }
+        if self.session.role == "investigator":
+            from .public_submission import load_submission_contract
+            declaration = load_submission_contract(self.session.owner.spec)
+            if declaration is not None:
+                global_context["public_submission"] = declaration
         if self.session.role == "judge":
             global_context = {
                 "hypothesis_lock": self.session.state.get("hypothesis_lock", {})
@@ -187,11 +192,22 @@ class InvocationContextPreparation:
                 self.session.continuation
                 and self.session.identifier != self.session.thread_id
             ):
+                if self.session.context.get("submission_delivery"):
+                    from .submission_rework import _stop
+                    _stop(self.session.owner, self.session.state, "Backend replaced the original Investigator thread; public submission cannot use a new session.")
                 self.session.continuation = False
                 self.session.state.setdefault("recovery", {})[
                     "mode"
                 ] = "fresh_thread_fallback"
-        except Exception:
+        except Exception as exc:
+            from .workflow_support import RecoveryStop
+            from .provider_errors import ProviderQuotaExhausted
+            from .codex_errors import CodexProviderRequestRejected
+            if isinstance(exc, (RecoveryStop, ProviderQuotaExhausted, CodexProviderRequestRejected)):
+                raise
+            if self.session.context.get("submission_delivery"):
+                from .submission_rework import _stop
+                _stop(self.session.owner, self.session.state, "The original Investigator thread could not be resumed; public submission cannot use a fallback session.")
             persistent_rl = self.session.actual == "research_lead" and bool(
                 self.session.thread_id
             )
@@ -244,6 +260,7 @@ class InvocationContextPreparation:
         self.session.native_preflight_goal = None
         if (
             native_goal_stage
+            and not self.session.context.get("submission_delivery")
             and (not fake_backend)
             and callable(getattr(self.session.owner.backend, "invoke_goal", None))
         ):

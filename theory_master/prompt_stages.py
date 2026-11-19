@@ -55,12 +55,15 @@ STAGE_CONTEXT_FIELDS: dict[tuple[str, str], tuple[str, ...]] = {
     ),
     ("investigator", "investigate"): (
         "frozen_objective", "qualification_handoff", "previous_scientific_delta", "workspace_access",
+        "public_submission", "submission_delivery",
     ),
     ("investigator", "integrate_literature"): (
         "frozen_objective", "qualification_handoff", "previous_scientific_delta", "workspace_access",
+        "public_submission", "submission_delivery",
     ),
     ("investigator", "judge_rework"): (
         "frozen_objective", "qualification_handoff", "previous_scientific_delta", "judge_objections", "workspace_access",
+        "public_submission", "submission_delivery",
     ),
     ("literature", "landscape"): (
         "search_target", "scholarly_retrieval_root",
@@ -698,6 +701,8 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
             "qualification_handoff": _qualification_handoff_view(lock),
             "previous_scientific_delta": previous if replay_previous else None,
             "workspace_access": _workspace_access(context),
+            "public_submission": context.get("public_submission"),
+            "submission_delivery": context.get("submission_delivery"),
         }
         if stage == "judge_rework":
             base["judge_objections"] = context.get("judge_objections")
@@ -746,7 +751,7 @@ def build_initial_prompt(*, prefix: str, role: str, stage: str, contract_ref: st
                          contract_schema: str, context: Mapping[str, Any], write_rule: str,
                          process_guard: str = "") -> str:
     task = ROLE_STAGE_LABELS.get(stage, stage.replace("_", " "))
-    card = stage_definition_text(role, stage)
+    card = stage_definition_text(role, stage, context)
     return (
         f"{prefix} Start the assigned TheoryMaster {role} task.\n"
         f"Current task: {stage} — {task}.\n"
@@ -761,7 +766,7 @@ def build_initial_prompt(*, prefix: str, role: str, stage: str, contract_ref: st
 def build_continuation_prompt(*, role: str, stage: str, contract_ref: str,
                               contract_schema: str, context: Mapping[str, Any]) -> str:
     task = ROLE_STAGE_LABELS.get(stage, stage.replace("_", " "))
-    card = stage_definition_text(role, stage)
+    card = stage_definition_text(role, stage, context)
     return (
         f"Continue as TheoryMaster {role} in the existing thread.\n"
         f"Current task: {stage} — {task}.\n"

@@ -42,6 +42,7 @@ class InvocationTransport:
         investigator_goal_stage = (
             self.session.role == "investigator"
             and self.session.stage in NATIVE_INVESTIGATOR_STAGES
+            and not self.session.context.get("submission_delivery")
         )
         deterministic_backend = any(
             (
@@ -219,12 +220,21 @@ class InvocationTransport:
                 control_check=lambda: self.session.owner._check_recovery_control(self.session.state),
                 goal_identity_observer=self._record_goal_identity,
             )
+        extra = {}
+        if self.session.role == "investigator" and self.session.context.get("submission_delivery"):
+            deterministic = any(cls.__name__ in {"FakeBackend", "CanonicalFakeBackend"}
+                                for cls in type(self.session.owner.backend).__mro__)
+            if not deterministic:
+                from .submission_rework import delivery_usage_guard
+                extra = {"usage_guard": delivery_usage_guard(self.session),
+                         "control_check": lambda: self.session.owner._check_recovery_control(self.session.state)}
         return self.session.owner.backend.invoke(
             self.session.role,
             prompt_text,
             self.session.identifier,
             self.session.route.model,
             self.session.route.provider,
+            **extra,
         )
 
     def _invoke_initial(self):

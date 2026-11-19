@@ -20,6 +20,7 @@ from .observability.codex_events import (extract_agent_delta, extract_agent_text
 from .provider_errors import ProviderQuotaExhausted, is_provider_quota_exhausted
 from .read_trace import paths_from_event
 from .skills import turn_input
+from .workflow_support import RecoveryStop
 
 
 def _get(value: Any, key: str, default: Any = None) -> Any:
@@ -109,7 +110,6 @@ class TurnDelivery:
     status: str | None = None
     turn_id: str | None = None
     usage_tokens: int = 0
-    provider_usage_baseline: int | None = None
 
     def require_success(self) -> None:
         rejected = provider_request_rejection(self.error)
@@ -128,28 +128,76 @@ class CodexTurnTransport:
     def __init__(self, backend: Any):
         self.backend = backend
         self.last_usage_tokens = 0
+        self._attempt_usage_start = 0
+        self._provider_usage_baseline: int | None = None
+        self._guard_error: BaseException | None = None
+
+    def _guard_call(self, callback: Any, *args: Any) -> None:
+        """Control/resource authority is never an optional UI callback or retry."""
+        if callable(callback):
+            try:
+                callback(*args)
+            except BaseException as exc:
+                self._guard_error = exc
+                raise
+
+    def _account_usage(self, delivery: TurnDelivery, mapped: dict, guard: Any) -> None:
+        raw = mapped.get("raw_usage")
+        if not isinstance(raw, dict):
+            return
+        total = max(0, int(raw.get("input_tokens") or 0) + int(raw.get("output_tokens") or 0))
+        event = mapped.get("event")
+        if event == "TOKEN_USAGE":
+            if self._provider_usage_baseline is None:
+                last = mapped.get("last_request_usage")
+                request = (int(last.get("input_tokens") or 0) + int(last.get("output_tokens") or 0)
+                           if isinstance(last, dict) else 0)
+                # Earlier attempts may have exposed only terminal Turn usage.
+                # Those already-counted tokens belong after this run's origin.
+                self._provider_usage_baseline = max(0, total - request - self._attempt_usage_start)
+            # One immutable baseline spans reconnects, including requests whose
+            # notifications were lost before the next cumulative observation.
+            consumed = max(self.last_usage_tokens, total - self._provider_usage_baseline)
+            delivery.usage_tokens = max(delivery.usage_tokens, consumed - self._attempt_usage_start)
+        elif event in {"LLM_TURN_COMPLETED", "LLM_TURN_FAILED", "LLM_RECONNECTING"}:
+            # Terminal `usage` describes this Turn, not the thread's lifetime.
+            # Take its maximum with live usage, never add both representations.
+            delivery.usage_tokens = max(delivery.usage_tokens, total)
+        else:
+            return
+        self.last_usage_tokens = max(self.last_usage_tokens,
+                                     self._attempt_usage_start + delivery.usage_tokens)
+        self._guard_call(guard, self.last_usage_tokens)
 
     def run(self, role: str, payload: Any, thread_id: str | None, model: str, provider: str, *,
             on_delta: Any = None, cancel_event: Any = None, on_event: Any = None,
             on_handle: Any = None, request_user_input: Any = None,
-            usage_guard: Any = None) -> tuple[str, str]:
+            usage_guard: Any = None, control_check: Any = None) -> tuple[str, str]:
         backend = self.backend
         identifier = thread_id
         retry_payload = None
         finalization_attempted = False
+        self._guard_error = None
+        baseline = getattr(usage_guard, "provider_usage_baseline", None)
+        self._provider_usage_baseline = max(0, int(baseline)) if baseline is not None else None
         for attempt in range(backend.OUTER_TURN_RETRIES + 1):
             try:
+                self._guard_call(control_check)
                 identifier = backend.ensure_thread(role, identifier, model, provider)
+                self._guard_call(getattr(usage_guard, "check_thread", None), identifier)
                 backend._new_thread_ids.discard(identifier)
                 self._attempt_usage_start = self.last_usage_tokens
                 delivery = self._attempt(role, backend.threads[identifier],
                                          retry_payload if retry_payload is not None else payload,
                                          identifier, provider, on_delta=on_delta, cancel_event=cancel_event,
-                                         on_event=on_event, on_handle=on_handle, request_user_input=request_user_input, usage_guard=usage_guard)
+                                         on_event=on_event, on_handle=on_handle, request_user_input=request_user_input,
+                                         usage_guard=usage_guard, control_check=control_check)
                 backend._turn_reads = list(dict.fromkeys(delivery.reads))
                 return identifier, self._final_response(backend.threads[identifier], delivery)
             except Exception as exc:
-                if isinstance(exc, (CodexTurnCancelled, CodexProviderRequestRejected, ProviderQuotaExhausted)):
+                if (exc is self._guard_error
+                        or isinstance(exc, (RecoveryStop, CodexTurnCancelled,
+                                            CodexProviderRequestRejected, ProviderQuotaExhausted))):
                     raise
                 message = str(exc)
                 if is_provider_quota_exhausted(message):
@@ -267,6 +315,13 @@ class CodexTurnTransport:
             mapped = map_notification(event, role=role, thread_id=identifier)
         except Exception:
             mapped = None
+        if mapped:
+            # The request has already happened. Persist its observed charge
+            # before an operator pause can interrupt processing this event.
+            if mapped.get("raw_usage"):
+                self._notify(role, identifier, mapped)
+            self._account_usage(delivery, mapped, callbacks.get("usage_guard"))
+        self._guard_call(callbacks.get("control_check"))
         if role == "research_chat":
             try:
                 visible = map_chat_notification(event)
@@ -279,7 +334,8 @@ class CodexTurnTransport:
             if mapped.get("event", "").startswith("COMPACTION_"):
                 mapped.update(episode_id=identifier, compact_threshold_tokens=backend._native_compact_threshold(),
                               compact_scope=backend._native_compact_scope())
-            self._notify(role, identifier, mapped)
+            if not mapped.get("raw_usage"):
+                self._notify(role, identifier, mapped)
             if is_provider_quota_exhausted(mapped.get("error")):
                 raise ProviderQuotaExhausted(str(mapped["error"]), provider=provider,
                                              account=backend.thread_accounts.get(identifier or ""))
@@ -293,20 +349,6 @@ class CodexTurnTransport:
                 delivery.error = str(mapped.get("error") or "Codex turn failed")
             if mapped.get("event") == "LLM_TURN_COMPLETED" and mapped.get("error"):
                 delivery.error = str(mapped["error"])
-            if mapped.get("event") == "TOKEN_USAGE":
-                raw, last = mapped.get("raw_usage"), mapped.get("last_request_usage")
-                if isinstance(raw, dict):
-                    total = int(raw.get("input_tokens") or 0) + int(raw.get("output_tokens") or 0)
-                    if delivery.provider_usage_baseline is None:
-                        request = (int(last.get("input_tokens") or 0) + int(last.get("output_tokens") or 0)
-                                   if isinstance(last, dict) else 0)
-                        delivery.provider_usage_baseline = max(0, total - request)
-                    delivery.usage_tokens = max(delivery.usage_tokens, total - delivery.provider_usage_baseline)
-                    self.last_usage_tokens = self._attempt_usage_start + delivery.usage_tokens
-                    # Resource guards own interruption authority; optional UI callbacks do not.
-                    guard = callbacks.get("usage_guard")
-                    if callable(guard):
-                        guard(self.last_usage_tokens)
         method = str(_get(event, "method", "") or "")
         payload = _get(event, "payload")
         if method == "item/completed" or method.endswith("/agentMessage/completed"):

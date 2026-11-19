@@ -27,5 +27,6 @@ The benchmark's evaluator-only hidden-truth accuracy check (relative error at mo
 # Required Context
 
 - benchmark/instruction.md: schema and submission instructions.
+- benchmark/submission_contract.json: public machine-readable submission schema.
 - benchmark/source_manifest.json: original synthetic input provenance and SHA-256.
 - benchmark/datasets/brownian_2d/trajectories.csv: positions and train/validation labels.

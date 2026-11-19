@@ -209,8 +209,14 @@ def procedure_card_text(role: str, stage: str) -> str:
 
 
 
-def stage_definition_text(role: str, stage: str) -> str:
+def stage_definition_text(role: str, stage: str, context=None) -> str:
     """Render one complete Stage definition, including its embedded procedure."""
+    if role == "investigator" and (context or {}).get("submission_delivery"):
+        return (f"Stage: {stage}\n"
+                "Current objective: Correct only the explicit public submission structure from retained scientific results in the original Investigator thread.\n"
+                "May do: Read the schema mismatch and frozen retained results; author a supplemental JSON artifact and register it using the current output contract.\n"
+                "Must not: Reopen completed research, change frozen H or verdict, overwrite original scientific files, create a new Native Goal, or invent missing scientific values. Preserve the original cumulative token allowance.\n"
+                "Exit / handoff: Return the existing Investigator contract, identifying the supplemental authored artifact and its source-grounded limits.\n")
     return stage_card_text(role, stage) + procedure_card_text(role, stage)
 
 

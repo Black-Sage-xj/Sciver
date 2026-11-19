@@ -305,7 +305,7 @@ def session_fixture(tmp_path):
         "stage": "investigate", "ts": "2026-11-19T00:00:01", "input_kind": kind, "content": content}) + "\n"
         for kind, content in [("native_goal_setup_turn", "SDK Goal setup\n" + origin["setup_context"]),
                               ("native_goal_objective", origin["objective"])]))
-    session = SimpleNamespace(state={"recovery": {"action": "resume"}, "hypothesis_lock": SCIENCE},
+    session = SimpleNamespace(context={}, state={"recovery": {"action": "resume"}, "hypothesis_lock": SCIENCE},
         owner=SimpleNamespace(cycle_dir=tmp_path), invocation_ledger=SimpleNamespace(snapshots=lambda: [record]),
         invocation_id="inv-1-investigator-monitor", stage="investigate", logical_key="original-slot",
         identifier="original-thread", contract=SimpleNamespace(descriptor=lambda: origin["contract_ref"]),

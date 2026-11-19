@@ -240,6 +240,7 @@ class TaskSpec:
     graph_database: Path | None = None
     # Explicit logical Cycle ID used only by isolated checkpoint replay.
     replay_cycle_id: str | None = None
+    submission_contract_ref: str | None = None
 
     def __post_init__(self) -> None:
         # Judge rework is the only active round-like permission. Historical
@@ -297,6 +298,10 @@ class TaskSpec:
         config = json.loads(config_path.read_text(encoding="utf-8"))
         if config.get("schema") != SYSTEM_SCHEMA:
             raise ValueError("invalid TheoryMaster system config schema")
+        if config.get("submission_contract") is not None and config.get("benchmark_root"):
+            declared_root = Path(config["benchmark_root"]).expanduser().absolute()
+            if any(part.is_symlink() for part in (declared_root, *declared_root.parents)):
+                raise ValueError("submission_contract benchmark_root cannot traverse symlinks")
         document = absolute(config["plan_path"], "plan_path")
         task_home, root, legacy_research_root = effective_path_model(config)
         root.mkdir(parents=True, exist_ok=True)
@@ -327,7 +332,13 @@ class TaskSpec:
                    legacy_research_root=legacy_research_root,
                    benchmark_dir=absolute(config["benchmark_root"], "benchmark_root") if config.get("benchmark_root") else None,
                    graph_database=absolute(config.get("graph_database") or branch.parent / "science_graph.sqlite3", "graph_database"),
+                   submission_contract_ref=config.get("submission_contract"),
                    )
+        if spec.submission_contract_ref is not None:
+            if not config.get("benchmark_root"):
+                raise ValueError("submission_contract requires an explicit benchmark_root")
+            from .public_submission import load_submission_contract
+            load_submission_contract(spec)
         from .role_registry import ROLES
         from .skills import role_skills
         for role in ROLES:

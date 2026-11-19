@@ -33,6 +33,10 @@ class InvocationPreparation:
         self.session.thread_key = self.session.owner._thread_key(
             self.session.state, self.session.actual
         )
+        required = (self.session.context.get("submission_delivery") or {}).get("thread_id")
+        if required and (self.session.fresh_thread or self.session.threads.get(self.session.thread_key) != required):
+            from .submission_rework import _stop
+            _stop(self.session.owner, self.session.state, "Public submission requires its original Investigator thread; replacement is forbidden.")
         if self.session.fresh_thread:
             old = self.session.threads.pop(self.session.thread_key, None)
             self.session.thread_providers.pop(self.session.thread_key, None)
@@ -63,6 +67,9 @@ class InvocationPreparation:
             and isinstance(known_thread_provider, str)
             and (known_thread_provider != self.session.route.provider)
         ):
+            if required:
+                from .submission_rework import _stop
+                _stop(self.session.owner, self.session.state, "The original Investigator provider changed; retain the thread and public submission gap without starting a new session.")
             self.session.threads.pop(self.session.thread_key, None)
             self.session.thread_providers.pop(self.session.thread_key, None)
             drop = getattr(self.session.owner.backend, "drop_thread", None)

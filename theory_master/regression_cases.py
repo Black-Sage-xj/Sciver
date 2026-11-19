@@ -239,6 +239,86 @@ def _source_manifest_relative(case: RegressionCase) -> Path:
     return relative
 
 
+def _submission_contract_relative(case: RegressionCase) -> Path | None:
+    fixture = case.metadata.get("scientific_fixture", {})
+    if not isinstance(fixture, dict):
+        raise RegressionCaseError(f"invalid scientific_fixture metadata: {case.root}")
+    if "submission_contract" not in fixture:
+        return None
+    reference = fixture["submission_contract"]
+    if not isinstance(reference, str) or not reference:
+        raise RegressionCaseError(
+            "fixture submission_contract must be an explicit file reference"
+        )
+    relative = Path(reference)
+    _safe_member(case.root, relative)
+    if (
+        len(relative.parts) < 2
+        or relative.parts[0] != "benchmark"
+        or relative.as_posix() != reference
+        or "\\" in reference
+    ):
+        raise RegressionCaseError(
+            "fixture submission_contract must stay under benchmark/"
+        )
+    return relative
+
+
+def _verify_submission_contract(case: RegressionCase, root: Path) -> Path | None:
+    reference = _submission_contract_relative(case)
+    if reference is None:
+        return None
+    path = _safe_member(root, reference)
+    if not path.is_file():
+        raise RegressionCaseError(
+            "fixture submission_contract must name a regular file"
+        )
+    from types import SimpleNamespace
+    from .public_submission import load_submission_contract
+
+    try:
+        declaration = load_submission_contract(
+            SimpleNamespace(
+                submission_contract_ref=str(reference),
+                benchmark_root=root / "benchmark",
+            )
+        )
+        if declaration is None:
+            raise ValueError("explicit fixture submission_contract was not loaded")
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        raise RegressionCaseError(
+            f"invalid fixture submission_contract: {exc}"
+        ) from exc
+    return reference
+
+
+def _configure_new_case_inputs(case: RegressionCase, binding):
+    """Connect explicit fixture metadata only after creating a fresh task."""
+    from .onboarding import install_benchmark_inputs
+    from .runtime import write_json
+    from .task import TaskBinding
+
+    install_benchmark_inputs(binding)
+    reference = _submission_contract_relative(case)
+    if reference is None:
+        return binding
+    benchmark = binding.benchmark_root
+    if benchmark is None:
+        raise RegressionCaseError("new case inputs have no explicit benchmark root")
+    copied = _safe_member(benchmark, reference.relative_to("benchmark"))
+    if (
+        not copied.is_file()
+        or copied.read_bytes() != _safe_member(case.root, reference).read_bytes()
+    ):
+        raise RegressionCaseError(
+            "new case submission_contract differs from its public fixture"
+        )
+    config = json.loads(binding.config_path.read_text(encoding="utf-8"))
+    config["submission_contract"] = str(reference)
+    write_json(binding.config_path, config)
+    return TaskBinding.load(binding.task_home)
+
+
 def verify_case(selector: str | int) -> dict[str, Any]:
     case = resolve_case(selector)
     plan_path = _safe_member(case.root, "research_plan.md")
@@ -256,6 +336,7 @@ def verify_case(selector: str | int) -> dict[str, Any]:
             raise RegressionCaseError(f"fixture contains a non-regular input: {path}")
     manifest = _read_json(_safe_member(case.root, _source_manifest_relative(case)))
     verified = _verify_inputs(case.root, manifest)
+    _verify_submission_contract(case, case.root)
     return {
         "id": case.case_id,
         "root": str(case.root),
@@ -285,12 +366,22 @@ def materialize_case(selector: str | int, destination: Path) -> Path:
     # outside the task root so baseline expectations cannot leak into science.
     manifest = _read_json(_safe_member(destination, _source_manifest_relative(case)))
     _verify_inputs(destination, manifest)
+    reference = _verify_submission_contract(case, destination)
+    if (
+        reference is not None
+        and (destination / reference).read_bytes()
+        != (case.root / reference).read_bytes()
+    ):
+        raise RegressionCaseError(
+            "materialized submission_contract differs from its public fixture"
+        )
     return destination
 
 
 def initialize_case(
     selector: str | int, destination: Path, *, executable: str = "theory_master"
 ) -> Path:
+    case = resolve_case(selector)
     root = materialize_case(selector, destination)
     proc = subprocess.run(
         [executable, "new", str(root / "research_plan.md")],
@@ -303,6 +394,9 @@ def initialize_case(
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "TheoryMaster new failed").strip()
         raise RegressionCaseError(detail[-4000:])
+    from .task import TaskBinding
+
+    _configure_new_case_inputs(case, TaskBinding.load(root))
     return root
 
 
@@ -349,9 +443,7 @@ def create_test_instance(
     if scope == root or not root.is_relative_to(scope):
         scope = root.parent
     binding = bootstrap(root / "research_plan.md", allocation_root=scope)
-    from .onboarding import install_benchmark_inputs
-
-    install_benchmark_inputs(binding)
+    binding = _configure_new_case_inputs(case, binding)
     record = {
         "case": case.case_id,
         "task_id": binding.master_id,

@@ -54,6 +54,11 @@ def test_repeated_wheel_build_removes_deleted_package_files(tmp_path, web):
     resource_name = deleted_resource.relative_to(project).as_posix()
     first = build(tmp_path / "first")
     assert {module_name, resource_name} <= first
+    if not web:
+        assert (
+            "theory_master/resources/regression_cases/test_0/benchmark/submission_contract.json"
+            in first
+        )
     deleted_module.unlink()
     deleted_resource.unlink()
     # Reuse the *same* build directory as an ordinary repeated pip wheel call.

@@ -165,6 +165,10 @@ SDK 将已登记图片绑定到真实文件，报告笔记使用相对自身位�
 
 Cycle 完成与 Task Goal 完成独立。仅由本轮 `supported` 事件触发 fresh `goal_completion`；其结果为 `passed|not_passed` 与理由，不生成规划状态。Goal Gate 评审以独立记录关联触发它的 Cycle Outcome；Outcome 的科学 verdict 不变。Lead 的精简图谱保留完整 H 索引，并显式展示历次 `not_passed` 的原文理由，即使来源 H 的 frontier 已关闭。Lead 对照 Final Gate 和已交付成果判断下一候选的必要性；Challenger 独立核对其 Goal 优先级。失败理由是历史任务裁决，不自动指定下一 H，也不因下一次理由未重述而自动解决。下一 Cycle 重新选题并审查，不能把收口时的临时 synthesis 当作新的长期科学权威。
 
+任务可在配置中显式声明 `submission_contract: "benchmark/submission_contract.json"`，由显式 `benchmark_root` 解析公开 JSON Schema 合同。SDK 不按题名、目录或历史任务推断合同，也不把答案与私有评估器加入材料。合同原始字节、SHA 与已登记交付共同进入冻结修订；Goal Judge 调用前及封存事务内均检查唯一合规的正式 JSON 产物。机器格式校验不代替科学裁决，SDK 不从数组或其他字段生成科学提交值。
+
+格式缺口交回原 Investigator，通过原线程的普通 Turn 补充正式产物；不重开或替换原 Native Goal。补交付沿用冻结 H、原科学 verdict 与累计 token 预算，次数受当前 Cycle 剩余的 `max_judge_reworks_per_cycle` 额度约束。已冻结科学文件和公开合同的源哈希必须保持不变，新产物通过正常 Finding 与调用产物登记。预算、次数、线程或完整性守卫失败时保留明确缺口并停止，不能封存为 passed；恢复已提交科学的 Cycle 时直接重入交付门，不重做 Lead、科学 Judge 或报告。纯索引重评不授权新作者调用，已封存任务保留历史原件。
+
 ## 4. Prompt、Contract 与上下文
 
 每次调用按以下层次装配：

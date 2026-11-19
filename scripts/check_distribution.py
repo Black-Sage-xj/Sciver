@@ -47,7 +47,11 @@ def check_distribution(work: Path, *, dependency_wheels: Path | None = None) -> 
                PIP_NO_INDEX="1", PYTHONNOUSERSITE="1")
     results = []
 
-    runtime_dependencies = tomllib.loads((ROOT / "web/pyproject.toml").read_text())["project"].get("dependencies", [])
+    runtime_dependencies = list(dict.fromkeys(
+        requirement
+        for project in (ROOT / "pyproject.toml", ROOT / "web/pyproject.toml")
+        for requirement in tomllib.loads(project.read_text())["project"].get("dependencies", [])
+    ))
     runtime_dependencies = [requirement for requirement in runtime_dependencies if re.match(
         r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", requirement)[1].lower().replace("_", "-") != "sciver"]
     dependency_preparation = {"mode": "local-wheels" if dependency_wheels is not None else "package-index",

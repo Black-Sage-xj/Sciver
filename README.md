@@ -111,6 +111,8 @@ sciver test Test0 ~/Sciver-workspace/another-test0 --prepare-only --open
 
 Without `--prepare-only`, `test` starts real model-based research and uses account quota. The destination must be empty. This command initializes and verifies a fresh task; it does not start model-based research. For an automatically named task directory, use `sciver test Test0 --root ~/Sciver-workspace --prepare-only`. See [First use](docs/first-use.md) and [Wheel installation](docs/distribution.md) for standalone delivery, account setup and troubleshooting.
 
+Fresh Test0 tasks declare a public JSON submission schema. Before Goal completion, Sciver validates the formally registered artifact against that schema; missing fields return to the original Investigator within its existing thread, budget and bounded correction allowance. Scientific acceptance still belongs to the Judge. Historical sealed tasks are preserved.
+
 ### Before starting real research
 
 - Release users should first run `python -m pip install --find-links "$HOME/sciver-install/v0.1.1" 'sciver[sdk]==0.1.1'` in the activated environment to install model-client dependencies. This step downloads extra dependencies; see [Wheel installation](docs/distribution.md) for fully offline deployment. The source development installation already includes the SDK dependencies.

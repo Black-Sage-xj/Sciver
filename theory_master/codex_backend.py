@@ -789,7 +789,8 @@ class CodexBackend:
                cancel_event: threading.Event | None = None,
                on_event: Any | None = None, on_handle: Any | None = None,
                input_images: list[str] | None = None,
-               request_user_input: Any | None = None) -> tuple[str, str]:
+               request_user_input: Any | None = None,
+               usage_guard: Any | None = None, control_check: Any | None = None) -> tuple[str, str]:
         from .codex_turn_transport import CodexTurnTransport
         include_skills = thread_id is None or thread_id in self._new_thread_ids
         payload = turn_input(role, prompt, include_skills=include_skills, task_config_path=self.task_config_path)
@@ -803,4 +804,5 @@ class CodexBackend:
             role, payload, thread_id, model, provider, on_delta=on_delta,
             cancel_event=cancel_event, on_event=on_event, on_handle=on_handle,
             request_user_input=request_user_input,
+            usage_guard=usage_guard, control_check=control_check,
         )

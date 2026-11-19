@@ -1,0 +1,14 @@
+{
+  "schema": "theory-master/public-submission-contract/v1",
+  "json_schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": ["D_estimate", "method", "validation"],
+    "properties": {
+      "D_estimate": {"type": "number", "exclusiveMinimum": 0},
+      "method": {"type": "string", "minLength": 1},
+      "validation": {"type": "string", "minLength": 1}
+    },
+    "additionalProperties": true
+  }
+}

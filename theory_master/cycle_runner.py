@@ -245,6 +245,16 @@ class CycleRunner:
                     raise
 
     def _checkpoint_and_execute(self):
+        if (self.resuming and self.state.get("goal_submission_gap")
+                and self.state.get("scientific_phase") == "committed"
+                and self.state.get("scientific_verdict") == "supported"):
+            judge = (self.state.get("role_outputs") or {}).get("judge")
+            if not isinstance(judge, dict) or judge.get("verdict") != "supported":
+                raise ValueError("Submission recovery requires the original committed supported Judge output")
+            self.owner._emit(self.state, "recovery.submission_delivery_resumed", {"scientific_phase": "committed"})
+            self.state.update(status="over", phase="complete")
+            self.owner._run_goal_completion(self.state, judge)
+            return
         if self.owner.stop_before == "investigator":
             self.state.update(
                 {

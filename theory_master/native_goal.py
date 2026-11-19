@@ -188,6 +188,10 @@ def investigator_goal(stage: str, context: dict[str, Any], *, layout: str = "v1"
         target = ("Investigate the frozen Hypothesis until sufficient evidence is obtained "
                   "for independent adjudication under its decisive_test, rather than "
                   "stopping at a local result.")
+    if context.get("public_submission"):
+        target += (" Also author the public JSON submission required by Setup Context.public_submission. "
+                   "Satisfy that explicit schema with your scientifically justified result, method and checks; "
+                   "register the authored artifact through the normal delivery. Shape validity does not replace scientific evidence.")
     if layout == "v2":
         # Native Goal owns completion science; Developer Instructions own stable
         # role/tool policy; Setup owns full inputs, paths and delivery mechanics.

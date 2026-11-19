@@ -53,6 +53,7 @@ class GoalGate:
         _write_immutable(path, payload)
         self.state["goal_assessment_stale"] = {**payload, "receipt_path": str(path)}
         self.state.pop("goal_delivery_pending", None)
+        self.state.pop("goal_submission_gap", None)
         self.state.update(
             status="over", phase="complete", execution_active=False, resumable=False
         )
@@ -83,11 +84,27 @@ class GoalGate:
             seal,
         )
         self.state.pop("goal_delivery_pending", None)
+        self.state.pop("goal_submission_gap", None)
         self.state["goal_completion"].update(metadata)
         self.state.setdefault("role_outputs", {})["goal_completion"] = result
         return applied
 
     def run(self) -> dict[str, Any]:
+        from .submission_rework import correct_submission_delivery, _stop
+        while True:
+            gap = self.state.get("goal_submission_gap")
+            if gap:
+                try:
+                    GoalAuthoritySnapshot.restore(Path(gap["snapshot_manifest"]), gap["snapshot_manifest_sha256"])
+                except (OSError, ValueError) as error:
+                    _stop(self.owner, self.state, "The retained submission snapshot or original scientific source changed: " + str(error))
+            result = self._run_once()
+            if result.get("assessment_status") != "submission_required":
+                return result
+            correct_submission_delivery(self.owner, self.state, result["snapshot"],
+                                        allow_rework=not self.delivery_repair)
+
+    def _run_once(self) -> dict[str, Any]:
         owner, state = self.owner, self.state
         plan, root, graph = (
             Path(owner.spec.document),
@@ -168,6 +185,14 @@ class GoalGate:
         else:
             snapshot = materialize_goal_snapshot(owner.spec, owner.cycle_dir, seed)
         owner._check_recovery_control(state)
+        from .public_submission import check_frozen_submission
+        frozen_delivery = json.loads((snapshot.root / "delivery_revision.json").read_text())
+        snapshot.validate()
+        submission = check_frozen_submission(frozen_delivery, snapshot)
+        if submission is not None:
+            state["goal_submission_validation"] = submission
+            if submission["status"] != "valid":
+                return self._submission_required(submission, snapshot, access, closed_status)
         owner._emit(
             state,
             "goal_gate.triggered",
@@ -225,6 +250,9 @@ class GoalGate:
                     raise ValueError(
                         "delivery materials changed during Goal assessment"
                     )
+                submission = check_frozen_submission(frozen_delivery, snapshot)
+                if submission is not None and submission["status"] != "valid":
+                    return self._submission_required(submission, snapshot, access, closed_status)
                 with ScienceGraphStore(graph, readonly=True) as store:
                     if (
                         store.goal_gate_assessment(
@@ -238,6 +266,15 @@ class GoalGate:
             except (OSError, ValueError) as error:
                 return self._stale(result, snapshot, access, str(error))
             return self._commit(result, access, snapshot, plan, graph)
+
+    def _submission_required(self, check, snapshot, access, closed_status):
+        from .submission_rework import persist_submission_gap
+        self.state["goal_delivery_pending"] = {
+            "cycle_id": self.owner.cycle_dir.name, "delivery_revision": access["delivery_revision"],
+            "closed_status": closed_status, "snapshot_manifest": str(snapshot.manifest_path),
+            "snapshot_manifest_sha256": snapshot.manifest_sha256}
+        persist_submission_gap(self.owner, self.state, check, snapshot, access)
+        return {"assessment_status": "submission_required", "snapshot": snapshot}
 
     def _commit(
         self,
@@ -267,6 +304,8 @@ class GoalGate:
             **access,
             "snapshot_manifest": str(snapshot.manifest_path),
             "snapshot_manifest_sha256": snapshot.manifest_sha256,
+            **({"submission_validation": self.state["goal_submission_validation"]}
+               if self.state.get("goal_submission_validation") is not None else {}),
         }
         _write_immutable(frozen_receipt, payload)
         write_json(receipt, payload)

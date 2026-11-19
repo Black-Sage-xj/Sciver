@@ -208,6 +208,8 @@ def materialize_goal_snapshot(
         return str(target)
 
     def rewrite(value: Any, key: str = "", provenance: bool = False) -> Any:
+        if key == "json_schema":
+            return value  # JSON Schema keywords and const data are not material navigation.
         if isinstance(value, dict):
             return {
                 name: rewrite(
@@ -266,6 +268,8 @@ def materialize_goal_snapshot(
         "index_path": str(index_path),
         "snapshot_boundary": rule,
         "scientific_model_snapshot": str(model),
+        **({"submission_contract": payload["submission_contract"]}
+           if payload.get("submission_contract") is not None else {}),
         "required_context_aliases": {
             ref: {
                 "path": copied.get(row.get("path", ""))

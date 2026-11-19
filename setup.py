@@ -17,6 +17,7 @@ PUBLIC_FIXTURE_FILES = (
     "test_0/PROTOCOL.md",
     "test_0/benchmark/instruction.md",
     "test_0/benchmark/source_manifest.json",
+    "test_0/benchmark/submission_contract.json",
     "test_0/benchmark/datasets/brownian_2d/trajectories.csv",
     "test_0/evaluator/generate_data.py",
     "test_0/evaluator/grade.py",

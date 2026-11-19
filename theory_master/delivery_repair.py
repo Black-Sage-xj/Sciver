@@ -78,12 +78,25 @@ def current_delivery_payload(spec: Any, graph_path: Path, cycle_dir: Path) -> di
     reports = _report_versions(spec, graph_path)
     with ScienceGraphStore(graph_path, readonly=True) as store:
         agent_view = store.agent_goal_completion_view()
-    return {"schema": "theory-master/delivery-revision/v1", "cycle_id": cycle_dir.name,
+    payload = {"schema": "theory-master/delivery-revision/v1", "cycle_id": cycle_dir.name,
             "science_digest": science_authority_digest(spec, graph_path),
             "scientific_model_sha256": hashlib.sha256(_canonical(model)).hexdigest(),
             "material_index": material_index,
             "report_versions": reports,
             "goal_material_sources": goal_material_sources(spec, [agent_view, material_index, reports])}
+    from .public_submission import load_submission_contract
+    declaration = load_submission_contract(spec)
+    if declaration is not None:
+        payload["submission_contract"] = declaration
+        # Explicit config grants this one public file, without scanning or
+        # admitting unrelated benchmark/private files to the snapshot.
+        references = {declaration["path"], declaration["reference"]}
+        payload["goal_material_sources"] = [row for row in payload["goal_material_sources"]
+            if row.get("reference") not in references]
+        payload["goal_material_sources"].extend({"reference": reference,
+            "path": declaration["path"], "sha256": declaration["sha256"], "status": "available"}
+            for reference in sorted(references))
+    return payload
 
 
 def freeze_delivery_revision(spec: Any, graph_path: Path, cycle_dir: Path, *,
