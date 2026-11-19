@@ -20,7 +20,9 @@ def test_hypothesis_and_result_are_separate_and_placeholder_is_not_a_verdict():
   const sem=nodes[0].semantic;
   nodes[0].label='Adjacent-increment covariance correction';
   sem.hypothesis_summary='主张：D removes noise bias；条件：dt=0.10; iid errors；状态：待检验。';
+  sem.cycle=87;
   sem.scientific_status='none';
+  sem.lineage_summary='### 前序来源\n\n- Main（分支连线）：H-0000';
   sem.legacy_identity_review={status:'unadjudicated_whole_h'};
   // A report pointer on the migration placeholder still does not adjudicate H.
   sem.whole_h_assessment={verdict:'open',report_ref:'notes/report.md'};
@@ -43,13 +45,21 @@ def test_hypothesis_and_result_are_separate_and_placeholder_is_not_a_verdict():
   assert.equal(JSON.stringify({sem,text:nodes[0].text}),before,'reading never mutates science');
   assert(html.indexOf('id="ex-hypothesis-details"')<html.indexOf('id="ex-outcome-details"'));
   assert.equal(html.split('Adjacent-increment covariance correction').length-1,1,'title appears once');
+  assert(html.includes('<p class="ex-reader-cycle">Cycle 87</p><h3 id="ex-hypothesis-title">猜想</h3>'));
+  assert(html.includes('<div class="ex-hypothesis-heading"><h2 class="ex-hypothesis-title">'));
+  assert(html.includes('<h3 id="ex-results-title">研究结论 <span class="ex-result-count">3 轮</span></h3>'));
+  assert(!html.includes('ex-reader-card')&&!html.includes('ex-reader-step'),'both main sections use flat headings');
+  assert(!html.includes('这项研究要检验什么')&&!html.includes('每轮检验得到了什么'));
   assert(html.includes('<dt>主张</dt>')&&html.includes('<dt>适用条件</dt>'));
   assert(html.includes('D removes noise bias')&&html.includes('dt=0.10; iid errors'));
-  assert(html.includes('整体猜想尚无单独裁决'));
+  assert(!html.includes('整体猜想尚无单独裁决'),'placeholder status does not add a redundant explanation');
   assert(!html.includes('整体猜想裁决 <span'),'migration placeholder is not Judge Open');
   assert(!html.includes('关联 Markdown'),'no third duplicate document section');
   assert(html.includes('<details class="ex-reader-context ex-reader-sources"><summary>'));
   assert(!html.includes('ex-reader-sources" open'),'technical metadata starts collapsed');
+  assert(html.includes('<summary>节点信息与文档引用</summary>'));
+  assert(!html.includes('Main（分支连线）'),'technical disclosure does not repeat the source list');
+  assert(!html.includes('反向引用 (0)')&&!html.includes('暂无引用'),'empty references are omitted');
   assert(html.includes('data-ref="doc:notes/hypotheses/H-0001.md"'));
   assert(html.includes('data-ref="doc:notes/outcomes/3.md"'));
   assert(html.includes('data-ref="report:3"'));
@@ -60,6 +70,10 @@ def test_hypothesis_and_result_are_separate_and_placeholder_is_not_a_verdict():
   assert(!html.includes('Full scientific record'),'full report is read through one report entry');
   assert.equal((html.match(/阅读研究报告/g)||[]).length,3,'one report entry per recorded round');
   assert(html.includes('Parameter equality remains unresolved'));
+  // A missing creation Cycle stays unknown even if the node ID or result has a number.
+  delete sem.cycle;
+  latestGraph.events['node:click']({target:{id:'A'}});await tick();await tick();
+  assert(!elements['ex-reader'].innerHTML.includes('class="ex-reader-cycle"'));
   // Nonstandard legacy prose is kept, without trying to infer claim/conditions.
   delete sem.hypothesis_summary;
   nodes[0].text='# Distinct historical title\n\nUnstructured frozen science: x < y.';
@@ -82,7 +96,7 @@ def test_markdown_color_contrast_and_overflow_in_all_themes():
     from playwright.sync_api import sync_playwright
 
     body = '''<section class="ex-reader" style="width:420px;height:800px">
-    <div class="ex-reader-card"><header class="ex-reader-section-head"><h3>猜想</h3></header>
+    <div class="ex-hypothesis-details"><header class="ex-reader-section-head"><h3>猜想</h3></header>
     <span class="ex-verdict" data-verdict="supported">支持</span>
     <span class="ex-verdict" data-verdict="rejected">反驳</span>
     <span class="ex-verdict" data-verdict="open">尚无法判定</span>

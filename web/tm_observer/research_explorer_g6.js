@@ -626,10 +626,8 @@ function outcomeDetailsHtml(outcomes){
     '<button type="button" class="ex-ref ex-document-link" data-ref="'+esc(uri('report',outcome.cycle_id))+'">'+
     '阅读研究报告 <span aria-hidden="true">↗</span></button>'+
     '<button type="button" class="ex-ref" data-discuss-cycle="'+esc(outcome.cycle_id)+'">讨论这一轮</button></div></div></details>';
-  return '<section class="ex-reader-card ex-outcome-details" id="ex-outcome-details" aria-labelledby="ex-results-title">'+
-    '<header class="ex-reader-section-head"><span class="ex-section-number" aria-hidden="true">02</span><div>'+
-    '<h3 id="ex-results-title">研究结论 <span class="ex-result-count">'+records.length+' 轮</span></h3>'+
-    '<p>每轮检验得到了什么</p></div></header>'+
+  return '<section class="ex-outcome-details" id="ex-outcome-details" aria-labelledby="ex-results-title">'+
+    '<header class="ex-reader-section-head"><h3 id="ex-results-title">研究结论 <span class="ex-result-count">'+records.length+' 轮</span></h3></header>'+
     (records.length?records.map(detail).join(''):'<p class="ex-reader-empty">尚无本轮结论，等待研究与裁决。</p>')+'</section>';
 }
 // Highlight exactly two outgoing scientific hops within the visible graph.
@@ -1637,22 +1635,35 @@ function transitionOutcomeStatus(outcome){
 }
 function transitionSourcesHtml(sources){
   const ordered=[...sources].sort((a,b)=>(a.role==='main'?0:1)-(b.role==='main'?0:1));
-  return ordered.length?'<ul class="ex-transition-sources">'+ordered.map(source=>{
+  const link=source=>{
     const id=String(source.hypothesis_id||''),linked=index.nodes.find(n=>n.id===id);
-    const role=source.role==='main'?'主要承接':source.role==='other'?'补充来源':'前序来源';
     const title=source.title||linked?.semantic?.title||linked?.label||id;
-    const label=esc(title)+(title!==id?' <small>'+esc(id)+'</small>':'');
-    const target=linked?'<button type="button" class="ex-ref ex-transition-source-link" data-ref="'+
-      esc(uri('node',id))+'">'+label+'</button>':'<span>'+label+'</span>';
+    return linked?'<button type="button" class="ex-ref ex-transition-source-link" title="'+esc(title)+'" aria-label="'+esc(id+' · '+title)+'" data-ref="'+
+      esc(uri('node',id))+'">'+esc(id)+'</button>':'<span title="'+esc(title)+'">'+esc(id)+'</span>';
+  };
+  const group=(items,role,label)=>items.length?'<span class="ex-source-group" data-source-role="'+role+'"><span>'+label+'</span>'+items.map(link).join('')+'</span>':'';
+  const main=ordered.filter(s=>s.role==='main'),others=ordered.filter(s=>s.role!=='main');
+  return ordered.length?'<nav class="ex-transition-sources" aria-label="前序研究来源">'+
+    group(main,'main','主来源')+group(others,'other',main.length?'参考来源':'前序来源')+'</nav>':'';
+}
+function transitionSourceNotesHtml(sources){
+  const ordered=[...sources].sort((a,b)=>(a.role==='main'?0:1)-(b.role==='main'?0:1));
+  const notes=ordered.map(source=>{
+    const id=String(source.hypothesis_id||''),linked=index.nodes.find(n=>n.id===id);
+    const summary=linked?.semantic?.hypothesis_summary;
+    const claim=typeof summary==='string'?(/^主张：([\s\S]+)；条件：[\s\S]+；状态：[^\n]+。$/.exec(summary)?.[1]||summary):'';
     const records=(source.outcome_refs||[]).filter(outcome=>String(outcome.cycle_id||'').trim());
-    return '<li><span class="ex-transition-role">'+role+'</span>'+target+
-      (source.contribution?'<div class="ex-transition-contribution ex-md">'+mdHtml(source.contribution,null)+'</div>':'')+
-      (source.scientific_status?'<span class="ex-transition-status">整体猜想：'+
-        esc(transitionStatus(source.scientific_status))+'</span>':'')+
-      (records.length?'<details class="ex-transition-results"><summary>来源检验 · '+records.length+' 轮</summary>'+
+    return '<div class="ex-source-note" data-source-role="'+(source.role==='main'?'main':'other')+'">'+
+      '<h5>'+esc(id)+' <span>'+esc(source.title||linked?.label||'')+'</span></h5>'+
+      '<dl><div><dt>前序研究问题 <small>当前来源记录</small></dt><dd class="ex-md"'+(claim?' data-discussion-node="'+esc(id)+'"':'')+'>'+
+      (claim?mdHtml(claim,null):'<span class="ex-reader-empty">未记录问题概述，可点击来源查看原文。</span>')+'</dd></div>'+
+      (source.contribution?'<div><dt>本步承接</dt><dd class="ex-transition-contribution ex-md">'+mdHtml(source.contribution,null)+'</dd></div>':'')+'</dl>'+
+      (records.length?'<div class="ex-transition-results" aria-label="来源的检验记录">'+
         records.map(outcome=>'<button type="button" class="ex-ref" data-ref="'+esc(uri('report',outcome.cycle_id))+'">'+
-          'Cycle '+esc(outcome.cycle_id)+' · '+esc(transitionOutcomeStatus(outcome))+'</button>').join('')+'</details>':'')+'</li>';
-  }).join('')+'</ul>':'';
+          'Cycle '+esc(outcome.cycle_id)+' · '+esc(transitionOutcomeStatus(outcome))+'</button>').join('')+'</div>':'')+'</div>';
+  }).join('');
+  const missing=ordered.filter(s=>!s.contribution).map(s=>s.hypothesis_id);
+  return notes+(missing.length?'<p class="ex-source-notes-missing">'+esc(missing.join('、'))+' 未记录逐来源的承接说明；本步的总体变化见下方。</p>':'');
 }
 function researchTransitionHtml(node){
   const transition=researchTransition(node.semantic);
@@ -1670,11 +1681,11 @@ function researchTransitionHtml(node){
   if(transition){
     const fields=[['prior_gap','前序留下的问题'],
       ['current_change','这一步改变什么'],['why_now','为什么现在研究']];
-    content=transitionSourcesHtml(sources)+
+    content=transitionSourcesHtml(sources)+transitionSourceNotesHtml(sources)+
       '<dl class="ex-transition-facts">'+fields.map(([key,label])=>'<div><dt>'+label+
         '</dt><dd class="ex-md">'+mdHtml(transition[key],null)+'</dd></div>').join('')+'</dl>'+
-      (transition.goal_advance?'<details class="ex-transition-goal"><summary>推进目标</summary><div class="ex-md">'+
-        mdHtml(transition.goal_advance,null)+'</div></details>':'');
+      (transition.goal_advance?'<div class="ex-transition-goal"><h5>对研究目标的推进</h5><div class="ex-md">'+
+        mdHtml(transition.goal_advance,null)+'</div></div>':'');
   }else{
     content='<p class="ex-reader-empty">承接理由未记录。</p>'+transitionSourcesHtml(sources);
   }
@@ -1699,44 +1710,82 @@ function hypothesisReaderHtml(node,header,timeLine,key){
   const assessment=['supported','rejected','open'].includes(sem.scientific_status)&&
     sem.legacy_identity_review?.status!=='unadjudicated_whole_h'&&whole&&hasRecordedOutcome(whole)?
     '<div class="ex-whole-assessment">整体猜想裁决 '+readerVerdict(whole)+'</div>':
-    '<p class="ex-assessment-note">整体猜想尚无单独裁决，各轮结果见下方。</p>';
+    '';
   const dossier=sem.dossier_ref?readerDocumentButton(sem.dossier_ref,'查看完整猜想文档'):
     '<p class="ex-reader-empty">暂未关联可读取的猜想文档。</p>';
   const outcomes=sem.cycle_outcomes?.length?sem.cycle_outcomes:
     (sem.outcome&&String(sem.outcome.cycle_id??'').trim()?[sem.outcome]:[]);
-  return '<section class="ex-reader-card ex-hypothesis-details" id="ex-hypothesis-details" aria-labelledby="ex-hypothesis-title">'+
-    '<header class="ex-reader-section-head"><span class="ex-section-number" aria-hidden="true">01</span><div>'+
-    '<h3 id="ex-hypothesis-title">猜想</h3><p>这项研究要检验什么</p></div></header>'+
-    '<h2 class="ex-hypothesis-title">'+esc(node.label)+'</h2>'+timeLine+researchTransitionHtml(node)+body+
+  return '<section class="ex-hypothesis-details" id="ex-hypothesis-details" aria-labelledby="ex-hypothesis-title">'+
+    '<header class="ex-reader-section-head">'+(Number.isInteger(sem.cycle)&&sem.cycle>=0?'<p class="ex-reader-cycle">Cycle '+esc(sem.cycle)+'</p>':'')+'<h3 id="ex-hypothesis-title">猜想</h3></header>'+
+    '<div class="ex-hypothesis-heading"><h2 class="ex-hypothesis-title">'+esc(node.label)+'</h2>'+timeLine+'</div>'+researchTransitionHtml(node)+body+
     '<div class="ex-reader-documents">'+dossier+'</div></section>'+
     outcomeDetailsHtml(outcomes)+
     '<details class="ex-reader-context"><summary>研究分支 · '+esc(branchLabels[frontier])+'</summary>'+
     '<p class="muted">记录后续研究安排与收束原因。</p>'+
     (branchReasons.length?branchReasons.map(f=>'<p><strong>'+esc(branchLabels[f.status]||f.status)+
       '</strong> · '+esc(f.reason)+'</p>').join(''):'<p class="muted">暂无分支原因记录。</p>')+'</details>'+
-    '<details class="ex-reader-context ex-reader-sources"><summary>引用与节点信息</summary>'+assessment+nodeHeaderDisclosure(header.fields)+
-    (sem.lineage_summary?'<div class="ex-md">'+mdHtml(sem.lineage_summary,null)+'</div>':'')+
-    outbound(key)+refsBlock(key)+'</details>';
+    '<details class="ex-reader-context ex-reader-sources"><summary>节点信息与文档引用</summary>'+assessment+nodeHeaderDisclosure(header.fields)+
+    (index.references[key]?.length?outbound(key):'')+(index.backlinks[key]?.length?refsBlock(key):'')+'</details>';
 }
-let readingSourceVersion='',discussionRequest='';
+let readingSourceVersion='',discussionRequest='',discussionStatusTarget=null;
+// Keep interactive reader styling with the script served on each page load.
+const readingStyles=`
+.ex-hypothesis-details,.ex-outcome-details{min-width:0;margin:0 0 22px}
+.ex-outcome-details{border-top:1px solid var(--read-border);padding-top:24px;margin-top:30px}
+.ex-reader .ex-reader-section-head{display:block;margin:0 0 16px}
+.ex-reader .ex-reader-section-head h3{font-size:22px;line-height:1.4;font-weight:700;color:var(--read-text)}
+.ex-reader .ex-reader-cycle{margin:0 0 5px;font-size:12px;font-weight:650;color:var(--read-blue);font-variant-numeric:tabular-nums}
+.ex-hypothesis-heading{border-left:3px solid var(--read-blue);padding:2px 0 2px 14px;margin-bottom:24px}
+.ex-reader .ex-hypothesis-heading .ex-hypothesis-title{font-size:24px;line-height:1.45;margin:0 0 10px;color:var(--read-text);font-weight:700}
+html[data-sciver-theme] .ex-reader .ex-hypothesis-heading .ex-node-time{margin:0}
+.ex-outcome-details .ex-cycle-result:first-of-type{border-top:0;margin-top:0;padding-top:0}
+.ex-reader .ex-research-transition{padding:0;border:0;border-radius:0;background:transparent;margin-bottom:24px}
+.ex-transition-sources{display:flex;gap:18px;align-items:baseline;overflow-x:auto;white-space:nowrap;margin:0 0 20px;padding:0 0 4px;font-size:12px;scrollbar-width:thin}
+.ex-source-group{display:inline-flex;gap:9px;align-items:baseline}
+[data-source-role="main"]{--source-color:var(--read-blue)}
+[data-source-role="other"]{--source-color:var(--read-teal)}
+.ex-source-group{color:var(--source-color)}
+.ex-source-group>span:first-child{font-size:11px;color:var(--read-muted)}
+html[data-sciver-theme] .ex-reader .ex-source-group .ex-transition-source-link{margin:0;padding:0;border:0;border-radius:0;background:transparent;color:inherit;font:inherit;text-decoration:underline;text-underline-offset:3px;white-space:nowrap}
+.ex-source-note{margin:0 0 20px}
+.ex-reader .ex-source-note h5{margin:0 0 9px;font-size:12px;color:var(--source-color);line-height:1.6}
+.ex-source-note h5 span{font-weight:500;color:var(--read-muted)}
+.ex-source-note dl,.ex-source-note dd{margin:0}
+.ex-source-note dl>div+div{margin-top:10px}
+.ex-source-note dt,.ex-reader .ex-transition-goal h5{margin:0 0 5px;font-size:12px;font-weight:650;color:var(--read-muted)}
+.ex-source-note dt small{margin-left:6px;font-size:10px;font-weight:400}
+html[data-sciver-theme] .ex-reader .ex-source-note .ex-md{font-size:13px;line-height:1.75}
+.ex-source-note .ex-transition-results{margin-top:7px}
+.ex-source-notes-missing{font-size:11px;line-height:1.7;color:var(--read-muted);margin:0 0 20px}
+.ex-reader .ex-transition-goal{margin-top:16px;color:var(--read-text)}
+.ex-selection-popover{position:absolute;z-index:1000;max-width:min(280px,calc(100% - 16px));padding:5px;border:1px solid var(--read-border);border-radius:9px;background:var(--read-card);color:var(--read-text);box-shadow:0 4px 18px #0005}
+.ex-selection-popover[hidden]{display:none}
+.ex-selection-popover button{border:0;border-radius:5px;padding:6px 9px;background:transparent;color:inherit;cursor:pointer;font:inherit}
+.ex-selection-popover button:hover,.ex-selection-popover button:focus-visible{background:var(--read-soft)}
+.ex-selection-popover p{margin:2px 9px 5px;font-size:12px;line-height:1.4}
+.ex-selection-popover p:empty{display:none}
+@media(max-width:600px){.ex-reader .ex-hypothesis-heading .ex-hypothesis-title{font-size:21px}.ex-transition-sources{gap:14px}}
+`;
 function discussionTools(){
-  return '<div class="ex-reader-context" data-discussion-tools><button type="button" class="ex-ref" data-discuss-object>围绕此处讨论</button>'+
-    '<button type="button" class="ex-ref" data-discuss-selection>引用选中文字讨论</button>'+
-    '<p class="muted" data-discussion-status role="status">来源会加入聊天草稿，发送后开始讨论。</p></div>';
+  return '<style data-reader-interactions>'+readingStyles+'</style>'+
+    '<div class="ex-selection-popover" data-selection-popover hidden><button type="button" data-discuss-selection>引用选中文字讨论</button>'+
+    '<p data-selection-status role="status"></p></div>';
 }
-function discussReading(source){
+function discussReading(source,statusTarget){
   discussionRequest=String(Date.now())+Math.random();
-  const status=reader.querySelector('[data-discussion-status]');
+  const status=statusTarget||reader.querySelector('[data-discussion-status]');
+  discussionStatusTarget=status;
   if(status)status.textContent='正在核验讨论来源…';
   window.dispatchEvent(new CustomEvent('sciver-chat-reference',{detail:{task_id:taskId,request_id:discussionRequest,source}}));
 }
 window.addEventListener('sciver-chat-reference-result',event=>{
   if(event.detail?.request_id!==discussionRequest)return;
-  const status=reader.querySelector('[data-discussion-status]');
+  const status=discussionStatusTarget;
   if(status)status.textContent=event.detail.error||'来源已加入聊天草稿；可以继续输入问题。';
 });
 async function navigate(kind,id,anchor='',options={}){
   if(!index)return;
+  discussionStatusTarget=null;
   if(kind==='node'&&!index.nodes.some(n=>n.id===id))return;
   if(kind==='edge'&&!index.edges.some(e=>ID(e.id||e.fromNode+'->'+e.toNode)===id))return;
   if(['doc','report'].includes(kind))mobileReadingRequested=true;
@@ -1858,27 +1907,65 @@ async function navigate(kind,id,anchor='',options={}){
   if(options.record!==false)rememberAfter(Boolean(options.recordCamera));
   else if(!restoring)syncBrowserLocation(false);
 }
+function showReadingSelection(){
+  const popover=reader.querySelector('[data-selection-popover]');
+  if(!popover)return;
+  const selection=window.getSelection();
+  if(!selection||selection.isCollapsed||!selection.rangeCount||!selection.toString().trim()||
+      !reader.contains(selection.anchorNode)||!reader.contains(selection.focusNode)){
+    popover.hidden=true;return;
+  }
+  const range=selection.getRangeAt(0),bounds=reader.getBoundingClientRect();
+  const rects=Array.from(range.getClientRects()).filter(r=>r.width&&r.height&&
+    r.bottom>bounds.top&&r.top<bounds.bottom&&r.right>bounds.left&&r.left<bounds.right);
+  if(!rects.length){popover.hidden=true;return;}
+  const rect=rects[0];
+  popover.hidden=false;
+  const status=popover.querySelector('[data-selection-status]');
+  if(status)status.textContent='';
+  const size=popover.getBoundingClientRect();
+  const left=Math.max(bounds.left+8,Math.min(rect.right-size.width,bounds.right-size.width-8,window.innerWidth-size.width-8));
+  const above=rect.top-size.height-8;
+  const top=Math.max(bounds.top+8,above>=bounds.top?above:Math.min(rect.bottom+8,bounds.bottom-size.height-8));
+  popover.style.left=(left-bounds.left-reader.clientLeft+reader.scrollLeft)+'px';
+  popover.style.top=(top-bounds.top-reader.clientTop+reader.scrollTop)+'px';
+}
+function readingSelectionSource(selection){
+  const scope=node=>(node?.nodeType===1?node:node?.parentElement)?.closest('[data-discussion-node]');
+  const start=scope(selection?.anchorNode),end=scope(selection?.focusNode);
+  return start===end?{id:start?.dataset.discussionNode||''}:null;
+}
+reader.addEventListener('pointerup',e=>{if(!e.target.closest('[data-selection-popover]'))requestAnimationFrame(showReadingSelection);});
+reader.addEventListener('keyup',e=>{if(!e.target.closest('[data-selection-popover]'))requestAnimationFrame(showReadingSelection);});
+reader.addEventListener('scroll',()=>{const popover=reader.querySelector('[data-selection-popover]');if(popover)popover.hidden=true;});
+document.addEventListener('selectionchange',()=>{
+  const selection=window.getSelection(),popover=reader.querySelector('[data-selection-popover]');
+  if(popover&&(!selection||selection.isCollapsed||!reader.contains(selection.anchorNode)||!reader.contains(selection.focusNode)))popover.hidden=true;
+});
 reader.addEventListener('pointerdown',e=>{
-  if(e.target.closest('[data-discuss-selection]'))e.preventDefault();
+  if(e.target.closest('[data-selection-popover] button'))e.preventDefault();
 });
 reader.addEventListener('click',async e=>{
   const cycle=e.target.closest('[data-discuss-cycle]');
   if(cycle){discussReading({kind:'report',id:cycle.dataset.discussCycle,section:'',quote:''});return;}
-  if(e.target.closest('[data-discuss-object],[data-discuss-selection]')){
+  if(e.target.closest('[data-discuss-selection]')){
     if(!selected||!['node','doc','report'].includes(selected.kind))return;
     const source={kind:selected.kind,id:selected.id,section:selected.kind==='node'?'':selected.anchor||'',quote:''};
     if(readingSourceVersion)source.source_version=readingSourceVersion;
-    if(e.target.closest('[data-discuss-selection]')){
+    {
       const selection=window.getSelection();
       const quote=selection?.toString().trim()||'';
-      const status=reader.querySelector('[data-discussion-status]');
+      const status=reader.querySelector('[data-selection-status]');
       if(!quote||!reader.contains(selection.anchorNode)||!reader.contains(selection.focusNode)){
         if(status)status.textContent='请先选中当前正文中的文字。';return;
       }
+      const scope=readingSelectionSource(selection);
+      if(!scope){if(status)status.textContent='请在同一来源的正文内选择文字。';return;}
+      if(scope.id){source.kind='node';source.id=scope.id;source.section='';delete source.source_version;}
       if(quote.length>4000){if(status)status.textContent='每次最多引用 4000 字，请缩短选段。';return;}
       source.quote=quote;
     }
-    discussReading(source);return;
+    discussReading(source,reader.querySelector('[data-selection-status]'));return;
   }
   if(e.target.closest('[data-doc-back]')){
     showMobileGraph();

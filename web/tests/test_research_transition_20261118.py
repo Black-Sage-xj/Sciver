@@ -87,11 +87,14 @@ def test_reader_shows_frozen_transition_before_claim_and_source_clicks_navigate(
     current_change:change,why_now:'The last bounded comparison isolated this ambiguity.',
     goal_advance:'Distinguish the two physical mechanisms.'});
   nodes[0].semantic={type:'Hypothesis',title:'Edited source A',scientific_status:'rejected',
+    hypothesis_summary:'主张：Current source A asks whether the bounded response identifies the mechanism；条件：Independent trajectories；状态：待检验。',
     research_transition:transition([],'Start from interval-dependent covariance')};
-  nodes[1].semantic={type:'Hypothesis',title:'Edited source B',scientific_status:'none'};
+  nodes[1].semantic={type:'Hypothesis',title:'Edited source B',scientific_status:'none',
+    hypothesis_summary:'Current source B asks whether another explanation remains possible < now.'};
   nodes[2].label='Interval-dependent covariance';
-  nodes[2].semantic={type:'Hypothesis',title:nodes[2].label,
+  nodes[2].semantic={type:'Hypothesis',cycle:4,title:nodes[2].label,
     hypothesis_summary:'主张：Interval identifies the mechanism；条件：Independent trajectories；状态：待检验。',
+    lineage_summary:'### 前序来源\n\n- Main（分支连线）：A\n- 其它（仅追溯）：B',
     research_transition:transition([
       {hypothesis_id:'B',role:'other',title:'Frozen unresolved comparison',scientific_status:'open',
         contribution:'This alternative explains the same observation < differently',outcome_refs:[]},
@@ -109,17 +112,38 @@ def test_reader_shows_frozen_transition_before_claim_and_source_clicks_navigate(
   const html=elements['ex-reader'].innerHTML;
   const transitionSection=html.slice(html.indexOf('class="ex-research-transition"'),html.indexOf('class="ex-hypothesis-facts"'));
   assert(transitionSection.includes('为什么研究到这里'),'reason is above the scientific claim');
-  for(const label of ['前序留下的问题','这一步改变什么','为什么现在研究','推进目标'])assert(transitionSection.includes(label));
+  assert(html.includes('<p class="ex-reader-cycle">Cycle 4</p><h3 id="ex-hypothesis-title">猜想</h3>'));
+  assert(!html.includes('ex-reader-card')&&!html.includes('ex-reader-step'),'reader does not add numbered card layers');
+  for(const label of ['前序留下的问题','这一步改变什么','为什么现在研究','对研究目标的推进'])assert(transitionSection.includes(label));
+  assert(transitionSection.includes('<div class="ex-transition-goal"><h5>对研究目标的推进</h5>'));
+  assert(!transitionSection.includes('<details'),'source context and goal stay visible');
+  assert(transitionSection.includes('Distinguish the two physical mechanisms.'));
   assert(transitionSection.includes('Vary observation interval &lt; 2 seconds'),'original text is safely rendered');
-  assert(transitionSection.includes('主要承接')&&transitionSection.includes('补充来源'));
+  const sourceNav=transitionSection.match(/<nav class="ex-transition-sources"[^>]*>[\s\S]*?<\/nav>/)?.[0];
+  assert(sourceNav,'sources use one compact navigation row');
+  assert(sourceNav.includes('data-source-role="main"')&&sourceNav.includes('data-source-role="other"'));
+  assert(sourceNav.includes('主来源')&&sourceNav.includes('参考来源'));
+  assert(sourceNav.includes('data-ref="node:A">A</button>')&&sourceNav.includes('data-ref="node:B">B</button>'));
+  assert.equal((sourceNav.match(/data-ref=/g)||[]).length,2,'each source gets one compact link');
+  assert(sourceNav.indexOf('node:A')<sourceNav.indexOf('node:B'),'main source precedes references');
+  assert(!sourceNav.includes('来源检验')&&!sourceNav.includes('整体猜想'));
   assert(transitionSection.includes('This alternative explains the same observation &lt; differently'));
   assert(transitionSection.indexOf('Frozen supported model')<transitionSection.indexOf('Frozen unresolved comparison'));
-  assert(transitionSection.includes('整体猜想：支持')&&transitionSection.includes('整体猜想：尚无法判定'));
+  assert(transitionSection.includes('前序研究问题 <small>当前来源记录</small>'));
+  assert(transitionSection.includes('data-discussion-node="A"')&&transitionSection.includes('data-discussion-node="B"'));
+  assert(transitionSection.includes('Current source A asks whether the bounded response identifies the mechanism'));
+  assert(transitionSection.includes('Current source B asks whether another explanation remains possible &lt; now.'));
+  assert(!transitionSection.includes('Independent trajectories'),'source problem uses the explicit claim rather than repeating its scope');
+  assert.equal((transitionSection.match(/<dt>本步承接<\/dt>/g)||[]).length,1,'only the recorded per-source contribution is rendered');
+  assert(transitionSection.includes('A 未记录逐来源的承接说明；本步的总体变化见下方。'));
+  assert(!transitionSection.includes('整体猜想：'),'the source list does not repeat whole-H status');
   assert(!transitionSection.includes('Edited source'),'snapshot titles and states do not follow later source edits');
   assert(!transitionSection.includes('失败')&&!transitionSection.includes('rejected'));
   assert(transitionSection.includes('data-ref="node:A"')&&transitionSection.includes('data-ref="node:B"'));
   assert(transitionSection.includes('data-ref="report:1"')&&transitionSection.includes('Cycle 1 · 支持'));
   assert(!transitionSection.includes('theory-master/research-transition')&&!transitionSection.includes('"sources"'));
+  assert(!html.includes('Main（分支连线）')&&!html.includes('其它（仅追溯）'),'technical information does not duplicate lineage');
+  assert(!html.includes('文档引用 (0)')&&!html.includes('反向引用 (0)')&&!html.includes('暂无引用'),'empty reference groups are omitted');
   const card=elements['ex-outcome-cards'].children.find(c=>c.dataset.nodeId==='C');
   assert(card.children[0].children.some(part=>part.textContent==='Interval-dependent covariance'));
   assert(card.children[0].children.some(part=>part.className==='ex-outcome-transition'&&part.textContent.includes('Vary observation interval')));
@@ -139,13 +163,13 @@ def test_reader_shows_frozen_transition_before_claim_and_source_clicks_navigate(
   elements['ex-reader'].listeners.click({target:{closest:selector=>selector==='[data-ref]'?sourceLink:null}});
   await tick();await tick();
   assert.equal(history.state.tmExplorerView.selected.id,'A');
-  assert(!elements['ex-reader'].innerHTML.includes('ex-research-transition'),
+  assert(!elements['ex-reader'].innerHTML.includes('class="ex-research-transition"'),
     'an explicit source-free record does not give the initial hypothesis a predecessor rationale');
   assert(!elements['ex-reader'].innerHTML.includes('Start from interval-dependent covariance'));
   assert.equal(JSON.stringify(nodes),before,'hidden root motivation remains in the scientific record');
   // Another source-free root has no transition record and is not first in node order.
   latestGraph.events['node:click']({target:{id:'B'}});await tick();await tick();
-  assert(!elements['ex-reader'].innerHTML.includes('ex-research-transition'));
+  assert(!elements['ex-reader'].innerHTML.includes('class="ex-research-transition"'));
   assert(!elements['ex-reader'].innerHTML.includes('承接理由未记录。'));
   // A recorded supplementary H source remains visible in the reader, while
   // external references and edges from external nodes are not H predecessors.
@@ -171,7 +195,8 @@ def test_reader_shows_frozen_transition_before_claim_and_source_clicks_navigate(
   ],'');
   latestGraph.events['node:click']({target:{id:'C'}});await tick();await tick();
   const unfinished=elements['ex-reader'].innerHTML;
-  assert(unfinished.includes('整体猜想：尚无整体裁决')&&unfinished.includes('Cycle 7 · 未裁决'));
+  assert(unfinished.includes('Cycle 7 · 未裁决'));
+  assert(!unfinished.includes('整体猜想：'),'whole-H source status stays out of the compact reader');
   assert(!unfinished.includes('整体猜想：尚无法判定')&&!unfinished.includes('失败'));
   const fallbackCard=elements['ex-outcome-cards'].children.find(c=>c.dataset.nodeId==='C');
   assert(fallbackCard.children[0].children.some(part=>part.className==='ex-outcome-transition'&&part.textContent.includes('last bounded comparison')));
@@ -213,7 +238,8 @@ def test_supplementary_sources_stay_in_reader_without_graph_ports_or_edges():
   const html=elements['ex-reader'].innerHTML;
   assert(html.includes('data-ref="node:A"')&&html.includes('data-ref="node:B"'),
     'legacy records retain both navigable sources in the reader');
-  assert(html.includes('主要承接')&&html.includes('补充来源'));
+  assert(html.includes('主来源')&&html.includes('参考来源'));
+  assert(html.includes('data-source-role="main"')&&html.includes('data-source-role="other"'));
   assert.equal(line('AC').style.visibility,'visible');
   assert.equal(latestGraph.renders,renders,'focus does not rebuild the tree');
   assert.equal(JSON.stringify(latestGraph.data.nodes.map(n=>[n.id,n.style.x,n.style.y])),positions);

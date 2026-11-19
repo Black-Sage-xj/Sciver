@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import tempfile
 import threading
@@ -163,6 +164,23 @@ class ResearchChatSourceTests(unittest.TestCase):
         from playwright.sync_api import sync_playwright, expect
         from tm_observer.web import StateCache
 
+        (self.vault / 'notes/hypotheses').mkdir()
+        (self.vault / 'notes/hypotheses/H-0001.md').write_text('# A conjecture\n\n<!-- frozen-cycle:1 -->\n')
+        with ScienceGraphStore(self.database) as store:
+            store.add_hypothesis('H-0000', title='Predecessor mechanism',
+                                 summary='主张：Earlier mechanism remains unresolved；条件：Bounded observations；状态：待检验。')
+            store.add_hypothesis('H-0002', title='Alternative interpretation', summary='An alternative remains open.')
+            store.add_evolution(edge_id='main', source='H-0000', target='H-0001', lineage_role='main')
+            store.add_evolution(edge_id='ref', source='H-0002', target='H-0001', lineage_role='other')
+            store.record_research_transition('H-0001', {
+                'transition': {'prior_gap': 'Existing observations do not identify the mechanism.',
+                               'current_change': 'Compare a bounded proposition under the same observations.',
+                               'source_contributions': {'H-0000': 'Carries the unresolved mechanism into the new comparison.',
+                                                        'H-0002': 'Provides an alternative for the same comparison.'}},
+                'why_now': 'Both interpretations can now be compared.',
+                'goal_advance': 'Identify which observation distinguishes the interpretations.',
+            })
+            store.register_cycle_hypothesis(cycle_id='1', hypothesis_id='H-0001')
         catalog = {"available_models": ["gpt-6-sol"], "available_reasoning_efforts": ["medium"],
                    "model_reasoning_efforts": {"gpt-6-sol": ["medium"]}}
         fake_graph = """window.G6={Graph:class {
@@ -220,14 +238,43 @@ class ResearchChatSourceTests(unittest.TestCase):
                     page.wait_for_timeout(100)
                 self.fail("The offline browser send did not reach the HTTP boundary")
             page.goto(origin + "/research-explorer/?observer_id=" + self.task_id + "#report%3A1%23results")
-            expect(page.locator("[data-discuss-object]")).to_be_visible()
+            def select_reader_text():
+                expect(page.locator('#ex-reader .ex-document-title, #ex-reader .ex-hypothesis-title')).to_be_visible()
+                page.locator('#ex-reader .ex-document-title, #ex-reader .ex-hypothesis-title').scroll_into_view_if_needed()
+                page.evaluate("""() => {
+                  const reader=document.querySelector('#ex-reader');
+                  const text=reader.querySelector('.ex-hypothesis-title, .ex-md pre').firstChild;
+                  const range=document.createRange();
+                  if(reader.querySelector('.ex-hypothesis-title')) range.selectNodeContents(text);
+                  else { const start=text.textContent.indexOf('bounded'); range.setStart(text,start);range.setEnd(text,start+7); }
+                  const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+                  reader.dispatchEvent(new PointerEvent('pointerup', {bubbles:true}));
+                }""")
+                expect(page.locator('[data-selection-popover]')).to_be_visible()
+                self.assertTrue(page.evaluate("""() => {
+                  const p=document.querySelector('[data-selection-popover]').getBoundingClientRect();
+                  const r=document.querySelector('#ex-reader').getBoundingClientRect();
+                  return p.left>=r.left && p.right<=r.right && p.top>=r.top && p.bottom<=r.bottom;
+                }"""))
+            title = page.locator('#ex-reader .ex-document-title')
+            expect(title).to_be_visible()
+            box = title.bounding_box()
+            page.mouse.move(box['x'] + 3, box['y'] + box['height'] / 2)
+            page.mouse.down()
+            page.mouse.move(box['x'] + 45, box['y'] + box['height'] / 2, steps=6)
+            page.mouse.up()
+            expect(page.locator('[data-selection-popover]')).to_be_visible()
+            select_reader_text()
+            expect(page.locator("[data-discuss-selection]")).to_be_visible()
             page.locator("#sc-chat-launcher").click()
             frame = page.frame_locator("#sc-chat-frame")
             direct = frame.locator("[data-research-prompt]")
             direct.fill("My existing draft")
             page.locator("#sc-chat-minimize").click()
-            page.locator("[data-discuss-object]").click()
+            select_reader_text()
+            page.locator("[data-discuss-selection]").click()
             expect(frame.locator(".tm-research-direct-sources>div")).to_have_count(1)
+            expect(frame.locator('.tm-research-direct-sources blockquote')).to_have_text('bounded')
             expect(direct).to_have_value("My existing draft")
             page.locator("#sc-chat-minimize").click()
             page.evaluate("""() => {
@@ -235,6 +282,7 @@ class ResearchChatSourceTests(unittest.TestCase):
               const start=text.textContent.indexOf('A **bounded** result');
               const range=document.createRange();range.setStart(text,start);range.setEnd(text,start+21);
               const selection=getSelection();selection.removeAllRanges();selection.addRange(range);
+              document.querySelector('#ex-reader').dispatchEvent(new PointerEvent('pointerup', {bubbles:true}));
             }""")
             page.locator("[data-discuss-selection]").click()
             expect(frame.locator(".tm-research-direct-sources>div")).to_have_count(2)
@@ -247,8 +295,10 @@ class ResearchChatSourceTests(unittest.TestCase):
             page.locator("#sc-chat-minimize").click()
             page.evaluate("location.hash='node%3AH-0001'")
             expect(page.locator(".ex-hypothesis-title")).to_have_text("A conjecture")
-            page.locator("[data-discuss-object]").click()
+            select_reader_text()
+            page.locator("[data-discuss-selection]").click()
             expect(frame.locator(".tm-research-direct-sources>div")).to_have_count(2)
+            expect(frame.locator('.tm-research-direct-sources blockquote').last).to_have_text('A conjecture')
             sends_released[0].set()
             composer = frame.get_by_role("textbox", name="发送给 Sciver 的消息")
             expect(composer).to_be_visible()
@@ -259,8 +309,10 @@ class ResearchChatSourceTests(unittest.TestCase):
             page.locator("#sc-chat-minimize").click()
             page.evaluate("location.hash='node%3AH-0001'")
             expect(page.locator(".ex-hypothesis-title")).to_have_text("A conjecture")
-            page.locator("[data-discuss-object]").click()
+            select_reader_text()
+            page.locator("[data-discuss-selection]").click()
             expect(frame.locator(".tm-aui-reading-source")).to_have_count(1)
+            expect(frame.locator('.tm-aui-reading-source blockquote')).to_have_text('A conjecture')
             expect(composer).to_have_value("Keep this second draft")
             self.assertEqual(accepted[0]["sources"][0]["kind"], "report")
             page.evaluate("""() => document.querySelector('#sc-chat-frame').contentWindow.postMessage({
@@ -278,7 +330,8 @@ class ResearchChatSourceTests(unittest.TestCase):
             composer.press("Enter")
             wait_for_send(1)
             page.locator("#sc-chat-minimize").click()
-            page.locator("[data-discuss-object]").click()
+            select_reader_text()
+            page.locator("[data-discuss-selection]").click()
             expect(frame.locator(".tm-aui-reading-source")).to_have_count(2)
             sends_released[1].set()
             expect(frame.locator(".tm-aui-reading-source")).to_have_count(1)
@@ -296,6 +349,34 @@ class ResearchChatSourceTests(unittest.TestCase):
             expect(editor).to_have_count(0)
             self.assertEqual(accepted[-1]["content"], "Edited question")
             self.assertEqual(len(accepted[-1]["sources"]), 1)
+            page.locator('#sc-chat-minimize').click()
+            page.locator('#ex-reader').evaluate('e=>e.scrollTop=0')
+            expect(page.locator('.ex-reader-cycle')).to_have_text('Cycle 1')
+            for theme in ('black', 'blue', 'white'):
+                page.evaluate('t=>document.documentElement.setAttribute("data-sciver-theme",t)', theme)
+                main_color = page.locator('.ex-source-group[data-source-role="main"] button').evaluate('e=>getComputedStyle(e).color')
+                ref_color = page.locator('.ex-source-group[data-source-role="other"] button').evaluate('e=>getComputedStyle(e).color')
+                self.assertNotEqual(main_color, ref_color)
+                self.assertEqual(page.locator('.ex-research-transition').evaluate('e=>getComputedStyle(e).borderTopWidth'), '0px')
+                if os.environ.get('SCIVER_READER_PREVIEW'):
+                    page.locator('#ex-reader').screenshot(path=os.environ['SCIVER_READER_PREVIEW'] + '-' + theme + '.png')
+            for selector, expected_quote, expected_node in (
+                ('[data-discussion-node="H-0000"]', 'Earlier mechanism remains unresolved', 'H-0000'),
+                ('.ex-transition-contribution', 'Carries the unresolved mechanism into the new comparison.', 'H-0001'),
+            ):
+                paragraph = page.locator(selector).first
+                paragraph.scroll_into_view_if_needed()
+                paragraph.evaluate('''e=>{
+                  const range=document.createRange();range.selectNodeContents(e);
+                  const s=getSelection();s.removeAllRanges();s.addRange(range);
+                  e.dispatchEvent(new PointerEvent('pointerup',{bubbles:true}));
+                }''')
+                page.locator('[data-discuss-selection]').click()
+                expect(frame.locator('.tm-aui-reading-source')).to_have_count(1)
+                expect(frame.locator('.tm-aui-reading-source blockquote')).to_have_text(expected_quote)
+                expect(frame.locator('.tm-aui-reading-source>a')).to_have_attribute('href', re.compile('node%3A' + expected_node))
+                frame.locator('.tm-aui-reading-source button').click()
+                page.locator('#sc-chat-minimize').click()
             browser.close()
 
 
