@@ -79,6 +79,25 @@ class ResourceFeasibilityPromptTests(unittest.TestCase):
             self.assertIn("Match uncertainty and proof precision to the scientific distinction claimed", prompt)
             self.assertNotIn("381", prompt)
 
+    def test_input_caps_leave_a_bounded_path_for_invalid_technical_reads(self):
+        lead = self.prompts("research_lead", "frontier_proposal", {
+            "goal": "Audit a small read-only CSV",
+        })
+        challenger = self.prompts("challenger", "candidate_review", {
+            "candidate": [{"hypothesis": "H", "scope": "S",
+                           "decisive_test": "Inspect a small read-only CSV"}],
+        })
+        for prompt in lead:
+            self.assertIn("task-proportionate resource upper bound", prompt)
+            self.assertIn("do not invent a one-attempt read or scan limit", prompt)
+            self.assertIn("technical read or parse fails without a valid result", prompt)
+            self.assertIn("explicit human or scientifically necessary cap", prompt)
+        for prompt in challenger:
+            self.assertIn("one-attempt input-read limit", prompt)
+            self.assertIn("bounded technical retry path", prompt)
+            self.assertIn("explicit human cap forbids it", prompt)
+            self.assertIn("leave the test unchanged", prompt)
+
     def test_challenger_distinguishes_scientific_design_failure_from_unknown_work(self):
         for prompt in self.prompts("challenger", "candidate_review",
                                    {"candidate": [{"hypothesis": "H", "scope": "S",
