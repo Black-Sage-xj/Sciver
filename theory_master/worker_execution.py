@@ -145,9 +145,11 @@ def run_once(spec: Any, worker_id: str, claim_id: str, epoch: int, *,
             # early because its cycle_dir is still None.
             workflow._bind_cycle(target, create=False)
             workflow._restore_resumed_cycle_routes(state)
-            # Worker resume bypasses Workflow.resume_cycle(); restore human
-            # guidance explicitly or the approval is silently omitted.
-            state = worker_direction._restore_cycle_operator_guidance(state, target)
+            # Worker and single-controller Resume share the same recovery and
+            # guidance preparation. Only worker_action consumed the old pause;
+            # the child must preserve any control written after that request.
+            from .resume_preparation import prepare_resume_recovery
+            state = prepare_resume_recovery(state, target)
             result = workflow._run_cycle(resume_state=state)
         else:
             result = workflow._run_cycle()

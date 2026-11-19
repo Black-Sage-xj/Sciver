@@ -796,17 +796,9 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
             if pending_action == "abandon_cycle":
                 raise ValueError("Cycle abandonment is pending; Resume is forbidden")
             control.unlink()
-        recovery = dict(state.get("recovery") or {})
-        recovery.update({"action": "resume", "resumed_at": now(), "allow_thread_fallback": True})
-        from .attention_guidance import load_attention_guidance
-        guidance = load_attention_guidance(cycle)
-        if guidance is not None and str(guidance.get("status") or "pending") != "consumed":
-            state["operator_guidance"] = guidance
-            state["operator_guidance_pending"] = True
-            recovery["attention_guidance"] = {
-                "source": guidance.get("source"), "path": guidance.get("path"),
-                "attention_code": guidance.get("attention_code"),
-            }
+        from .resume_preparation import prepare_resume_recovery
+        prepare_resume_recovery(state, cycle)
+        recovery = state["recovery"]
         if precheckpoint_restart:
             recovery.update({
                 "precheckpoint_restart": True,

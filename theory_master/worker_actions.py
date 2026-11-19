@@ -197,6 +197,10 @@ def worker_action(
         old = multi_worker._read_json(root / cycle / "research_state.json")
         if not worker_store._checkpoint_matches_claim(old, worker_id, claim_record, cycle):
             raise ValueError("Worker and scientific Cycle identity mismatch")
+        if old.get("abandoned_cycle") or old.get("phase") == "abandon_requested":
+            raise ValueError("Cycle abandonment forbids Worker Resume")
+        from .resume_preparation import snapshot_resume_control, consume_resume_control
+        pending_resume_control = snapshot_resume_control(root / str(cycle))
         if (provider_fallback == "Codex" and str(old.get("status") or "").lower() == "paused"
                 and (old.get("recovery") or {}).get("reason") == "multi_worker_operator"):
             from .service_provider_switch import selected_service_preference
@@ -258,6 +262,9 @@ def worker_action(
                 refreshed.get("hypothesis_id") != claim_record.get("hypothesis_id"):
             raise ValueError("reissued Cycle claim changed Cycle/H identity; manual recovery required")
         token = (refreshed["claim_id"], refreshed["fencing_epoch"])
+        consumed_control = consume_resume_control(root / str(cycle), pending_resume_control,
+            authorization={"action": "resume", "worker_id": worker_id, "cycle_id": str(cycle),
+                           "claim_id": token[0], "fencing_epoch": token[1]})
         worker_store.save_worker(root, worker_id, claim_id=token[0], epoch=token[1], pid=None, pid_start_ticks=None)
         env = worker_launch._task_scoped_process_env(root)
         env.pop("THEORYMASTER_QUOTA_PROVIDER_FALLBACK", None)
@@ -282,4 +289,5 @@ def worker_action(
                 "pid": worker_store.read_worker(root, worker_id).get("pid"),
                 "account": w.get("account"), "migration": migration,
                 "cycle": str(cycle), "hypothesis_id": refreshed.get("hypothesis_id"),
-                "claim_id": token[0], "epoch": token[1]}
+                "claim_id": token[0], "epoch": token[1],
+                "superseded_control": consumed_control}

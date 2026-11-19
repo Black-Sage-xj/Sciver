@@ -47,6 +47,7 @@ _RUNTIME_SOURCE_MODULES = {
     "native_goal_recovery.py": "theory_master.native_goal_recovery",
     "hypothesis_lineage.py": "theory_master.hypothesis_lineage",
     "workflow_support.py": "theory_master.workflow_support",
+    "resume_preparation.py": "theory_master.resume_preparation",
     "supervisor_repair_receipts.py": "theory_master.supervisor_repair_receipts",
     "supervisor_native_goal_recovery.py": "theory_master.supervisor_native_goal_recovery",
     "supervisor_lineage_recovery.py": "theory_master.supervisor_lineage_recovery",

@@ -166,14 +166,5 @@ def detect_critical_knowledge_change(spec: Any, *, plan_digest: str,
 
 def _restore_cycle_operator_guidance(state: dict[str, Any], cycle_dir: Path) -> dict[str, Any]:
     """Inject pending human guidance when Worker resumes an existing Cycle."""
-    from .attention_guidance import load_attention_guidance
-    guidance = load_attention_guidance(cycle_dir)
-    if guidance is not None and str(guidance.get("status") or "pending") != "consumed":
-        state["operator_guidance"] = guidance
-        state["operator_guidance_pending"] = True
-        state.setdefault("recovery", {})["attention_guidance"] = {
-            "source": guidance.get("source"),
-            "path": guidance.get("path"),
-            "attention_code": guidance.get("attention_code"),
-        }
-    return state
+    from .resume_preparation import restore_operator_guidance
+    return restore_operator_guidance(state, cycle_dir)
