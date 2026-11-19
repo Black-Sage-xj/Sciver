@@ -87,7 +87,7 @@ MINIMAL_FRONTIER_PROPOSAL_SCHEMA = {
         "lineage_main_node_id": "one existing SQLite H ID; determines the branch connection",
         "lineage_other_node_ids": "0–2 other existing SQLite H IDs; details only, no branch connections",
         "evolution_operator": "required typed lineage operator for a derived H; omit for root H",
-        "reconsideration_trigger": "new Evidence/dependency/scope change/removed blocker when revisiting a parked source",
+        "reconsideration_trigger": "optional; omit if unused; new Evidence/dependency/scope change or removed blocker for parked H",
     }],
     "needs_literature": "optional boolean; true requires literature_request and omits candidates; false means no Literature detour; may be omitted",
     "literature_request": LEAD_LITERATURE_REQUEST_SCHEMA,
@@ -476,9 +476,11 @@ def _minimal_frontier_structure(output: dict[str, Any], context: Mapping[str, An
         )
         reconsideration_trigger = candidate.get("reconsideration_trigger")
         if "reconsideration_trigger" in candidate:
-            if not isinstance(reconsideration_trigger, str) or not reconsideration_trigger.strip():
-                raise ValueError(f"candidates[{index}].reconsideration_trigger must be nonempty")
-            if not lineage_anchor and not lineage_anchors:
+            if not isinstance(reconsideration_trigger, str):
+                raise ValueError(f"candidates[{index}].reconsideration_trigger must be a string")
+            # An unused optional field is not a scientific reconsideration.
+            # Same-H eligibility remains owned by the graph policy.
+            if reconsideration_trigger.strip() and not lineage_anchor and not lineage_anchors:
                 raise ValueError(f"candidates[{index}].reconsideration_trigger requires a lineage anchor")
         _reject_candidate_workflow_marker(candidate.get("hypothesis"), f"candidates[{index}].hypothesis")
     if "recommended_candidate_id" in output:
@@ -987,7 +989,7 @@ def _lead_selection_structure(output: dict[str, Any], context: Mapping[str, Any]
 
 PHASE_CONTRACTS: dict[tuple[str, str], RoleContract] = {
     ("research_lead", "frontier_proposal"): RoleContract(
-        "theory-master/role/research-lead/frontier-proposal", 14,
+        "theory-master/role/research-lead/frontier-proposal", 15,
         MINIMAL_FRONTIER_PROPOSAL_SCHEMA, _minimal_frontier_structure, _noop,
         FRONTIER_PROPOSAL_PROMPT_NOTE,
         validation_schema=MINIMAL_FRONTIER_PROPOSAL_VALIDATION_SCHEMA,

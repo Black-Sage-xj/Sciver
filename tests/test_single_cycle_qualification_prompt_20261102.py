@@ -102,7 +102,7 @@ class SingleCycleQualificationPromptTests(unittest.TestCase):
         self.assertIn("Do not impose universal sample, token, compute or time thresholds", challenger)
         self.assertIn("Do not demand the research answer at qualification", challenger)
         self.assertIn("unknown derivations and the decisive experiment remain Investigator work", lead)
-        self.assertEqual(role_contract("research_lead", phase="frontier_proposal").version, 14)
+        self.assertEqual(role_contract("research_lead", phase="frontier_proposal").version, 15)
         self.assertEqual(role_contract("challenger", phase="candidate_review").version, 5)
 
 
