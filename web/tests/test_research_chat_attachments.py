@@ -14,7 +14,7 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from tm_observer.research_chat_attachments import (
     AttachmentError, MAX_UPLOAD_BYTES, attachment_content, attachment_context,
-    capture_artifacts, get_attachment, image_paths, list_attachments,
+    artifact_targets, capture_artifacts, get_attachment, image_paths, list_attachments,
     store_upload, validate_attachments,
 )
 
@@ -188,6 +188,32 @@ class ResearchChatAttachmentTests(unittest.TestCase):
         self.assertEqual(meta["media_type"], "application/octet-stream")
         self.assertEqual(meta["kind"], "file")
         self.assertIsNone(meta["preview_url"])
+
+    def test_legacy_code_paths_and_file_urls_capture_images_data_and_source(self):
+        task = self.root / "task"
+        (task / "anderson_fig3").mkdir(parents=True)
+        plot = task / "anderson_fig3/fig3_pilot.png"
+        plot.write_bytes(self.image())
+        (task / "summary.csv").write_text("L,value\n4,0.2")
+        (task / "reproduce.py").write_text("print('source only')")
+        answer = "图在 `anderson_fig3/fig3_pilot.png`，数据在 `summary.csv:1`，脚本在 `reproduce.py:1`。"
+        found = capture_artifacts(self.state, self.sid, answer, [task])
+        self.assertEqual([item["name"] for item in found], ["fig3_pilot.png", "summary.csv", "reproduce.py"])
+        self.assertEqual(found[0]["kind"], "image")
+        self.assertEqual(found[-1]["media_type"], "application/octet-stream")
+        again = capture_artifacts(self.state, self.sid, f"![plot]({plot.as_uri()})", [task])
+        self.assertEqual(again[0]["id"], found[0]["id"])
+        plot.unlink()
+        restored = capture_artifacts(self.state, self.sid, answer, [task], reuse_existing=True)
+        self.assertEqual(restored[0]["id"], found[0]["id"])
+        self.assertEqual(attachment_content(self.state, self.sid, restored[0]["id"])[0], self.image())
+
+    def test_explicit_reference_parser_excludes_examples_remote_and_sensitive_paths(self):
+        text = "`plot.png` [table](summary.csv:1) ![photo](file:///tmp/photo.png)\n" \
+               "```python\n`example.png`\n[secret](hidden.txt)\n```\n" \
+               "[remote](https://example.com/a.png) `../escape.png` `credentials.json` `key.pem`\n" \
+               "~~~text\n`unfinished.png`"
+        self.assertEqual(artifact_targets(text), ["plot.png", "summary.csv", "/tmp/photo.png"])
 
     def test_concurrent_uploads_deduplicate_and_history_context_exceeds_single_message_limit(self):
         with ThreadPoolExecutor(max_workers=4) as pool:

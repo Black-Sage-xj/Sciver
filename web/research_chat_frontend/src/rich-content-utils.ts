@@ -28,3 +28,9 @@ export function localAsset(src: string, sessionId: string): string {
   if (!sessionId) return '';
   return `/api/research-chat/${encodeURIComponent(sessionId)}/artifact?${new URLSearchParams({ path: src })}`;
 }
+
+/** Only explicit inline file references become links; code examples stay code. */
+export function inlineFileReference(value: string): boolean {
+  return !/\s/.test(value) && !/^(?:[a-z][\w+.-]*:)?\/\//i.test(value)
+    && /\.(?:md|markdown|txt|csv|json|pdf|png|jpe?g|webp|gif|py|ipynb|r|jl|sh|zip|docx?|xlsx?|pptx?)(?::\d+(?::\d+)?)?$/i.test(value);
+}

@@ -111,9 +111,9 @@ export function DraftAttachments({ manager }: { manager: ReturnType<typeof useAt
 }
 export function MessageAttachments({ attachments, onPreview }: { attachments?: ChatAttachment[]; onPreview: (attachment: ChatAttachment) => void }) {
   if (!attachments?.length) return null;
-  return <div className="sc-attachment-list sc-message-attachments">{attachments.map((attachment) => <div className="sc-attachment-card" key={attachment.id}>
-    <button type="button" className="sc-attachment-name" onClick={() => onPreview(attachment)}>
-      {attachment.kind === 'image' && sameOriginAttachmentUrl(attachment.preview_url || attachment.url) && <img src={sameOriginAttachmentUrl(attachment.preview_url || attachment.url)} alt="" loading="lazy" />}
+  return <div className="sc-attachment-list sc-message-attachments">{attachments.map((attachment) => <div className={`sc-attachment-card${attachment.kind === 'image' ? ' sc-message-image' : ''}`} key={attachment.id}>
+    <button type="button" className="sc-attachment-name" onClick={() => onPreview(attachment)} aria-label={attachment.kind === 'image' ? `查看图片 ${attachment.name}` : undefined}>
+      {attachment.kind === 'image' && sameOriginAttachmentUrl(attachment.preview_url || attachment.url) && <img src={sameOriginAttachmentUrl(attachment.preview_url || attachment.url)} alt={attachment.name} loading="lazy" />}
       {attachment.name}
     </button><small>{formatBytes(attachment.size)}</small>
     {sameOriginAttachmentUrl(attachment.url) && <a href={`${attachment.url}${attachment.url?.includes('?') ? '&' : '?'}download=1`} download>下载</a>}

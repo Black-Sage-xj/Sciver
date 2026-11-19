@@ -436,6 +436,9 @@ def snapshot(state_dir: Path, state: dict[str, Any], selected: str | None = None
     recent_chat = next((row["id"] for row in sessions if row.get("mode") in {"project", "frontier", "setup"}), None)
     selected_id = None if selected == "__new__" else (selected or recent_chat)
     selected_row = _recover_selected_session(root, selected_id) if selected_id else None
+    if selected_row:
+        from .research_chat_management import restore_message_artifacts
+        restore_message_artifacts(state_dir, Path(str(state.get("search_root") or state_dir)), state, selected_row)
     with _JOBS_LOCK:
         job = dict(_JOBS.get(selected_id or "") or {})
     if selected_row:

@@ -14,29 +14,58 @@ from . import research_chat as chat
 
 
 def _assistant_linked_path(record: dict, requested: Path, root: Path) -> bool:
-    from urllib.parse import unquote, urlsplit
-    from .research_chat_attachments import _LINK
+    from .research_chat_attachments import artifact_targets
     resolved = (requested if requested.is_absolute() else root / requested).resolve()
     if not resolved.is_relative_to(root):
         return False
     for message in record.get("messages", []):
         if message.get("role") != "assistant":
             continue
-        for match in _LINK.finditer(str(message.get("content") or "")):
-            target = (match.group(1) or match.group(2) or "").strip()
-            if not match.group(1):
-                target = re.sub(r'\s+["\'].*["\']\s*$', "", target)
+        for target in artifact_targets(str(message.get("content") or "")):
             try:
-                parsed = urlsplit(target)
-                if parsed.scheme not in {"", "file"} or parsed.netloc not in {"", "localhost"}:
-                    continue
-                value = Path(re.sub(r":\d+(?::\d+)?$", "", unquote(parsed.path)))
+                value = Path(target)
                 linked = value if value.is_absolute() else root / value
                 if linked.resolve() == resolved:
                     return True
             except (OSError, ValueError):
                 continue
     return False
+
+
+def session_artifact_roots(state_dir: Path, search_root: Path, state: dict, record: dict, *, strict_task: bool = True) -> list[Path]:
+    """Use server-owned task bindings and this account/session's preparation area."""
+    roots = []
+    task = chat._task(state, record.get("task_id"))
+    if task:
+        from .canvas_md import vault_root, ExplorerError
+        try:
+            roots.append(vault_root(search_root, record["task_id"], state))
+        except ExplorerError as exc:
+            if strict_task:
+                raise chat.ResearchChatError(str(exc), exc.status) from exc
+    # Preparation artifacts remain readable after this session becomes a project.
+    from .research_preparation import workspace, PreparationError
+    try:
+        roots.append(workspace(state_dir, record["id"]))
+    except PreparationError:
+        pass
+    return roots
+
+
+def restore_message_artifacts(state_dir: Path, search_root: Path, state: dict, record: dict) -> None:
+    """Add browser-readable copies to historical responses without rewriting them."""
+    from .research_chat_attachments import AttachmentError, capture_artifacts
+    roots = session_artifact_roots(state_dir, search_root, state, record, strict_task=False)
+    roots.append(state_dir / "research-chat-model")
+    for message in record.get("messages", []):
+        if message.get("role") != "assistant":
+            continue
+        try:
+            found = capture_artifacts(state_dir, record["id"], str(message.get("content") or ""), roots,
+                                      reuse_existing=True)
+        except (AttachmentError, OSError, ValueError):
+            continue
+        message["artifacts"] = list({item["id"]: item for item in [*(message.get("artifacts") or []), *found]}.values())
 
 
 def _metadata(state_dir: Path) -> dict[str, Any]:
@@ -145,20 +174,10 @@ def artifact_content(state_dir: Path, search_root: Path, state: dict, ident: str
     record = chat._read(chat._store(state_dir), ident)
     if not target or len(target) > 4096 or "\x00" in target or "\\" in target:
         raise chat.ResearchChatError("无效的成果路径")
-    roots = []
-    task = chat._task(state, record.get("task_id"))
-    if task:
-        from .canvas_md import vault_root, ExplorerError
-        try:
-            roots.append(vault_root(search_root, record["task_id"], state))
-        except ExplorerError as exc:
-            raise chat.ResearchChatError(str(exc), exc.status) from exc
-    if record.get("mode") == "preparation":
-        from .research_preparation import workspace
-        roots.append(workspace(state_dir, ident))
+    roots = session_artifact_roots(state_dir, search_root, state, record)
     from urllib.parse import unquote, urlsplit
     try:
-        parsed = urlsplit(target)
+        parsed = urlsplit(re.sub(r":\d+(?::\d+)?(?=#|$)", "", target))
     except ValueError as exc:
         raise chat.ResearchChatError("无效的成果路径") from exc
     if parsed.scheme not in {"", "file"} or parsed.netloc not in {"", "localhost"}:

@@ -31,6 +31,8 @@ _DOCUMENTS = {".pdf": "application/pdf", ".docx": "application/vnd.openxmlformat
               ".md": "text/markdown", ".markdown": "text/markdown", ".txt": "text/plain", ".csv": "text/csv"}
 _PRIVATE = {"storage_name", "source_path", "text_storage_name"}
 _LINK = re.compile(r"!?\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|([^\n)]+))\s*\)")
+_INLINE_PATH = re.compile(r"(?<!`)`([^`\n]+)`(?!`)")
+_PATH_SUFFIX = re.compile(r"\.[a-zA-Z0-9]{1,12}(?::\d+(?::\d+)?)?\Z")
 
 
 class AttachmentError(ValueError):
@@ -361,7 +363,58 @@ def _artifact_bytes(path: Path, root: Path) -> bytes:
         os.close(descriptor)
 
 
-def capture_artifacts(state_dir: Path, sid: str, answer: str, allowed_roots: list[Any]) -> list[dict[str, Any]]:
+def artifact_targets(answer: str) -> list[str]:
+    """Explicit local citations, including legacy inline-code file references.
+
+    Fenced examples never publish files. Every consumer applies the same path
+    parsing so line suffixes and file: URLs cannot bypass session ownership.
+    """
+    lines = []
+    fence = ""
+    for line in (answer or "").splitlines():
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if marker:
+            if not fence:
+                fence = marker.group(1)
+            elif marker.group(1).startswith(fence) and not line[marker.end():].strip():
+                fence = ""
+            continue
+        if not fence:
+            lines.append(line)
+    text = "\n".join(lines)
+    references = []
+    for match in _LINK.finditer(text):
+        target = (match.group(1) or match.group(2) or "").strip()
+        if not match.group(1):
+            target = re.sub(r'\s+["\'].*["\']\s*$', "", target)
+        references.append((match.start(), target))
+    for match in _INLINE_PATH.finditer(text):
+        target = match.group(1).strip()
+        if _PATH_SUFFIX.search(target) and not any(char.isspace() for char in target):
+            references.append((match.start(), target))
+    result = []
+    for _, target in sorted(references):
+        try:
+            parsed = urlsplit(re.sub(r":\d+(?::\d+)?(?=#|$)", "", target))
+        except ValueError:
+            continue
+        if parsed.scheme not in {"", "file"} or parsed.netloc not in {"", "localhost"}:
+            continue
+        target = re.sub(r":\d+(?::\d+)?$", "", unquote(parsed.path))
+        if not target or any(ord(char) < 32 for char in target) or "\\" in target:
+            continue
+        path = Path(target)
+        if ".." in path.parts or path.name.lower() in {"auth.json", "credentials.json", "config.toml"} or path.suffix.lower() in {".pem", ".key", ".p12"}:
+            continue
+        if target not in result:
+            result.append(target)
+    return result[:30]
+
+
+def capture_artifacts(state_dir: Path, sid: str, answer: str, allowed_roots: list[Any], *, reuse_existing: bool = False) -> list[dict[str, Any]]:
+    targets = artifact_targets(answer)
+    if not targets:
+        return []
     roots = []
     for value in allowed_roots:
         try:
@@ -370,29 +423,25 @@ def capture_artifacts(state_dir: Path, sid: str, answer: str, allowed_roots: lis
                 roots.append(root)
         except (OSError, ValueError, TypeError):
             continue
+    existing = {}
+    if reuse_existing:
+        folder = _root(state_dir, sid)
+        for file in folder.glob("*.json"):
+            meta = _load(folder, file.stem)
+            if meta.get("source_path"):
+                existing[meta["source_path"]] = _public(meta)
     result = []
     seen = set()
-    for match in _LINK.finditer(answer or ""):
-        target = (match.group(1) or match.group(2) or "").strip()
-        if not match.group(1):
-            target = re.sub(r'\s+["\'].*["\']\s*$', "", target)
-        target = unquote(target.split("#", 1)[0])
-        target = re.sub(r":\d+(?::\d+)?$", "", target)
-        try:
-            has_scheme = bool(urlsplit(target).scheme)
-        except ValueError:
-            continue
-        if not target or has_scheme or "\x00" in target:
-            continue
+    for target in targets:
         path = Path(target)
-        if ".." in path.parts or path.name.lower() in {"auth.json", "credentials.json", "config.toml"} or path.suffix.lower() in {".pem", ".key", ".p12"}:
-            continue
         for root in roots:
             candidate = path if path.is_absolute() else root / path
             try:
                 candidate.relative_to(root)
-                data = _artifact_bytes(candidate, root)
-                meta = _store_upload(state_dir, sid, candidate.name, "", data, source_path=str(candidate))
+                meta = existing.get(str(candidate))
+                if meta is None:
+                    data = _artifact_bytes(candidate, root)
+                    meta = _store_upload(state_dir, sid, candidate.name, "", data, source_path=str(candidate))
             except (AttachmentError, OSError, ValueError):
                 continue
             if meta["id"] not in seen:

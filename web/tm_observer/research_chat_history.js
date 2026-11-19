@@ -1,6 +1,12 @@
 (() => {
   const root = document.querySelector('.tm-research-chat');
   if (!root || root.dataset.mode === 'supervisor') return;
+  const workspace = document.querySelector('meta[name="sciver-workspace"]')?.content || '';
+  const storageKey = key => workspace ? 'sciver-workspace:' + workspace + ':' + key : key;
+  const localStorage = {
+    getItem: key => window.localStorage.getItem(storageKey(key)),
+    setItem: (key, value) => window.localStorage.setItem(storageKey(key), value),
+  };
   const list = root.querySelector('#tm-research-history-list');
   const query = root.querySelector('[data-chat-history-query]');
   const task = root.querySelector('[data-chat-history-task]');

@@ -11,7 +11,7 @@ import css from 'highlight.js/lib/languages/css';
 import xml from 'highlight.js/lib/languages/xml';
 import { normalizeMathDelimiters, rehypePlugins, remarkPlugins } from './markdown';
 import { chatLink, isGraphLink } from './chat-links';
-import { csvText, localAsset, markdownOutline } from './rich-content-utils';
+import { csvText, inlineFileReference, localAsset, markdownOutline } from './rich-content-utils';
 import './rich-content.css';
 
 for (const [name, language] of Object.entries({ python, javascript, typescript, json, bash, cpp, css, xml })) hljs.registerLanguage(name, language);
@@ -84,6 +84,12 @@ export function RichMarkdown({text, taskId, assetUrl}: {
       <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins}
         urlTransform={(url, key) => key === 'src' ? asset(url) : /^file:/i.test(url) ? url : defaultUrlTransform(url)}
         components={{ pre: HighlightedCode, table: RichTable, img: ({src,alt}) => <RichImage src={typeof src === 'string' ? src : ''} alt={alt} />,
+          code: ({children,className}) => {
+            const value=plain(children);
+            const target=!className && inlineFileReference(value)
+              ? /\.md(?::\d+(?::\d+)?)?$/i.test(value) && /^[a-f0-9]{16}$/.test(taskId) ? chatLink(value,taskId,location.origin) : asset(value) : '';
+            return target ? <a href={target} target="_blank" rel="noopener noreferrer"><code>{children}</code></a> : <code className={className}>{children}</code>;
+          },
           h1:({children})=>heading(1,children),h2:({children})=>heading(2,children),h3:({children})=>heading(3,children),
           h4:({children})=>heading(4,children),h5:({children})=>heading(5,children),h6:({children})=>heading(6,children),
           a:({href,children})=>{

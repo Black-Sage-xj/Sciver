@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
+import io
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
+from PIL import Image
 
 from tm_observer import research_chat as chat
 from tm_observer.research_chat_management import artifact_content, export_session, list_sessions, manage_session
@@ -157,6 +159,39 @@ class ResearchChatManagementTests(unittest.TestCase):
         self.assertEqual(artifact_content(self.state_dir, self.root, {}, self.one, str(output))[0], b"session result")
         with self.assertRaises(chat.ResearchChatError):
             artifact_content(self.state_dir, self.root, {}, self.two, str(output))
+
+    def test_legacy_plot_restores_in_snapshot_and_survives_preparation_handoff(self):
+        from tm_observer.research_chat_attachments import attachment_content
+        from tm_observer.research_preparation import workspace
+        sid = chat.create(self.state_dir, {}, {"mode": "preparation", "entry": "clear"})["session_id"]
+        folder = workspace(self.state_dir, sid) / "anderson_fig3"
+        folder.mkdir()
+        image = io.BytesIO()
+        Image.new("RGB", (12, 8), "blue").save(image, "PNG")
+        (folder / "fig3_pilot.png").write_bytes(image.getvalue())
+        (folder / "summary.csv").write_text("L,xi\n4,0.283")
+        row = chat._read(chat._store(self.state_dir), sid)
+        original = "图在 `anderson_fig3/fig3_pilot.png`，数据在 `anderson_fig3/summary.csv:1`。"
+        row["messages"] = [{"id": "pilot", "role": "assistant", "content": original, "artifacts": []}]
+        chat._write(chat._store(self.state_dir), row)
+        before = (chat._store(self.state_dir) / f"{sid}.json").read_bytes()
+        view = chat.snapshot(self.state_dir, {}, sid)["session"]
+        plot, table = view["messages"][0]["artifacts"]
+        self.assertEqual((plot["kind"], table["name"]), ("image", "summary.csv"))
+        self.assertEqual(view["messages"][0]["content"], original)
+        self.assertEqual((chat._store(self.state_dir) / f"{sid}.json").read_bytes(), before)
+        self.assertEqual(attachment_content(self.state_dir, sid, plot["id"])[0], image.getvalue())
+        row.update(mode="project", task_id="a" * 16)
+        chat._write(chat._store(self.state_dir), row)
+        with patch("tm_observer.canvas_md.vault_root", return_value=self.task):
+            self.assertEqual(artifact_content(self.state_dir, self.root, self.state, sid, "anderson_fig3/summary.csv:1")[0], b"L,xi\n4,0.283")
+        self.assertEqual(chat.snapshot(self.state_dir, {}, sid)["session"]["messages"][0]["artifacts"][0]["id"], plot["id"])
+        with self.assertRaises(chat.ResearchChatError):
+            artifact_content(self.state_dir, self.root, {}, self.two, str(folder / "fig3_pilot.png"))
+        other_account = self.root / "other-account"
+        chat._store(other_account)
+        with self.assertRaises(chat.ResearchChatError):
+            artifact_content(other_account, self.root, {}, sid, str(folder / "fig3_pilot.png"))
 
     def test_shared_workspace_rejects_user_mentions_and_nonmatching_assistant_links(self):
         shared = self.state_dir / "research-chat-model"

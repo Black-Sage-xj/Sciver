@@ -119,6 +119,9 @@ html[data-sciver-theme="white"] :is(.tm-research-chat,.sc-selection-popover){
 .sc-codex-shell .sc-attachment-card .sc-attachment-name{color:var(--sc-chat-text)}
 .sc-codex-shell .sc-attachment-card small{color:var(--sc-chat-muted)}
 .sc-codex-shell .sc-attachment-card a{color:var(--sc-chat-accent)}
+.sc-message-attachments .sc-message-image{flex:1 1 100%;max-width:min(720px,100%);padding:10px}
+.sc-message-attachments .sc-message-image .sc-attachment-name{width:100%;cursor:zoom-in}
+.sc-message-attachments .sc-message-image img{width:100%;max-width:100%;max-height:420px;margin-bottom:8px}
 .sc-codex-composer .sc-attachment-card{background:var(--sc-chat-panel);border-radius:10px}
 .sc-codex-shell .tm-aui-reading-sources{border-color:var(--sc-chat-border);padding:4px 1px 10px;font-size:11px}
 .sc-codex-shell .tm-aui-reading-source{border-color:var(--sc-chat-border);background:var(--sc-chat-panel);border-radius:8px}
