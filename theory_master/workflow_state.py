@@ -834,6 +834,8 @@ class WorkflowStateMixin:
             "research_root": str(self.spec.research_root.resolve()),
             "branch_canvas": str(canvas),
         }
+        from .preparation_sources import preparation_source_anchors
+        anchors.update(preparation_source_anchors(task_home))
         if self.cycle_dir is not None:
             anchors["cycle_dir"] = str(self.cycle_dir.resolve())
         if self.cycle_workspace is not None:

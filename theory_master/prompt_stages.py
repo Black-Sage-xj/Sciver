@@ -100,6 +100,9 @@ def _workspace_access(context: Mapping[str, Any]) -> dict[str, Any]:
         "notes_dir": context.get("notes_dir"),
         "notes_vault_root": context.get("notes_vault_root"),
         "repo_root": context.get("repo_root"),
+        "preparation_snapshot_root": context.get("preparation_snapshot_root"),
+        "preparation_materials_root": context.get("preparation_materials_root"),
+        "preparation_manifest_path": context.get("preparation_manifest_path"),
     }.items() if value not in (None, "", [], {})}
 
 
