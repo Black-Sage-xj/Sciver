@@ -28,6 +28,7 @@ EXECUTION_LIMIT_PROTOCOL_VALIDATOR = 'native-execution-limit-protocol/v1'
 BENCHMARK_PROVENANCE_VALIDATOR = 'benchmark-provenance-alias/v1'
 NATIVE_GOAL_REATTACHMENT_VALIDATOR = 'native-goal-origin-reattachment/v1'
 LINEAGE_STRUCTURE_VALIDATOR = 'lead-lineage-structure-reentry/v1'
+DELIVERY_ALIAS_VALIDATOR = 'native-complete-delivery-alias/v1'
 # Import-only, non-instantiating probes; expanding this map requires review.
 _ATTRIBUTE_CLASSES = {'Workflow': 'workflow'}
 RECEIPT_KEY = 'supervisor_repair_receipt'
@@ -147,7 +148,7 @@ def inspect_repair_receipt(cycle: Path, state: dict, *, engine: Path | None = No
     receipt = json.loads(path.read_text())
     if (not isinstance(receipt, dict) or _digest(receipt) != ref.get('sha256')
             or receipt.get('schema') != SCHEMA
-            or receipt.get('validator') not in {CANVAS_VALIDATOR, ATTRIBUTE_VALIDATOR, CANDIDATE_VALIDATOR, CONFIG_VALIDATOR, CONTRACT_PROJECTION_VALIDATOR, EXECUTION_LIMIT_PROTOCOL_VALIDATOR, BENCHMARK_PROVENANCE_VALIDATOR, NATIVE_GOAL_REATTACHMENT_VALIDATOR, LINEAGE_STRUCTURE_VALIDATOR}
+            or receipt.get('validator') not in {CANVAS_VALIDATOR, ATTRIBUTE_VALIDATOR, CANDIDATE_VALIDATOR, CONFIG_VALIDATOR, CONTRACT_PROJECTION_VALIDATOR, EXECUTION_LIMIT_PROTOCOL_VALIDATOR, BENCHMARK_PROVENANCE_VALIDATOR, NATIVE_GOAL_REATTACHMENT_VALIDATOR, LINEAGE_STRUCTURE_VALIDATOR, DELIVERY_ALIAS_VALIDATOR}
             or receipt.get('phase') != 'repair_validated'
             or receipt.get('failure_binding') != failure_binding(cycle, state)
             or receipt.get('source_root') != str(engine.resolve())
@@ -172,6 +173,10 @@ def inspect_repair_receipt(cycle: Path, state: dict, *, engine: Path | None = No
         from .supervisor_lineage_recovery import recheck_receipt_inputs
         recheck_receipt_inputs(receipt)
         return receipt
+    if receipt['validator'] == DELIVERY_ALIAS_VALIDATOR:
+        from .supervisor_delivery_alias_recovery import recheck_receipt_inputs
+        recheck_receipt_inputs(receipt, state)
+        return receipt
     if receipt['validator'] in {CANDIDATE_VALIDATOR, CONFIG_VALIDATOR, CONTRACT_PROJECTION_VALIDATOR, EXECUTION_LIMIT_PROTOCOL_VALIDATOR}:
         return receipt
     from .supervisor_runtime_repair import _SAFE_MODULES
@@ -194,6 +199,11 @@ def validate_existing_native_goal_reattachment(cycle: Path, state: dict, *, engi
 
 def validate_existing_lineage_structure(cycle: Path, state: dict, *, engine: Path) -> dict | None:
     from .supervisor_lineage_recovery import validate_existing_lineage_structure as validate
+    return validate(cycle, state, engine=engine)
+
+
+def validate_completed_delivery_alias(cycle: Path, state: dict, *, engine: Path) -> dict:
+    from .supervisor_delivery_alias_recovery import validate_completed_delivery_alias as validate
     return validate(cycle, state, engine=engine)
 
 

@@ -97,6 +97,9 @@ def _bound_delivery(owner: Any, state: dict, receipt_path: Path | None) -> tuple
     if receipt_path is not None and str(receipt_path) != reference.get("path"):
         raise ValueError("Recovery receipt does not match the failed Cycle")
     receipt = inspect_repair_receipt(cycle, state)
+    if receipt.get("validator") == "native-complete-delivery-alias/v1":
+        from .supervisor_delivery_alias_recovery import bound_alias_delivery
+        return bound_alias_delivery(owner, state, receipt)
     if receipt.get("validator") != VALIDATOR:
         raise ValueError("Delivery reprocessing requires its explicit SDK validator")
     blocker = resume_blocker(state, runtime_revalidated=True)
@@ -261,6 +264,11 @@ def reprocess_failed_native_delivery(
             "original_failed_manifest_sha256": binding["artifact_manifest_sha256"],
             "original_failed_invocation": original, "extra_model_requests": 0, "at": now(),
         }
+        if receipt.get("validator") == "native-complete-delivery-alias/v1":
+            audit["delivery_alias"] = {
+                key: binding[key] for key in ("authority", "declared_handoff_path", "handoff_path",
+                    "polluted_invocation_id", "authored_write_event_sha256", "goal_identity")
+            }
         try:
             session.commit._close_output()
             output = session.commit._commit_output()

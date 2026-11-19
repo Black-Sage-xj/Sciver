@@ -12,6 +12,7 @@ MODULE_CATEGORIES: dict[str, str] = {
     "test_native_goal_resume_recovery_20261119": "invariant",
     "test_supervisor_native_goal_recovery_20261119": "invariant",
     "test_supervisor_lineage_recovery_20261119": "invariant",
+    "test_supervisor_delivery_alias_recovery_20261119": "invariant",
     "test_user_regression_catalog_20261119": "invariant",
     "test_engineering_module_boundaries_20261119": "architecture",
     "test_runtime_source_owners_20261119": "invariant",

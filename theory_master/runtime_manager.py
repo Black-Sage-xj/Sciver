@@ -51,6 +51,7 @@ _RUNTIME_SOURCE_MODULES = {
     "supervisor_repair_receipts.py": "theory_master.supervisor_repair_receipts",
     "supervisor_native_goal_recovery.py": "theory_master.supervisor_native_goal_recovery",
     "supervisor_lineage_recovery.py": "theory_master.supervisor_lineage_recovery",
+    "supervisor_delivery_alias_recovery.py": "theory_master.supervisor_delivery_alias_recovery",
     "goal_gate.py": "theory_master.goal_gate",
     "goal_snapshot.py": "theory_master.goal_snapshot",
     "goal_materials.py": "theory_master.goal_materials",
