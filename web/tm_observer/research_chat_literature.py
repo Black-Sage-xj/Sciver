@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import sys
 import threading
 from typing import Any
 import uuid
@@ -602,6 +603,33 @@ def read_report(state_dir: Path, ident: str, job_id: str) -> str:
     return _expand_report_references(text, manifest.get('sources') or [])
 
 
+def _cli_progress():
+    """Expose real stage changes while keeping the final stdout receipt parseable."""
+    labels = {
+        'literature.job_started': '文献作业已开始',
+        'literature.planning_started': '正在规划检索方向',
+        'literature.planning_completed': '检索方向已形成',
+        'literature.retrieval_started': '正在检索与获取文献',
+        'literature.retrieval_completed': '本项文献获取已返回',
+        'literature.retrieval_reused': '已复用现有文献材料',
+        'literature.agent_started': 'Literature 正在阅读与综合',
+        'literature.agent_completed': 'Literature 已完成本项分析',
+        'literature.job_finished': '文献作业已返回，状态见最终回执',
+    }
+    seen = set()
+
+    def progress(event):
+        kind = event.get('event')
+        label = labels.get(kind)
+        step = (kind, event.get('invocation_key') or event.get('key') or '')
+        if label is None or step in seen:
+            return
+        seen.add(step)
+        print(f'Literature · {label}', file=sys.stderr, flush=True)
+
+    return progress
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description='调用共享 Literature Agent，为当前科研对话调研文献')
     parser.add_argument('--state-dir', type=Path, required=True)
@@ -627,7 +655,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.max_sources is not None:
             payload['max_sources'] = args.max_sources
         result = run_study(args.state_dir, args.search_root, args.session,
-                           payload, cancel_event=cancel)
+                           payload, cancel_event=cancel, on_event=_cli_progress())
     except ChatLiteratureError as exc:
         print(json.dumps({'ok': False, 'status': 'blocked', 'error': str(exc),
                           'http_status': exc.status, 'stop_reason': exc.stop_reason}, ensure_ascii=False))
