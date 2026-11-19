@@ -19,9 +19,19 @@ from theory_master.runtime_manager import runtime_source_provenance
     ('theory_master.invocation_execution', 'invocation_execution.py'),
     ('theory_master.evidence', 'evidence.py'),
     ('theory_master.evidence_provenance', 'evidence_provenance.py'),
+    ('theory_master.literature_source_access', 'literature_source_access.py'),
+    ('theory_master.contract_closure', 'contract_closure.py'),
+    ('theory_master.scholarly_transport', 'scholarly_transport.py'),
+    ('theory_master.scholarly_selection', 'scholarly_selection.py'),
+    ('theory_master.scholarly_request', 'scholarly_request.py'),
+    ('theory_master.literature_service', 'literature_service.py'),
+    ('theory_master.literature_delivery_integrity', 'literature_delivery_integrity.py'),
+    ('theory_master.literature_planning', 'literature_planning.py'),
+    ('theory_master.workflow_investigation', 'workflow_investigation.py'),
     ('theory_master.contract_stages', 'contract_stages.py'),
     ('theory_master.delivery_repair', 'delivery_repair.py'),
     ('tm_observer.http_handler', 'web/tm_observer/http_handler.py'),
+    ('tm_observer.research_chat_literature', 'web/tm_observer/research_chat_literature.py'),
 ])
 def test_mixed_owner_source_is_detected_without_importing_or_executing_it(tmp_path, monkeypatch, module, key):
     foreign = tmp_path / 'foreign.py'
