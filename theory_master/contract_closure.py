@@ -259,39 +259,17 @@ def _load_transport_papers(context: Mapping[str, Any]) -> list[dict[str, Any]]:
     transport = context.get("sdk_scholarly_retrieval")
     if not isinstance(transport, dict):
         return []
-    path_text = str(transport.get("papers_json") or "").strip()
-    if not path_text:
-        return []
-    path = Path(path_text)
-    if not path.is_file():
-        return []
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        from .literature_source_access import load_transport_papers
+        workspace = context.get("cycle_workspace")
+        return load_transport_papers(transport, workspace=Path(workspace) if workspace else None)
+    except (OSError, ValueError, TypeError, UnicodeError, RecursionError):
         return []
-    return [dict(item) for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
 def _paper_for_ref(source_ref: Any, papers: list[dict[str, Any]]) -> dict[str, Any]:
-    ref = str(source_ref or "").strip()
-    if ref.startswith("paper:"):
-        try:
-            index = int(ref.split(":", 1)[1])
-        except ValueError:
-            index = -1
-        if 0 <= index < len(papers):
-            return papers[index]
-    lowered = ref.lower()
-    for row in papers:
-        keys = (
-            row.get("doi"),
-            row.get("url"),
-            row.get("title"),
-            row.get("id"),
-        )
-        if lowered and any(str(value or "").strip().lower() == lowered for value in keys):
-            return row
-    return {}
+    from .literature_source_access import resolve_paper_reference
+    return resolve_paper_reference(source_ref, papers)
 
 
 def _source_metadata(source_ref: Any, papers: list[dict[str, Any]]) -> dict[str, Any]:

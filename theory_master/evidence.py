@@ -5,7 +5,6 @@ import json
 import os
 import re
 import tempfile
-import csv
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -421,65 +420,9 @@ class EvidenceRegistry:
             self.last_registration_audit.append({"status": "rejected", **rejected_item})
         return canonical, rejected, resolved_by_original
 
-    @staticmethod
-    def _verified_source_access(declared: str, source_id: str, transport: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
-        """Bind Literature access level to SDK retrieval/reading artifacts.
-
-        The agent may describe what it used, but the persisted access level is
-        determined from the retrieval corpus and (for full text) its reading
-        manifest.  Old cycles without a transport remain explicitly unverified.
-        """
-        evidence = {"declared": declared, "verified": "unavailable", "verification_status": "unverified",
-                    "source_id": source_id}
-        papers_path = Path(str(transport.get("papers_json") or ""))
-        papers: list[dict[str, Any]] = []
-        if papers_path.is_file():
-            try:
-                loaded = json.loads(papers_path.read_text(encoding="utf-8"))
-                papers = [row for row in loaded if isinstance(row, dict)] if isinstance(loaded, list) else []
-            except (OSError, ValueError):
-                pass
-        wanted = source_id.casefold()
-        paper = next((row for row in papers if wanted in {
-            str(row.get(key) or "").strip().casefold() for key in ("id", "doi", "url", "title")
-        }), None)
-        if paper is None:
-            evidence["reason"] = "source_id is absent from SDK retrieval record"
-            return evidence
-        evidence["retrieval_ref"] = {"papers_json": str(papers_path), "source_id": source_id}
-        if declared == "unavailable":
-            evidence.update({"verified": "unavailable", "verification_status": "verified"})
-            return evidence
-        if declared == "metadata":
-            evidence.update({"verified": "metadata", "verification_status": "verified"})
-            return evidence
-        if declared == "abstract":
-            if str(paper.get("abstract") or "").strip():
-                evidence.update({"verified": "abstract", "verification_status": "verified"})
-            else:
-                evidence["reason"] = "SDK retrieval record has no abstract"
-            return evidence
-        reading = transport.get("reading") if isinstance(transport.get("reading"), dict) else {}
-        manifest_path = Path(str(reading.get("pdf_manifest") or ""))
-        if manifest_path.is_file():
-            try:
-                with manifest_path.open("r", encoding="utf-8-sig", newline="") as handle:
-                    rows = list(csv.DictReader(handle))
-                target_values = {str(paper.get(key) or "").strip().casefold() for key in ("doi", "title", "arxiv_id")}
-                match = next((row for row in rows if target_values & {
-                    str(row.get(key) or "").strip().casefold() for key in ("doi", "title", "arxiv_id", "key")
-                } and str(row.get("status") or "") == "read"), None)
-                if match:
-                    evidence.update({
-                        "verified": "full_text", "verification_status": "verified",
-                        "reading_ref": {"pdf_manifest": str(manifest_path), "key": str(match.get("key") or source_id),
-                                        "markdown_path": str(match.get("markdown_path") or "")},
-                    })
-                    return evidence
-            except (OSError, csv.Error):
-                pass
-        evidence["reason"] = "no SDK reading record establishes full-text access"
-        return evidence
+    def _verified_source_access(self, declared: str, source_id: str, transport: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+        from .literature_source_access import assess_source_access
+        return assess_source_access(declared, source_id, transport, item, workspace=self.workspace)
 
     def register_role_output(self, role: str, output: dict[str, Any], *, epoch: str,
                              producer_invocation: dict[str, Any],
@@ -847,6 +790,26 @@ class EvidenceRegistry:
             checked[text] = digest
             if expected.get(text) != digest:
                 changed.append(text)
+        # Source proofs are separate from scientific artifact pointers. Retain
+        # their registration hashes and stop adjudicating if reading inputs drift.
+        access = record.get("source_access") if isinstance(record.get("source_access"), dict) else {}
+        source_hashes = access.get("artifact_hashes") if isinstance(access.get("artifact_hashes"), dict) else {}
+        if source_hashes:
+            from .literature_source_access import MAX_SOURCE_BYTES
+            for text, expected_hash in source_hashes.items():
+                path = Path(text)
+                try:
+                    if (any(part.is_symlink() for part in (path, *path.parents))
+                            or not path.is_file() or path.stat().st_size > MAX_SOURCE_BYTES):
+                        missing.append(text)
+                        continue
+                    digest = _file_sha256(path)
+                except OSError:
+                    missing.append(text)
+                else:
+                    checked[text] = digest
+                    if digest != expected_hash:
+                        changed.append(text)
         provenance = record.get("provenance") if isinstance(record.get("provenance"), dict) else {}
         declaration_ref = str(provenance.get("declaration_ref") or "")
         declaration_sha = str(provenance.get("declaration_sha256") or "")

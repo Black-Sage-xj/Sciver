@@ -303,13 +303,18 @@ class EvidenceRegistryTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             registry = self.make_registry(root)
-            retrieval = root / "papers.json"
+            sdk_root = registry.workspace / "literature" / "sdk_retrieval" / "source-gap"
+            sdk_root.mkdir(parents=True)
+            retrieval = sdk_root / "papers.json"
             retrieval.write_text(json.dumps([{
                 "doi": "10.1000/read", "title": "Read paper", "abstract": "An abstract.",
             }]), encoding="utf-8")
-            manifest = root / "pdf_manifest.csv"
+            source = sdk_root / "read.md"
+            source.write_text("Observed in the paper.", encoding="utf-8")
+            manifest = sdk_root / "pdf_manifest.csv"
             manifest.write_text(
-                "key,title,doi,status,markdown_path\nread-1,Read paper,10.1000/read,read,/tmp/read.md\n",
+                "key,title,doi,status,markdown_path\n"
+                f"read-1,Read paper,10.1000/read,read,{source}\n",
                 encoding="utf-8",
             )
             registry.register_role_output(
