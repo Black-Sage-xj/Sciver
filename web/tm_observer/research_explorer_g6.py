@@ -22,11 +22,23 @@ GRAPH_CSS = r"""
 .ex-help::backdrop{background:#0009}
 .ex-help header{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .ex-help h2{font-size:20px;margin:0}
-.ex-help h3{font-size:16px;margin:20px 0 8px}
+.ex-help h3{font-size:16px;margin:26px 0 8px}
+.ex-help p{margin:8px 0}
+.ex-help .ex-help-intro{color:var(--tm-muted,#a1a1aa);margin:8px 0 18px}
+.ex-help-steps{margin:0;padding:0;list-style:none;counter-reset:help-step;display:grid;gap:8px}
+.ex-help-steps li{counter-increment:help-step;display:flex;align-items:baseline;gap:10px}
+.ex-help-steps li::before{content:counter(help-step);flex:none;width:22px;height:22px;border-radius:50%;background:var(--tm-border,#465267);color:var(--tm-text,#e2e8f0);font-size:12px;font-weight:700;text-align:center;line-height:22px}
+.ex-help-terms{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:0}
+.ex-help-terms div{padding-top:10px;border-top:1px solid var(--tm-border,#465267)}
+.ex-help-terms dt{font-weight:700}.ex-help-terms dd{margin:4px 0 0;font-size:13px;line-height:1.65}
+.ex-help details{margin-top:18px;border-top:1px solid var(--tm-border,#465267);padding-top:12px}
+.ex-help summary{cursor:pointer;font-weight:600}
+.ex-help summary:focus-visible{outline:2px solid var(--tm-accent,#93c5fd);outline-offset:3px}
 .ex-help form{margin:0}
 .ex-help table{width:100%;border-collapse:collapse;font-size:13px}
 .ex-help th,.ex-help td{padding:8px;text-align:left;border:1px solid #465267;vertical-align:top;overflow-wrap:anywhere}
 .ex-help code{color:#bfdbfe;white-space:nowrap}
+@media(max-width:620px){.ex-help{padding:16px}.ex-help-terms{grid-template-columns:1fr;gap:10px}.ex-help th,.ex-help td{padding:6px}}
 .ex-toolbar{display:flex;flex-direction:column;gap:10px;align-items:stretch;margin-bottom:8px;flex-shrink:0;padding:8px 12px;background:#171923;border:1px solid #313746;border-radius:9px}
 .ex-toolbar-main{display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-width:0}
 .ex-toolbar-main #ex-stats{margin-left:auto;font-size:11px;color:#98a4b8;white-space:normal}
@@ -228,35 +240,45 @@ GRAPH_HTML = r"""
 <div class="ex-workspace" id="ex-workspace">
 <dialog id="ex-help" class="ex-help" aria-labelledby="ex-help-title">
  <header><h2 id="ex-help-title">图谱使用说明</h2><form method="dialog"><button type="submit" aria-label="关闭图谱使用说明" autofocus>关闭</button></form></header>
- <p>图谱记录研究如何从猜想走向证据和结论。先看猜想 H 提出了什么，再看对应 Cycle 的 Outcome 得到了什么结论，最后沿连线追踪后续猜想与外部资料。</p>
- <h3>猜想、Cycle 与 Outcome</h3>
- <p><strong>猜想（Hypothesis，H）</strong>是一个可检验的科学命题，包含适用条件和判别标准。每个新科研 Cycle 冻结一个新的 H；同轮恢复、重试和返工沿用该 H。</p>
- <p><strong>Outcome</strong>记录本轮 Judge 对冻结命题的终局科学裁决，连同理由、发现、未解决问题、适用边界、证据与报告。每个有终局科学裁决的 Cycle 恰有一个 Outcome，嵌在 H 卡片内；历史宽泛 H 可以包含多个 Cycle 的 Outcome。局部结论的效力以该轮冻结范围为准。</p>
- <h3>Outcome 的三种科学裁决</h3>
- <table><thead><tr><th>状态</th><th>含义</th></tr></thead><tbody>
- <tr><td>支持 · <code>supported</code></td><td>证据支持本轮冻结命题，在所列条件和检验范围内成立。</td></tr>
- <tr><td>否决 · <code>rejected</code></td><td>证据反驳本轮冻结命题。反例、失败机制和适用边界仍是可积累的研究成果。</td></tr>
- <tr><td>Open · <code>open</code></td><td>Judge 已完成本轮裁决，认定现有证据仍无法判定命题成立或不成立；需阅读其理由、边界和未解决问题。</td></tr>
+ <p class="ex-help-intro">图谱展示研究从猜想到证据、结论和后续问题的过程。</p>
+ <h3>从哪里开始</h3>
+ <ol class="ex-help-steps">
+  <li><span><strong>看猜想</strong>：点击 H 卡片上半部，了解要检验什么、适用什么条件。</span></li>
+  <li><span><strong>看结论</strong>：点击卡片下半部，查看各轮 Outcome 的裁决、理由和证据，再按需打开完整报告。</span></li>
+  <li><span><strong>追踪来源与后续研究</strong>：沿连线查看相关猜想和外部资料。</span></li>
+ </ol>
+ <h3>先认识三个概念</h3>
+ <dl class="ex-help-terms">
+  <div><dt>猜想（H）</dt><dd>包含适用条件和判别标准的可检验命题。</dd></div>
+  <div><dt>Cycle</dt><dd>围绕冻结命题开展的一轮研究。新一轮冻结新的 H；同轮恢复、重试和返工沿用原 H。</dd></div>
+  <div><dt>Outcome</dt><dd>Judge 对本轮命题的终局科学裁决，包括理由、发现、边界、未解决问题和证据。</dd></div>
+ </dl>
+ <p>有终局科学裁决的 Cycle 恰有一个 Outcome，显示在 H 卡片内。历史宽泛 H 可能包含多轮 Outcome；阅读时以各轮的冻结范围为准。</p>
+ <h3>怎么看 Outcome</h3>
+ <table><thead><tr><th scope="col">裁决</th><th scope="col">含义</th></tr></thead><tbody>
+ <tr><td>支持 · <code>supported</code></td><td>证据在本轮条件和检验范围内支持命题。</td></tr>
+ <tr><td>否决 · <code>rejected</code></td><td>证据反驳本轮命题；反例和失败机制也能指导后续研究。</td></tr>
+ <tr><td>Open · <code>open</code></td><td>Judge 已完成裁决，但现有证据仍无法判定命题成立或不成立。查看理由、边界和未解决问题。</td></tr>
  </tbody></table>
- <h3>页面中的其他结论标签</h3>
- <table><thead><tr><th>标签</th><th>阅读方法</th></tr></thead><tbody>
- <tr><td>待裁决 · <code>none</code></td><td>尚无可展示的科学裁决。查看 Cycle 运行状态了解进度；它与 Judge 已裁决的 Open 有区别。</td></tr>
- <tr><td>研究中止 · 未裁决<br><code>unadjudicated</code></td><td>展示中止研究的阶段性保全材料，执行未完成，未经终局 Judge 科学裁决。普通运行失败、中断或取消也不自动产生 Open。</td></tr>
- <tr><td>多轮结论不一 · <code>mixed</code></td><td>历史 H 的多轮 Outcome 展示分类不一致，需逐轮检查冻结命题与范围；这一汇总标签不代表整体 H 已获新裁决。</td></tr>
- <tr><td>历史归一 · <code>legacy</code></td><td>历史非标准裁决经兼容映射显示。以详情中的原始裁决为准，不能当作正式 Judge Open。</td></tr>
- </tbody></table>
- <h3>上半部的前沿状态：下一步是否继续研究</h3>
- <p><strong>活跃（active）</strong>：可作为后续研究来源；<strong>搁置（parked）</strong>：暂缓推进；<strong>已终止（closed）</strong>：退出默认研究前沿；<strong>未标记（unknown）</strong>：当前前沿状态缺失或待核验。</p>
- <p>前沿状态与科学裁决分别记录。例如，支持后的 H 可以保留为活跃来源以衍生新问题；否决后的分支也可继续追查失败机制。活跃不代表正在运行，已终止也不代表猜想已被否决。</p>
- <h3>怎样读图和查看原文</h3>
+ <h3>前沿状态表示什么</h3>
+ <p>卡片上半部的前沿状态描述后续研究机会：<strong>活跃</strong>可作为后续研究来源，<strong>搁置</strong>表示暂缓推进，<strong>已终止</strong>表示退出默认研究前沿，<strong>未标记</strong>表示状态缺失或待核验。</p>
+ <p>前沿状态与 Outcome 分别记录：活跃不代表正在运行，已终止也不代表猜想被否决。被支持或否决的猜想都可能产生后续问题。</p>
+ <h3>查找与浏览</h3>
  <ul>
- <li>放大后，H 卡片上半部显示猜想与前沿状态，下半部显示 Outcome；分别点击可阅读详情、逐轮结论和完整 Markdown 报告。</li>
- <li>缩小到 ≤60% 时显示数字概览，默认按前沿着色；工具栏中的“远景颜色”可切换到结论着色。颜色用于导航，结论以详情中的裁决和范围为准。</li>
- <li>“分支”与统计数字展开的图例中的前沿与 Outcome 统计均按 H 去重，计数表示猜想数量。一个历史 H 的多条 Outcome 在概览中汇总一次；“更多”展开少见标签。外部资料另计。</li>
- <li>H→H 连线表示有来源的科学演化；外部资料（External，E）保存文献、人工输入或历史归档材料，其引用连线用于追溯来源。外部资料本身没有 Judge 裁决权威。</li>
- <li>点击顶部前沿状态定位分支；用搜索查找节点与 Markdown，拖动分隔条调整阅读区，悬停分支连线可折叠或展开。出现后代的 H 仍可保留活跃资格。</li>
+ <li>用“分支”筛选前沿状态，或用搜索查找节点与 Markdown；拖动分隔条调整阅读区。</li>
+ <li>缩小到 60% 或以下时显示数字概览。默认按前沿着色，可通过“远景颜色”切换为结论着色；具体结论以详情为准。</li>
+ <li>H→H 连线表示科学演化；外部资料（E）保存文献、人工输入或历史材料，引用连线可用于追溯来源。外部资料本身没有 Judge 裁决权威。</li>
+ <li>悬停分支连线可折叠或展开。统计图例中的前沿和 Outcome 数字按 H 去重，外部资料另计。</li>
  </ul>
- <p>单轮 Outcome 回答“这一轮命题得到了什么结论”；任务是否达成总体目标由独立的 Goal Completion 判断。历史 Canvas 视图可能保留 Decision、Finding、StageSummary 节点，以各记录来源和裁决范围为准。</p>
+ <details><summary>其他结论标签与历史记录</summary>
+ <table><thead><tr><th scope="col">标签</th><th scope="col">阅读方法</th></tr></thead><tbody>
+ <tr><td>待裁决 · <code>none</code></td><td>尚无可展示的科学裁决；查看 Cycle 运行状态了解进度。它与 Judge 已裁决的 Open 不同。</td></tr>
+ <tr><td>研究中止 · 未裁决<br><code>unadjudicated</code></td><td>研究未完成时保全的阶段性材料，未经终局科学裁决。运行失败、中断或取消也不自动产生 Open。</td></tr>
+ <tr><td>多轮结论不一 · <code>mixed</code></td><td>历史 H 的多轮 Outcome 分类不一致；逐轮检查冻结命题与范围。这不是对整体 H 的新裁决。</td></tr>
+ <tr><td>历史归一 · <code>legacy</code></td><td>历史非标准裁决经兼容映射显示；以详情中的原始裁决为准，不能当作正式 Judge Open。</td></tr>
+ </tbody></table>
+ <p>单轮 Outcome 回答本轮命题得到什么结论；总体目标是否达成由独立的 Goal Completion 判断。历史 Canvas 可能保留 Decision、Finding、StageSummary 节点，应核对记录来源和裁决范围。</p>
+ </details>
 </dialog>
 
 <div class="ex-toolbar" aria-label="图谱工具栏">
