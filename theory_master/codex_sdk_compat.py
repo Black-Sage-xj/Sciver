@@ -36,7 +36,7 @@ def verify_sdk() -> None:
             "Goal status": getattr(ThreadGoalStatus, "active", None),
             "Turn status": getattr(TurnStatus, "completed", None),
         }
-        for name in ("start_goal_operation", "next_goal_notification", "cancel_goal_operation",
+        for name in ("start_goal_operation", "register_goal_operation", "thread_goal_set", "request", "next_goal_notification", "cancel_goal_operation",
                      "unregister_goal_operation", "thread_goal_clear", "thread_read", "turn_interrupt"):
             required[name] = getattr(CodexClient, name, None)
     except (ImportError, AttributeError) as exc:
@@ -80,6 +80,22 @@ def read_thread(client: Any, thread_id: str, *, include_turns: bool = True) -> A
     return inner.thread_read(thread_id, include_turns=include_turns)
 
 
+def read_goal(client: Any, thread_id: str) -> Any:
+    """Read persisted Goal authority without loading/resuming its Thread."""
+    from openai_codex.generated.v2_all import ThreadGoalGetResponse
+    inner = _inner(client)
+    if inner is None or not callable(getattr(inner, "request", None)):
+        raise RuntimeError("Codex SDK does not expose thread/goal/get")
+    return inner.request("thread/goal/get", {"threadId": thread_id},
+                         response_model=ThreadGoalGetResponse).goal
+
+
+def server_pid(client: Any) -> int | None:
+    """Return only this SDK client's live child, for local ownership checks."""
+    proc = getattr(_inner(client), "_proc", None)
+    return int(proc.pid) if proc is not None and proc.poll() is None else None
+
+
 def clear_goal(thread: Any) -> None:
     goal_client(thread).thread_goal_clear(thread.id)
 
@@ -91,6 +107,36 @@ class GoalClient:
 
     def start_goal_operation(self, thread_id: str, objective: str) -> Any:
         return self._client.start_goal_operation(thread_id, objective)
+
+    def get_goal(self, thread_id: str) -> Any:
+        from openai_codex.generated.v2_all import ThreadGoalGetResponse
+        return self._client.request("thread/goal/get", {"threadId": thread_id},
+                                    response_model=ThreadGoalGetResponse).goal
+
+    def activate_existing_goal(self, thread_id: str) -> Any:
+        from openai_codex.generated.v2_all import ThreadGoalStatus
+        # Omit objective: changing it recreates/reset the persistent operation.
+        return self._client.thread_goal_set(thread_id, status=ThreadGoalStatus.active).goal
+
+    def register_goal_operation(self, thread_id: str) -> Any:
+        return self._client.register_goal_operation(thread_id)
+
+    def seed_goal_snapshot(self, state: Any, goal: Any, turn: Any = None) -> dict:
+        """Attach the official cursor to an actual read snapshot, without events."""
+        with state._condition:
+            if state.status is None:
+                state.status = goal.status
+            seeded = False
+            if (turn is not None and state.started_turn is None
+                    and (state.completed_turn is None or state.completed_turn.id != turn.id)):
+                state.logical_turn_id = turn.id
+                state.current_turn_id = turn.id
+                state.started_turn = turn
+                seeded = True
+                state._condition.notify_all()
+            return {"status": state.status,
+                    "started": state.started_turn if seeded else None,
+                    "active": bool(seeded and state.current_turn_id)}
 
     def next_goal_notification(self, state: Any) -> Any:
         return self._client.next_goal_notification(state)
@@ -125,4 +171,10 @@ def collect_turn_result(events: list[Any], *, turn_id: str) -> Any:
 
 def goal_stream(**kwargs: Any) -> Any:
     from openai_codex._goal import _GoalNotificationStream
-    return _GoalNotificationStream(**kwargs)
+    snapshot = kwargs.pop("initial_snapshot", None)
+    stream = _GoalNotificationStream(**kwargs)
+    if snapshot is not None:
+        stream._cursor.status = snapshot["status"]
+        stream._cursor.started = snapshot["started"]
+        stream._cursor.active = snapshot["active"]
+    return stream

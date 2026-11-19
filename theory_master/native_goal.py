@@ -326,7 +326,10 @@ def native_goal_setup_turn(context_prompt: str, goal_objective: str = "") -> str
 
 def run_native_goal(thread: Any, objective: str, *,
                     on_event: Callable[[Any], None] | None = None,
-                    on_turn_boundary: Callable[[Any], None] | None = None) -> NativeGoalResult:
+                    on_turn_boundary: Callable[[Any], None] | None = None,
+                    attachment: Any = None,
+                    control_check: Callable[[], None] | None = None,
+                    on_operation_started: Callable[[], None] | None = None) -> NativeGoalResult:
     """Use the SDK's genuine thread-scoped Goal logical stream, never a normal Turn.
 
     Scientific Findings require native `complete`. The separate administrative
@@ -347,8 +350,20 @@ def run_native_goal(thread: Any, objective: str, *,
     )
 
     client = goal_client(thread)
-    state, logical_turn_id = client.start_goal_operation(thread.id, objective)
-    active_physical_turn = None
+    if attachment is not None:
+        if attachment.terminal_status is not None:
+            return NativeGoalResult(attachment.terminal_status, thread.id, 0, 0)
+        state, logical_turn_id = attachment.state, attachment.logical_turn_id
+    else:
+        state, logical_turn_id = client.start_goal_operation(thread.id, objective)
+    if on_operation_started is not None:
+        try:
+            on_operation_started()
+        except BaseException:
+            client.cancel_goal_operation(state)
+            client.unregister_goal_operation(state)
+            raise
+    active_physical_turn = state.current_turn_id if attachment is not None else None
     boundary_cancel_requested = False
 
     def next_notification():
@@ -356,6 +371,16 @@ def run_native_goal(thread: Any, objective: str, *,
         # completions. Observe only their safe boundary, preserving its logical
         # stream and all ordinary event/Collector semantics unchanged.
         nonlocal active_physical_turn, boundary_cancel_requested
+        if control_check is not None:
+            try:
+                control_check()
+            except KeyboardInterrupt:
+                boundary_cancel_requested = True
+                raise
+            except BaseException:
+                client.cancel_goal_operation(state)
+                boundary_cancel_requested = True
+                raise
         event = client.next_goal_notification(state)
         payload = _get(event, "payload")
         method = str(getattr(event, "method", ""))
@@ -384,12 +409,14 @@ def run_native_goal(thread: Any, objective: str, *,
             active_physical_turn = None
         return event
 
+    resume_stream = {"initial_snapshot": attachment.snapshot} if attachment is not None else {}
     stream = goal_stream(
         state=state,
-        next_notification=next_notification if on_turn_boundary is not None
+        next_notification=next_notification if on_turn_boundary is not None or control_check is not None
                           else lambda: client.next_goal_notification(state),
         unregister=lambda: client.unregister_goal_operation(state),
         cancel_goal=lambda: client.cancel_goal_operation(state),
+        **resume_stream,
     )
     turns = 0
     tools = 0

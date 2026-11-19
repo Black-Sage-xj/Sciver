@@ -76,10 +76,10 @@ def resume_blocker(state: dict[str, Any], *, for_repair: bool = False,
     if state.get("protocol_health") == "violation":
         # Ordinary engine receipts and runtime_revalidated=True do not waive
         # protocol authority. Re-read the narrow delivery-preparation receipt.
-        from .supervisor_repair_receipts import CONTRACT_PROJECTION_VALIDATOR, inspect_repair_receipt
+        from .supervisor_repair_receipts import CONTRACT_PROJECTION_VALIDATOR, LINEAGE_STRUCTURE_VALIDATOR, inspect_repair_receipt
         try:
             projection_valid = bool(isinstance(contract_projection_repair, dict)
-                and contract_projection_repair.get('validator') == CONTRACT_PROJECTION_VALIDATOR
+                and contract_projection_repair.get('validator') in {CONTRACT_PROJECTION_VALIDATOR, LINEAGE_STRUCTURE_VALIDATOR}
                 and inspect_repair_receipt(Path(contract_projection_repair['cycle']), state)
                     == contract_projection_repair)
         except (OSError, ValueError, TypeError, KeyError):
@@ -101,6 +101,21 @@ def resume_blocker(state: dict[str, Any], *, for_repair: bool = False,
     if isinstance(budget, dict) and (budget.get("exhausted") or budget.get("rejected")):
         return "Investigator budget guard is active; Supervisor cannot override it."
     native = state.get("native_goal") or {}
+    from .supervisor_native_goal_recovery import is_native_goal_start_conflict, reentry_key
+    if is_native_goal_start_conflict(state) and not for_repair:
+        from .supervisor_repair_receipts import NATIVE_GOAL_REATTACHMENT_VALIDATOR, inspect_repair_receipt, unused_repair_credit
+        if reentry_key(state) in (state.get("supervisor_native_goal_reentries") or []):
+            return "The original native Goal reattachment opportunity was already used; another reentry requires review."
+        try:
+            native_valid = bool(isinstance(contract_projection_repair, dict)
+                and contract_projection_repair.get('validator') == NATIVE_GOAL_REATTACHMENT_VALIDATOR
+                and unused_repair_credit(state)
+                and inspect_repair_receipt(Path(contract_projection_repair['cycle']), state)
+                    == contract_projection_repair)
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+            native_valid = False
+        if not native_valid:
+            return "An existing native Goal requires a verified original-Goal reattachment receipt; a plain restart is forbidden."
     if native.get("runtime_failure_kind") == "native_goal_dependency_blocked":
         from .supervisor_repair_receipts import execution_limit_protocol_reentry_key
         if execution_limit_protocol_reentry_key(state) in (state.get("supervisor_execution_limit_protocol_reentries") or []):
@@ -113,7 +128,8 @@ def resume_blocker(state: dict[str, Any], *, for_repair: bool = False,
     checkpoint = state.get("last_safe_checkpoint")
     valid_checkpoint = bool(checkpoint and Path(str(checkpoint)).is_file()
                             and not Path(str(checkpoint)).is_symlink())
-    if not (valid_checkpoint or state.get("role_outputs")):
+    from .supervisor_lineage_recovery import has_verified_lineage_reentry
+    if not (valid_checkpoint or state.get("role_outputs") or has_verified_lineage_reentry(state)):
         return "No existing safe checkpoint or committed role boundary exists for managed resume."
     from .supervisor_repair_receipts import unused_repair_credit
     # A blocked native Goal's delivery migration uses the ordinary resume
@@ -206,11 +222,21 @@ def review_runtime_failure(
             return {"action": "hold", "reason": blocker, "diagnosis": "", "repair_suggestion": ""}
     if not readonly_provider_probe_only and not existing_receipt_only:
         from .supervisor_repair_receipts import (inspect_repair_receipt, validate_existing_method,
-            validate_existing_judge_projection, validate_existing_execution_limit_protocol)
+            validate_existing_judge_projection, validate_existing_execution_limit_protocol,
+            validate_existing_native_goal_reattachment, validate_existing_lineage_structure)
         try:
             validated_repair = inspect_repair_receipt(cycle_dir, state)
         except (OSError, ValueError, TypeError, KeyError):
             pass
+        if validated_repair is None:
+            for validator in (validate_existing_native_goal_reattachment, validate_existing_lineage_structure):
+                try:
+                    validated_repair = validator(cycle_dir, state, engine=Path(__file__).resolve().parent)
+                    if validated_repair:
+                        write_json(state_path, state)
+                        break
+                except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+                    pass
         if validated_repair is None:
             import subprocess
             try:
@@ -458,6 +484,9 @@ def review_runtime_failure(
             if validated_repair.get('validator') == EXECUTION_LIMIT_PROTOCOL_VALIDATOR:
                 state.setdefault('supervisor_execution_limit_protocol_reentries', []).append(
                     execution_limit_protocol_reentry_key(state))
+            from .supervisor_native_goal_recovery import VALIDATOR, reentry_key
+            if validated_repair.get('validator') == VALIDATOR:
+                state.setdefault('supervisor_native_goal_reentries', []).append(reentry_key(state))
         state[_COUNT_KEY] = int(state.get(_COUNT_KEY) or 0) + 1
         state["supervisor_runtime_review"] = {"at": now(), "session_id": session.session_id,
                                               "action": "resume", "policy_version": POLICY_VERSION}

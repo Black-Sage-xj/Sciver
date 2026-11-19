@@ -10,6 +10,9 @@ from theory_master.runtime_manager import runtime_source_provenance
 @pytest.mark.parametrize('module,key', [
     ('theory_master.worker_actions', 'worker_actions.py'),
     ('theory_master.codex_goal_transport', 'codex_goal_transport.py'),
+    ('theory_master.native_goal_recovery', 'native_goal_recovery.py'),
+    ('theory_master.supervisor_native_goal_recovery', 'supervisor_native_goal_recovery.py'),
+    ('theory_master.supervisor_lineage_recovery', 'supervisor_lineage_recovery.py'),
     ('theory_master.invocation_execution', 'invocation_execution.py'),
     ('theory_master.evidence', 'evidence.py'),
     ('theory_master.delivery_repair', 'delivery_repair.py'),

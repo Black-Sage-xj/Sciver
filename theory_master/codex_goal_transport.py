@@ -23,7 +23,8 @@ class NativeGoalRunner:
     """One invocation owns its recovery window, usage baseline and handoff binding."""
     def __init__(self, backend: Any, role: str, *, goal_objective: str, context_prompt: str,
                  handoff_path: str, thread_id: str | None, model: str, provider: str,
-                 token_allowance: int | None = None, tokens_before_goal: int = 0):
+                 token_allowance: int | None = None, tokens_before_goal: int = 0,
+                 control_check: Any = None, goal_identity_observer: Any = None):
         self.backend = backend
         self.role = role
         self.goal_objective = goal_objective
@@ -34,6 +35,10 @@ class NativeGoalRunner:
         self.provider = provider
         self.token_allowance = token_allowance
         self.tokens_before_goal = tokens_before_goal
+        self.control_check = control_check
+        self.goal_identity_observer = goal_identity_observer
+        self.origin = None
+        self.attachment = None
         if self.role != "investigator":
             raise ValueError("Native Goal execution is reserved for Investigator")
         if len(self.goal_objective) > native.CODEX_GOAL_MAX_CHARS:
@@ -42,22 +47,34 @@ class NativeGoalRunner:
             )
         native.verify_native_goal_context_reference(self.goal_objective, self.context_prompt)
         self.limit_binding = native.execution_limit_setup_binding(self.context_prompt, Path(self.handoff_path))
+        if self.control_check is not None:
+            self.control_check()
+        if self.token_allowance is not None and self.tokens_before_goal >= self.token_allowance:
+            self.backend.last_native_goal = {
+                "status": "budgetLimited", "source": "native_goal_setup_token_guard",
+                "thread_id": self.thread_id, "observed_tokens": self.tokens_before_goal,
+                "allowance_tokens": self.token_allowance,
+            }
+            raise native.NativeGoalBudgetExceeded(self.thread_id or "", self.tokens_before_goal, self.token_allowance)
+        from .native_goal_recovery import origin_from_context
+        self.origin = origin_from_context(self.context_prompt, Path(self.handoff_path), self.thread_id or "")
+        if self.origin is not None:
+            from .native_goal_recovery import ensure_no_foreign_goal_owner
+            from .codex_sdk_compat import server_pid
+            ensure_no_foreign_goal_owner(self.origin, current_server_pid=server_pid(getattr(self.backend, "client", None)))
         self.identifier = self.backend.ensure_thread(self.role, self.thread_id, self.model, self.provider)
         self.thread = self.backend.threads[self.identifier]
+        if self.origin is not None and self.origin["objective"].strip() != self.goal_objective.strip():
+            from .native_goal_recovery import NativeGoalRecoveryConflict
+            raise NativeGoalRecoveryConflict("resumed Goal objective differs from its delivery origin")
         self.capacity_window = CapacityReconnectWindow(
             Path(self.handoff_path), thread_id=self.identifier, model=self.model, provider=self.provider
         )
         self.prior_window = self.capacity_window.snapshot() if self.provider in ACCOUNT_PROVIDERS else None
         if self.prior_window is not None and self.capacity_window.remaining(self.prior_window) <= 0:
             self._capacity_timeout(self.prior_window, str(self.prior_window.get("last_error") or "capacity wait expired"))
-        if self.token_allowance is not None and self.tokens_before_goal >= self.token_allowance:
-            self.backend.last_native_goal = {
-                "status": "budgetLimited", "source": "native_goal_setup_token_guard",
-                "thread_id": self.identifier, "observed_tokens": self.tokens_before_goal,
-                "allowance_tokens": self.token_allowance,
-            }
-            raise native.NativeGoalBudgetExceeded(self.identifier, self.tokens_before_goal, self.token_allowance)
-        self._setup_context()
+        if self.origin is None:
+            self._setup_context()
         self.provider_usage_baseline: int | None = None
         self.observed_goal_tokens = int(self.tokens_before_goal)
         self.capacity_error = ""
@@ -133,6 +150,8 @@ class NativeGoalRunner:
 
     def _on_event(self, event: Any):
         """Observe provider health and enforce the live native Goal allowance."""
+        if self.control_check is not None:
+            self.control_check()
         from .observability.codex_events import map_notification
         mapped = map_notification(event, role=self.role, thread_id=self.identifier)
         if not mapped:
@@ -186,6 +205,8 @@ class NativeGoalRunner:
         """Accept an administrative input limit only at a completed physical Turn boundary."""
         """Consume only formal input limitations after a completed physical turn."""
         from openai_codex.generated.v2_all import TurnCompletedNotification, TurnStatus
+        if self.control_check is not None:
+            self.control_check()
         payload = getattr(event, "payload", None)
         if (self.limit_binding is None or getattr(event, "method", "") != "turn/completed"
                 or not isinstance(payload, TurnCompletedNotification)
@@ -213,6 +234,14 @@ class NativeGoalRunner:
     def _run_attempt(self):
         try:
             boundary = {"on_turn_boundary": self._on_turn_boundary} if self.limit_binding is not None else {}
+            if self.control_check is not None:
+                boundary["control_check"] = self.control_check
+            if self.goal_identity_observer is not None:
+                boundary["on_operation_started"] = self._observe_goal_identity
+            if self.origin is not None:
+                from .native_goal_recovery import attach_existing_goal
+                self.attachment = attach_existing_goal(self.thread, self.origin, check_control=self.control_check)
+                boundary["attachment"] = self.attachment
             goal = native.run_native_goal(self.thread, self.goal_objective, on_event=self._on_event, **boundary)
         except native.NativeGoalExecutionLimit as exc:
             # run_native_goal has already cancelled the official Goal and
@@ -237,7 +266,7 @@ class NativeGoalRunner:
         except Exception as exc:
             # A direct capacity exception may occur before a turn event.
             # Do not retry unrelated transport, quota, contract or SDK errors.
-            if is_native_goal_thread_busy(exc, self.identifier) and self.prior_window is not None:
+            if self.origin is None and is_native_goal_thread_busy(exc, self.identifier) and self.prior_window is not None:
                 # A rejected Goal start does not create another Goal. Never
                 # call thread_goal_clear() on a potentially ACTIVE Goal:
                 # preserve the original thread and wait for server idle.
@@ -273,17 +302,26 @@ class NativeGoalRunner:
                 raise ProviderQuotaExhausted(
                     str(exc), provider=self.provider, account=account
                 ) from exc
-            if not is_model_at_capacity(exc):
+            if self.origin is not None or not is_model_at_capacity(exc):
                 raise
             goal = native.NativeGoalResult("blocked", self.identifier, 0, 0)
             self.capacity_error = str(exc)
         return goal
 
+    def _observe_goal_identity(self):
+        from .codex_sdk_compat import goal_client
+        from .native_goal_recovery import goal_identity, verify_existing_goal
+        actual = goal_client(self.thread).get_goal(self.identifier)
+        identity = (verify_existing_goal(actual, self.origin, previous=self.attachment.identity)
+                    if self.origin is not None else goal_identity(actual))
+        self.goal_identity_observer(identity)
+
     def _deliver(self, goal: native.NativeGoalResult):
         """Deliver Findings only from native complete; preserve every other stop category."""
         if goal.status == "complete":
             self.capacity_window.clear()
-            clear_goal(self.thread)
+            if self.origin is None:
+                clear_goal(self.thread)
             if self.limit_binding is not None:
                 limit = native.read_execution_limit_handoff(
                     goal, Path(self.handoff_path), invocation_id=self.limit_binding["invocation_id"],
@@ -308,7 +346,8 @@ class NativeGoalRunner:
                 else:
                     if limit is not None:
                         self.backend.last_native_goal["execution_limit_kind"] = limit["kind"]
-                        clear_goal(self.thread)
+                        if self.origin is None:
+                            clear_goal(self.thread)
                         raise native.NativeGoalExecutionLimit(self.identifier, limit, Path(self.handoff_path))
             from .supervisor_incident import NativeGoalRuntimeFailure, _safe
             self.backend.last_native_goal.update(
@@ -382,7 +421,24 @@ class NativeGoalRunner:
                 "status": goal.status, "thread_id": self.identifier,
                 "physical_turns": goal.physical_turns, "tools_started": goal.tools_started,
             }
+            if self.origin is not None:
+                from .codex_sdk_compat import goal_client
+                from .native_goal_recovery import verify_existing_goal
+                identity = verify_existing_goal(goal_client(self.thread).get_goal(self.identifier), self.origin,
+                                                previous=self.attachment.identity)
+                if goal.status == "complete" and identity["status"] != "complete":
+                    from .native_goal_recovery import NativeGoalRecoveryConflict
+                    raise NativeGoalRecoveryConflict("original native Goal is no longer complete at delivery")
+                self.backend.last_native_goal.update(
+                    origin_binding={key: value for key, value in self.origin.items()
+                                    if key not in {"objective", "setup_context"}},
+                    persistent_goal=identity,
+                )
             result = self._deliver(goal)
             if result is not None:
                 return result
+            if self.origin is not None:
+                # A resumed operation cannot be replaced by the legacy
+                # capacity retry (which clears/recreates a Goal).
+                raise native.NativeGoalIncomplete(goal.status, self.identifier)
             self._wait_for_capacity()

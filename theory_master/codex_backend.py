@@ -771,13 +771,17 @@ class CodexBackend:
                     handoff_path: str, thread_id: str | None,
                     model: str, provider: str,
                     token_allowance: int | None = None,
-                    tokens_before_goal: int = 0) -> tuple[str, str]:
+                    tokens_before_goal: int = 0,
+                    control_check: Any = None,
+                    goal_identity_observer: Any = None) -> tuple[str, str]:
         """Production Investigator native Goal; Findings require native completion."""
         from .codex_goal_transport import NativeGoalRunner
         return NativeGoalRunner(
             self, role, goal_objective=goal_objective, context_prompt=context_prompt,
             handoff_path=handoff_path, thread_id=thread_id, model=model, provider=provider,
             token_allowance=token_allowance, tokens_before_goal=tokens_before_goal,
+            control_check=control_check,
+            goal_identity_observer=goal_identity_observer,
         ).run()
 
     def invoke(self, role: str, prompt: str, thread_id: str | None, model: str, provider: str,

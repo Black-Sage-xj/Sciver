@@ -39,7 +39,7 @@ class GoalQuotaBackend:
 
     def invoke_goal(self, role, *, goal_objective, context_prompt, handoff_path,
                     thread_id, model, provider, token_allowance=None,
-                    tokens_before_goal=0):
+                    tokens_before_goal=0, control_check=None, goal_identity_observer=None):
         self.started.append(thread_id)
         self.last_native_goal = {"status": self.status, "thread_id": thread_id}
         raise NativeGoalIncomplete(self.status, thread_id)
@@ -97,7 +97,7 @@ class NativeGoalQuotaTests(unittest.TestCase):
         class InvalidContractHandoff(GoalQuotaBackend):
             def invoke_goal(self, role, *, goal_objective, context_prompt, handoff_path,
                             thread_id, model, provider, token_allowance=None,
-                            tokens_before_goal=0):
+                            tokens_before_goal=0, control_check=None, goal_identity_observer=None):
                 self.last_native_goal = {"status": "complete", "thread_id": thread_id}
                 return thread_id, '{"findings": [{"statement": ""}]}'
 
@@ -118,7 +118,7 @@ class NativeGoalQuotaTests(unittest.TestCase):
         class BrokenDeliveryBackend(GoalQuotaBackend):
             def invoke_goal(self, role, *, goal_objective, context_prompt, handoff_path,
                             thread_id, model, provider, token_allowance=None,
-                            tokens_before_goal=0):
+                            tokens_before_goal=0, control_check=None, goal_identity_observer=None):
                 self.started.append(thread_id)
                 self.last_native_goal={"status":"complete", "thread_id":thread_id}
                 raise NativeGoalDeliveryError(thread_id or "retained", "missing explicit file")
@@ -138,7 +138,7 @@ class NativeGoalQuotaTests(unittest.TestCase):
         class TimedOutCapacity(GoalQuotaBackend):
             def invoke_goal(self, role, *, goal_objective, context_prompt, handoff_path,
                             thread_id, model, provider, token_allowance=None,
-                            tokens_before_goal=0):
+                            tokens_before_goal=0, control_check=None, goal_identity_observer=None):
                 self.started.append(thread_id)
                 self.last_native_goal = {
                     "status":"blocked", "thread_id":thread_id,

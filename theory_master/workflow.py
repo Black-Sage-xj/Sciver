@@ -785,6 +785,8 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
         prequalification_restart = prequalification_restart_allowed(state)
         if not state.get("resumable") and not state.get("last_safe_checkpoint") and not state.get("role_outputs") and not precheckpoint_restart and not prequalification_restart:
             raise ValueError("Cycle has no recoverable checkpoint")
+        from .supervisor_lineage_recovery import consume_lineage_reentry
+        lineage_reentry = consume_lineage_reentry(cycle, state)
         control = self.cycle_dir / "recovery_control.json"
         if control.is_file():
             try:
@@ -813,7 +815,10 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
         if prequalification_restart:
             recovery.update({
                 "prequalification_restart": True,
-                "prequalification_restart_reason": "Attention explicitly authorized replay after pure runtime/code repair; no scientific output was committed",
+                "prequalification_restart_reason": (
+                    "Verified SDK lineage repair authorized a new Agent proposal; no scientific output was committed"
+                    if lineage_reentry else "Attention explicitly authorized replay after pure runtime/code repair; no scientific output was committed"
+                ),
             })
         attention = state.get("attention") if isinstance(state.get("attention"), dict) else {}
         if attention.get("code") == "investigator_actionable_no_progress_repeated_twice":

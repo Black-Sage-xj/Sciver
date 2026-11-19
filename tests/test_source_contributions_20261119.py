@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import itertools
 
 import pytest
 
@@ -113,6 +114,95 @@ def test_source_guard_does_not_freeze_an_invalid_missing_subject_field():
     original = proposal()
     original["candidates"][0].pop("hypothesis")
     assert_repair_lineage_preserved(lineage_repair_snapshot(original, KNOWN), proposal())
+
+
+def over_capacity_proposal():
+    value = proposal()
+    value["candidates"][0]["lineage_other_node_ids"] = ["H-0008", "H-0009", "H-0010"]
+    value["candidates"][0]["transition"]["source_contributions"].update({
+        "H-0009": "Provides an independent comparator.",
+        "H-0010": "Defines the boundary of the comparison.",
+    })
+    return value
+
+
+def test_over_capacity_pool_leaves_every_legal_subset_to_the_agent():
+    original = over_capacity_proposal()
+    before = copy.deepcopy(original)
+    known = KNOWN | {"H-0010"}
+    frozen = lineage_repair_snapshot(original, known)
+    assert original == before
+    assert frozen[0]["roles"] == {"H-0007": "main"}
+    assert frozen[0]["repairable_other_sources"] == ["H-0008", "H-0009", "H-0010"]
+    for n in range(3):
+        for subset in itertools.combinations(frozen[0]["repairable_other_sources"], n):
+            repaired = copy.deepcopy(original)
+            candidate = repaired["candidates"][0]
+            candidate["lineage_other_node_ids"] = list(subset)
+            candidate["transition"]["source_contributions"] = {
+                key: val for key, val in candidate["transition"]["source_contributions"].items()
+                if key in {"H-0007", *subset}}
+            role_contract("research_lead", phase="frontier_proposal").validate(
+                repaired, {"_known_hypothesis_ids": list(known), "_require_explicit_lineage": True})
+            assert_repair_lineage_preserved(frozen, repaired)
+
+
+@pytest.mark.parametrize("change", ["main", "subject", "retained_note", "extra_source", "stale_note"])
+def test_capacity_repair_cannot_rewrite_valid_science_or_invent_a_source(change):
+    original = over_capacity_proposal()
+    frozen = lineage_repair_snapshot(original, KNOWN | {"H-0010", "H-0011"})
+    repaired = copy.deepcopy(original)
+    candidate = repaired["candidates"][0]
+    candidate["lineage_other_node_ids"] = ["H-0008", "H-0010"]
+    candidate["transition"]["source_contributions"].pop("H-0009")
+    if change == "main":
+        candidate.update(lineage_main_node_id="H-0009")
+    elif change == "subject":
+        candidate["hypothesis"] = "A different scientific subject"
+    elif change == "retained_note":
+        candidate["transition"]["source_contributions"]["H-0010"] = "A new explanation"
+    elif change == "extra_source":
+        candidate["lineage_other_node_ids"] = ["H-0008", "H-0011"]
+    else:
+        candidate["transition"]["source_contributions"]["H-0009"] = "Removed source still cited"
+    with pytest.raises(ValueError, match="repair"):
+        assert_repair_lineage_preserved(frozen, repaired)
+
+
+def test_real_invocation_over_capacity_repair_commits_only_agent_selected_sources(tmp_path):
+    from tests.test_core import TheoryMasterTest
+
+    class CapacityBackend(FakeBackend):
+        repairs = []
+
+        def invoke(self, role, prompt, thread_id, model, provider):
+            if role == "research_lead" and ("Current task: frontier_proposal " in prompt
+                    or "Contract validation failed for stage frontier_proposal" in prompt):
+                value = over_capacity_proposal()
+                if "Contract validation failed" in prompt:
+                    self.repairs.append(prompt)
+                    candidate = value["candidates"][0]
+                    # The Agent chooses the last pair, not an SDK first-two truncation.
+                    candidate["lineage_other_node_ids"] = ["H-0009", "H-0010"]
+                    candidate["transition"]["source_contributions"].pop("H-0008")
+                return self.ensure_thread(role, thread_id, model, provider), json.dumps(value)
+            return super().invoke(role, prompt, thread_id, model, provider)
+
+    spec, _ = TheoryMasterTest().make(tmp_path, reworks=0)
+    with ScienceGraphStore(spec.graph_database) as store:
+        for source in ("H-0007", "H-0008", "H-0009", "H-0010"):
+            store.add_hypothesis(source)
+    backend = CapacityBackend(reworks=0)
+    state = Workflow(spec, backend).run()
+    assert state["status"] in {"over", "completed"}
+    assert state["contract_repair_count"] == 1 and len(backend.repairs) == 1
+    assert "you must choose a legal subset" in backend.repairs[0]
+    with ScienceGraphStore(spec.graph_database, readonly=True) as store:
+        detail = store.agent_hypothesis_detail("H-0001")
+        assert detail["lineage_main_node_id"] == "H-0007"
+        assert detail["lineage_other_node_ids"] == ["H-0009", "H-0010"]
+        assert {row["hypothesis_id"] for row in detail["research_transition"]["sources"]} == {
+            "H-0007", "H-0009", "H-0010"}
 
 
 def test_frozen_notes_share_sources_with_dossier_graph_report_and_replay(tmp_path):

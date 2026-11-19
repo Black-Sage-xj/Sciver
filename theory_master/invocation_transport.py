@@ -27,6 +27,17 @@ class InvocationTransport:
     def __init__(self, session: InvocationSession):
         self.session = session
 
+    def _record_goal_identity(self, identity: dict):
+        """Persist SDK authority at start/attach, including interrupted runs."""
+        self.session.invocation_ledger.transition(
+            self.session.invocation_id, "running", native_goal_identity=identity
+        )
+        self.session.state["native_goal"] = {
+            "status": identity["status"], "thread_id": identity["thread_id"],
+            "origin_identity": identity,
+        }
+        self.session.owner._persist(self.session.state)
+
     def _prepare_native_delivery(self):
         investigator_goal_stage = (
             self.session.role == "investigator"
@@ -108,6 +119,23 @@ class InvocationTransport:
             )
         if self.session.use_native_goal:
             from .native_goal import native_goal_setup_turn
+            from .native_goal_recovery import find_native_goal_origin, bind_origin_context
+
+            origin = find_native_goal_origin(self.session)
+            if origin is not None:
+                from pathlib import Path
+                from .native_goal import execution_limit_setup_binding
+                self.session.native_goal_origin = origin
+                self.session.native_objective = origin["objective"]
+                self.session.handoff_path = Path(origin["handoff_path"])
+                self.session.setup_context = bind_origin_context(origin)
+                self.session.limit_binding = execution_limit_setup_binding(
+                    origin["setup_context"], self.session.handoff_path
+                )
+                self.session.invocation_ledger.transition(
+                    self.session.invocation_id, "running", native_goal_origin=origin
+                )
+                self.session.owner._persist(self.session.state)
 
             self.session.state["prompt_metrics"][-1]["native_setup_turn_chars"] = len(
                 native_goal_setup_turn(
@@ -151,7 +179,8 @@ class InvocationTransport:
                         content=native_goal_setup_turn(
                             self.session.setup_context, self.session.native_objective
                         ),
-                        input_kind="native_goal_setup_turn",
+                        input_kind=("native_goal_resume_binding" if getattr(self.session, "native_goal_origin", None)
+                                    else "native_goal_setup_turn"),
                     )
                     record_input(
                         role=self.session.role,
@@ -187,6 +216,8 @@ class InvocationTransport:
                 provider=self.session.route.provider,
                 token_allowance=live_budget["allowance_tokens"],
                 tokens_before_goal=live_budget["observed_tokens"],
+                control_check=lambda: self.session.owner._check_recovery_control(self.session.state),
+                goal_identity_observer=self._record_goal_identity,
             )
         return self.session.owner.backend.invoke(
             self.session.role,
@@ -380,10 +411,13 @@ class InvocationTransport:
         )
 
     def _handle_execution_limit(self, exc):
+        from .native_goal_recovery import execution_limit_delivery_id
+        delivery_id = execution_limit_delivery_id(self.session)
         if (
             not self.session.use_native_goal
             or exc.handoff_path != str(self.session.handoff_path)
-            or exc.execution_limit.get("invocation_id") != self.session.invocation_id
+            or exc.thread_id != self.session.identifier
+            or exc.execution_limit.get("invocation_id") != delivery_id
             or (
                 exc.execution_limit.get("frozen_objective_sha256")
                 != self.session.limit_binding["frozen_objective_sha256"]
@@ -398,8 +432,13 @@ class InvocationTransport:
         self.session.state["execution_limit_handoff"] = {
             "execution_limit": exc.execution_limit,
             "handoff_path": exc.handoff_path,
-            "invocation_id": self.session.invocation_id,
+            "invocation_id": delivery_id,
+            "monitor_invocation_id": self.session.invocation_id,
             "thread_id": exc.thread_id,
+            **({"origin_binding": {
+                key: value for key, value in self.session.native_goal_origin.items()
+                if key not in {"objective", "setup_context"}
+            }} if getattr(self.session, "native_goal_origin", None) is not None else {}),
         }
         self.session.state.update(
             execution_active=False,
@@ -416,6 +455,7 @@ class InvocationTransport:
             reason="validated input-support execution limitation",
             execution_limit=exc.execution_limit,
             handoff_path=exc.handoff_path,
+            delivery_origin_invocation_id=delivery_id,
         )
         if self.session.artifact_tracker is not None:
             self.session.artifact_tracker.finalize(status="interrupted")

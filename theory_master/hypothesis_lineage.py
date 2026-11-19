@@ -51,12 +51,27 @@ def lineage_repair_snapshot(output: Mapping[str, Any], known_ids: set[str]) -> l
             exact = explicit is not None and all(source in known_ids for source in [explicit[0], *explicit[1]])
         except ValueError:
             exact = False
+        # An over-capacity declaration is not a valid decision to freeze in
+        # full: preserving every other source makes every legal repair fail.
+        # Preserve the main and the declared choice pool, leaving the Agent
+        # (never the SDK) to choose a legal subset and remove its unused notes.
+        choices = []
+        if (isinstance(main, str) and main in known_ids and main.strip() == main
+                and isinstance(others, list) and len(others) > 2
+                and all(isinstance(source, str) and source in known_ids
+                        and source.strip() == source and source != main for source in others)
+                and len(set(others)) == len(others)):
+            choices = list(others)
+        contribution_sources = set(roles)
+        if choices:
+            roles = {main: "main"}
         transition = candidate.get("transition")
         notes = transition.get("source_contributions") if isinstance(transition, Mapping) else None
         protected.append({"index": index, "hypothesis": candidate.get("hypothesis"),
                           "roles": roles, "exact": exact,
+                          **({"repairable_other_sources": choices} if choices else {}),
                           "contributions": {key: val for key, val in (notes.items() if isinstance(notes, Mapping) else [])
-                                            if key in roles and isinstance(val, str) and val.strip()
+                                            if key in contribution_sources and isinstance(val, str) and val.strip()
                                             and len(val) <= TRANSITION_LIMIT}})
     return protected
 
@@ -73,7 +88,9 @@ def assert_repair_lineage_preserved(protected: list[dict[str, Any]], repaired: M
         if (isinstance(original["hypothesis"], str) and original["hypothesis"].strip()
                 and candidate.get("hypothesis") != original["hypothesis"]):
             raise ValueError(f"candidates[{index}] repair changed/reordered the protected scientific source subject")
-        current = lineage_repair_snapshot({"candidates": [candidate]}, set(original["roles"]))
+        choices = original.get("repairable_other_sources") or []
+        known = set(original["roles"]) | set(choices)
+        current = lineage_repair_snapshot({"candidates": [candidate]}, known)
         roles = current[0]["roles"] if current else {}
         if any(roles.get(source) != role for source, role in original["roles"].items()):
             raise ValueError(f"candidates[{index}] repair must preserve valid lineage IDs and main/other roles: {original['roles']}")
@@ -81,10 +98,19 @@ def assert_repair_lineage_preserved(protected: list[dict[str, Any]], repaired: M
             explicit = explicit_lineage(candidate)
             if explicit is None or set([explicit[0], *explicit[1]]) != set(original["roles"]):
                 raise ValueError(f"candidates[{index}] contract repair cannot change the declared lineage source set")
+        if choices:
+            explicit = explicit_lineage(candidate)
+            if explicit is None or not set(explicit[1]).issubset(choices):
+                raise ValueError(f"candidates[{index}] repair must select other sources from the original declared pool")
+            roles = {explicit[0]: "main", **{source: "other" for source in explicit[1]}}
         transition = candidate.get("transition")
         notes = transition.get("source_contributions") if isinstance(transition, Mapping) else {}
-        if original["contributions"] and (not isinstance(notes, Mapping)
-                or any(notes.get(key) != val for key, val in original["contributions"].items())):
+        retained = {key: val for key, val in original["contributions"].items()
+                    if not choices or key in roles}
+        if (retained and (not isinstance(notes, Mapping)
+                or any(notes.get(key) != val for key, val in retained.items()))) or (
+                    choices and isinstance(notes, Mapping)
+                    and any(source in notes for source in set(choices) - set(roles))):
             raise ValueError(f"candidates[{index}] repair must preserve valid source contribution explanations")
 
 

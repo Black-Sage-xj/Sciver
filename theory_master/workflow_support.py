@@ -31,9 +31,12 @@ def precheckpoint_recovery_allowed(state: dict[str, Any]) -> bool:
 
 
 def prequalification_restart_allowed(state: dict[str, Any]) -> bool:
-    """Allow explicit Attention-authorized replay of untouched qualification."""
+    """Allow explicit Attention replay or a narrowly verified SDK repair."""
     if not isinstance(state, dict):
         return False
+    from .supervisor_lineage_recovery import has_verified_lineage_reentry
+    if has_verified_lineage_reentry(state):
+        return True
     if str(state.get("phase") or "").lower() != "runtime_failure:no_recoverable_checkpoint":
         return False
     if (not state.get("prequalification_restart_authorized")

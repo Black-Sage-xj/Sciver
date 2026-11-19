@@ -275,7 +275,9 @@ class InvocationOutputValidation:
             )
             if protected_lineage:
                 repair_prompt += (
-                    "\nProtected source decisions from the original parsed proposal; preserve these IDs, main/other roles and valid contributions without reordering candidates:\n"
+                    "\nProtected source decisions from the original parsed proposal; preserve valid IDs, main/other roles and valid contributions without reordering candidates. "
+                    "If repairable_other_sources is present, its over-capacity list is invalid: you must choose a legal subset of up to two from that declared pool yourself. "
+                    "Keep the valid main source and the original contribution explanations for retained sources; remove explanations for omitted sources. The SDK does not select the subset.\n"
                     + json.dumps(protected_lineage, ensure_ascii=False)
                 )
             self.session.owner._record_cycle_anomaly(
