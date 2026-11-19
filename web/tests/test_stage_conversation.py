@@ -216,7 +216,7 @@ class SemanticStagePresentationTests(unittest.TestCase):
         anchor = "      function mount(root){"
         assert snippet.count(anchor) == 1
         snippet = snippet.replace(anchor,
-            "      window.testHooks={eventCard,continuation,canvasUpdates,jsonViewer,dialogueBlocks};\n"+anchor)
+            "      window.testHooks={eventCard,continuation,canvasUpdates,jsonViewer,dialogueBlocks,isReadingEvent};\n"+anchor)
         verify = r"""
 const vm=require('vm'),assert=require('assert');
 const source=process.argv[1];
@@ -242,10 +242,26 @@ assert(sdk.includes('Agent 调用开始'));
 assert(!sdk.includes('SDK / 生命周期'));
 const route=eventCard({kind:'OPERATOR_ROUTE_APPLIED',side:'system',content:'',
   time:'2026-10-11T19:48:58+08:00',meta:{role:'research_lead'}},'normal',s);
-assert(route.includes('tm-stage-milestone') && route.includes('路由已应用'));
+assert(route.includes('tm-stage-process-event') && route.includes('路由已应用'));
 assert(!route.includes('此事件未提供文本正文'));
 const routeWithContent=eventCard({kind:'OPERATOR_ROUTE_APPLIED',side:'system',content:'路由详情'},'normal',s);
 assert(routeWithContent.includes('路由详情'));
+const {isReadingEvent}=env.window.testHooks;
+for(const kind of ['JSON_CONTRACT_VIOLATION','CYCLE_MINOR_ANOMALY','UNKNOWN_PROCESS','AGENT_STARTED','OPERATOR_ROUTE_APPLIED']){
+  const empty={kind,side:'agent',content:'',meta:{}};
+  assert(!isReadingEvent(empty));
+  const card=eventCard(empty,'normal',s);
+  assert(card.includes('tm-stage-process-event')&&!card.includes('tm-stage-bubble'));
+  assert(!card.includes('此事件未提供文本正文'));
+  assert(!isReadingEvent({...empty,content:'diagnostic detail'}));
+}
+for(const kind of ['AGENT_INPUT','LLM_MESSAGE','AGENT_COMPLETED']){
+  assert(isReadingEvent({kind,content:'actual text'}));
+  for(const content of ['', '   ', '{}', '[]', 'null'])assert(!isReadingEvent({kind,content}));
+}
+assert(!isReadingEvent({kind:'AGENT_INPUT',content:'[annotated input]',content_chars:0}));
+assert(isReadingEvent({kind:'AGENT_COMPLETED',content:'{"findings":["result"]}'}));
+
 const tokens=eventCard({kind:'TOKEN_USAGE',side:'system',content:'',
   time:'2026-10-11T19:50:00+08:00',meta:{tokens_in:16080,tokens_out:73,tokens_total:16153}},
  'normal',s);
@@ -431,10 +447,11 @@ class StageDialogueEndToEndTests(unittest.TestCase):
 const vm=require('vm'),assert=require('assert');
 const source=process.argv[1];
 const make=()=>({dataset:{},hidden:false,innerHTML:'',
-  addEventListener(){},querySelector(){return null},textContent:''});
+  addEventListener(){},querySelector(){return null},querySelectorAll(){return []},textContent:'',
+  children:[],append(node){this.children.push(node)}});
 const roleFilter=make(),box=make(),root=make();
 const selectors={
- '[data-stage-timeline]':make(),'[data-stage-cycle]':make(),
+ '[data-stage-timeline]':make(),'[data-stage-runtime-records]':make(),'[data-stage-cycle]':make(),
  '[data-stage-density]':Object.assign(make(),{value:'normal'}),
  '[data-stage-role]':roleFilter,'[data-stage-search]':make(),
  '.tm-stage-status':make(),'[data-stage-current-notice]':make(),
@@ -463,7 +480,7 @@ const second=[
 const env={
   URL,URLSearchParams,
   window:{},history:{replaceState(){}},
-  document:{querySelector(){return root}},
+  document:{querySelector(){return root},createElement(){return make()}},
   location:{search:'?tab=events&cycle=58',origin:'https://observer.local',
             href:'https://observer.local/run/id/?tab=events&cycle=58'},
   fetch:async _url=>({ok:true,
@@ -491,18 +508,22 @@ section.querySelector=x=>x==='.tm-stage-messages'?body:null;
  assert(body.innerHTML.includes('Frozen decisive_test'),body.innerHTML.slice(0,700));
  assert(body.innerHTML.includes('tm-stage-prompt'));
  assert(body.innerHTML.includes('模型 Turn')===false);
- assert(body.innerHTML.includes('Research Lead · frontier_proposal'));
- assert(body.innerHTML.includes('已加载 3 / 6 条原始事件 · 显示 2 条'));
+ assert(!body.innerHTML.includes('Agent 调用开始'));
+ assert(selectors['[data-stage-runtime-records]'].children[0].innerHTML.includes('Research Lead · frontier_proposal'));
+ assert(body.innerHTML.includes('已加载 3 / 6 条原始事件 · 可读消息 1 条 · 运行记录 1 条'));
  assert(body.innerHTML.includes('已省略 1 条 Token 用量记录'));
  assert(!body.innerHTML.includes('Token · 输入'));
  assert(!body.innerHTML.includes('01a12fbc-171'));
  assert.equal(typeof onMore,'function');
  await onMore();
  assert(body.innerHTML.includes('Scientific research answer'));
- assert(body.innerHTML.includes('python compute.py'));
+ assert(!body.innerHTML.includes('python compute.py'));
+ assert(selectors['[data-stage-runtime-records]'].children[0].innerHTML.includes('python compute.py'));
  assert(body.innerHTML.includes('tm-stage-agent-message'));
- assert(body.innerHTML.includes('tm-stage-tool-message'));
- assert(body.innerHTML.includes('已加载 6 / 6 条原始事件 · 显示 4 条'));
+ assert(!body.innerHTML.includes('tm-stage-tool-message'));
+ assert(selectors['[data-stage-runtime-records]'].children[0].innerHTML.includes('tm-stage-tool-message'));
+ assert.equal(selectors['[data-stage-runtime-records]'].children.length,1,'paging must not duplicate a stage record group');
+ assert(body.innerHTML.includes('已加载 6 / 6 条原始事件 · 可读消息 2 条 · 运行记录 2 条'));
  assert(body.innerHTML.includes('已省略 2 条 Token 用量记录'));
  assert(!body.innerHTML.includes('Token · 输入'));
  assert(!body.innerHTML.includes('7,298,047'));
@@ -530,10 +551,11 @@ section.querySelector=x=>x==='.tm-stage-messages'?body:null;
 const vm=require('vm'),assert=require('assert');
 const source=process.argv[1];
 const make=()=>({dataset:{},hidden:false,innerHTML:'',
-  addEventListener(){},querySelector(){return null},querySelectorAll(){return []},textContent:''});
+  addEventListener(){},querySelector(){return null},querySelectorAll(){return []},textContent:'',
+  children:[],append(node){this.children.push(node)}});
 const roleFilter=make(),box=make(),root=make();
 const selectors={
- '[data-stage-timeline]':make(),'[data-stage-cycle]':make(),
+ '[data-stage-timeline]':make(),'[data-stage-runtime-records]':make(),'[data-stage-cycle]':make(),
  '[data-stage-density]':Object.assign(make(),{value:'normal'}),
  '[data-stage-role]':roleFilter,'[data-stage-search]':make(),
  '.tm-stage-status':make(),'[data-stage-current-notice]':make(),
@@ -545,7 +567,7 @@ root.querySelector=x=>x==='.tm-stage-reader'?box:null;
 const env={
   URL,URLSearchParams,
   window:{},history:{replaceState(){}},
-  document:{querySelector(){return root}},
+  document:{querySelector(){return root},createElement(){return make()}},
   location:{search:'?tab=events&cycle=72&jump=latest',origin:'https://observer.local',
             href:'https://observer.local/run/id/?tab=events&cycle=72&jump=latest'},
   fetch:async url=>({ok:true,json:async()=>{
@@ -582,7 +604,9 @@ section.querySelector=x=>x==='.tm-stage-messages'?body:null;
  assert(!body.innerHTML.includes('当前 Stage 已加载完毕'));
  assert.equal(typeof onPrev,'function');
  await onPrev();
- assert(body.innerHTML.includes('python earlier.py'));
+ assert(!body.innerHTML.includes('python earlier.py'));
+ assert(selectors['[data-stage-runtime-records]'].children[0].innerHTML.includes('python earlier.py'));
+ assert.equal(selectors['[data-stage-runtime-records]'].children.length,1);
  assert(body.innerHTML.includes('tail reply'));
  assert(body.innerHTML.includes('已加载 3 / 323 条原始事件'));
  assert(body.innerHTML.includes('前面还有 270 条'));
@@ -609,10 +633,12 @@ const vm=require('vm'),assert=require('assert');
 const source=process.argv[1];
 const make=()=>({dataset:{},hidden:false,innerHTML:'',
   addEventListener(){},querySelector(){return null},querySelectorAll(){return []},
-  textContent:'',remove(){}});
+  textContent:'',remove(){},children:[],append(node){this.children.push(node)},
+  insertAdjacentHTML(_pos,html){this.innerHTML+=html}});
 const roleFilter=make(),box=make(),root=make(),timeline=make();
 const selectors={
- '[data-stage-timeline]':timeline,'[data-stage-cycle]':make(),
+ '[data-stage-timeline]':timeline,'[data-stage-runtime-records]':make(),
+ '[data-stage-record-count]':make(),'[data-stage-cycle]':make(),
  '[data-stage-density]':Object.assign(make(),{value:'normal'}),
  '[data-stage-role]':roleFilter,'[data-stage-search]':make(),
  '.tm-stage-status':make(),'[data-stage-current-notice]':make(),
@@ -621,11 +647,11 @@ const selectors={
 };
 box.querySelector=x=>selectors[x]||null;
 root.querySelector=x=>x==='.tm-stage-reader'?box:null;
-const cursors=[];
+const cursors=[];let indexRequests=0;
 const env={
   URL,URLSearchParams,
   window:{},history:{replaceState(){}},
-  document:{querySelector(){return root},hidden:false},
+  document:{querySelector(){return root},createElement(){return make()},hidden:false},
   location:{search:'?tab=events&cycle=83',origin:'https://observer.local',
             href:'https://observer.local/run/id/?tab=events&cycle=83'},
   fetch:async url=>({ok:true,json:async()=>{
@@ -634,9 +660,10 @@ const env={
     const cursor=parsed.searchParams.get('cursor');
     cursors.push(mode+':'+cursor);
     if(mode==='index') return {cycle:'83',warnings:[],transitions:[],stages:[{
-      id:'inv-83-challenger-live',role:'challenger',stage:'review',count:2,round:1,state:'running'}]};
+      id:'inv-83-challenger-live',role:'challenger',stage:'review',count:++indexRequests===1?3:4,round:1,state:'running'}]};
     if(cursor==='1') return {messages:[{kind:'LLM_MESSAGE',side:'agent',seq:2,time:'t2',
-      content:'second reply',meta:{}}],total:2,next_cursor:null,warnings:[]};
+      content:'second reply',meta:{}},{kind:'JSON_CONTRACT_VIOLATION',side:'agent',seq:3,time:'t3',content:'',meta:{}}],total:3,next_cursor:null,warnings:[]};
+    if(cursor==='3') return {messages:[{kind:'CYCLE_MINOR_ANOMALY',side:'agent',seq:4,time:'t4',content:'',meta:{}}],total:4,next_cursor:null,warnings:[]};
     return {messages:[{kind:'LLM_MESSAGE',side:'agent',seq:1,time:'t1',
       content:'first reply',meta:{}}],total:1,next_cursor:null,warnings:[]};
   }})
@@ -670,7 +697,20 @@ timeline.querySelectorAll=()=>[section];
   assert.equal(body.innerHTML,frozen,'loaded bubbles must stay mounted');
   assert(dialogue.innerHTML.includes('second reply'),dialogue.innerHTML);
   assert(cursors.includes('stage:1'),cursors.join(','));
-  assert.equal(countEl.textContent,'2 events');
+  assert.equal(countEl.textContent,'3 events');
+  const runtime=selectors['[data-stage-runtime-records]'];
+  assert.equal(runtime.children.length,1);
+  assert(runtime.children[0].innerHTML.includes('JSON_CONTRACT_VIOLATION'));
+  assert(!dialogue.innerHTML.includes('JSON_CONTRACT_VIOLATION'));
+  const oldRuntime=runtime.children[0],oldDialogue=dialogue.innerHTML;
+  await env.window.tmStageConversationRefresh();
+  assert.equal(body.innerHTML,frozen,'process-only refresh must keep the reading area mounted');
+  assert.equal(dialogue.innerHTML,oldDialogue);
+  assert.equal(runtime.children.length,1);
+  assert.equal(runtime.children[0],oldRuntime,'existing runtime records must stay mounted');
+  assert(oldRuntime.innerHTML.includes('JSON_CONTRACT_VIOLATION')&&oldRuntime.innerHTML.includes('CYCLE_MINOR_ANOMALY'));
+  assert(selectors['[data-stage-record-count]'].textContent.includes('2 条已加载阶段记录'));
+  assert(cursors.includes('stage:3'),cursors.join(','));
 })().catch(error=>{console.error(error);process.exitCode=1});
 '''
         outcome=subprocess.run(["node","-e",verification,source],text=True,

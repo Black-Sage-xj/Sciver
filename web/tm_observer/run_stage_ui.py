@@ -46,15 +46,35 @@ html[data-sciver-theme="white"] .tm-stage-reader .tm-stage-heading[aria-expanded
 .tm-stage-reply-time { font-size:11px; }
 .tm-stage-milestone { background:transparent; border:0; border-radius:0; padding:4px 0; font-size:11px; }
 .tm-stage-milestone strong { font-size:12px; }
-.tm-stage-timeline > .tm-stage-sdk-node { display:block; padding:0 12px; margin:-4px 0; border:0; border-radius:0; background:transparent; color:var(--tm-muted); }
+.tm-stage-records { border-block:1px solid var(--tm-border); color:var(--tm-muted); font-size:12px; }
+.tm-stage-records > summary { cursor:pointer; display:flex; flex-wrap:wrap; align-items:baseline; gap:8px 16px; padding:10px 0; }
+.tm-stage-records > summary::before { content:''; width:6px; height:6px; border:solid currentColor; border-width:0 1px 1px 0; transform:rotate(-45deg); margin-right:2px; }
+.tm-stage-records[open] > summary::before { transform:rotate(45deg); }
+.tm-stage-records > summary small { font-size:11px; }
+.tm-stage-records-note { margin:0 0 12px; line-height:1.6; }
+.tm-stage-records-body { max-height:55vh; overflow:auto; padding:0 4px 12px; scrollbar-color:var(--tm-muted) transparent; }
+.tm-stage-records-group { margin-top:16px; }
+.tm-stage-records-group h4 { font-size:12px; font-weight:500; margin:0 0 8px; overflow-wrap:anywhere; }
+.tm-stage-records .tm-stage-sdk-node { display:block; padding:0; margin:0; border:0; border-radius:0; background:transparent; color:var(--tm-muted); }
+.tm-stage-records .tm-stage-process-event { border:0; padding:0; background:transparent; color:var(--tm-muted); }
+.tm-stage-records .tm-stage-process-event > summary { display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 12px; padding:5px 0; cursor:pointer; font-size:11px; line-height:1.5; }
+.tm-stage-process-event > summary::before { content:''; width:5px; height:5px; border:solid currentColor; border-width:0 1px 1px 0; transform:rotate(-45deg); flex:none; }
+.tm-stage-process-event[open] > summary::before { transform:rotate(45deg); }
+.tm-stage-process-event > summary strong { font-size:11px; font-weight:400; color:inherit; }
+.tm-stage-process-event > summary time { margin-left:auto; font-variant-numeric:tabular-nums; }
+.tm-stage-process-event > pre { font:12px/1.7 ui-monospace,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+.tm-stage-records .tm-stage-tool-fold { width:100%; margin:0; }
+.tm-stage-records .tm-stage-event-item { min-width:0; }
+.tm-stage-content-title { margin:0; font-size:14px; font-weight:600; }
+.tm-stage-reading-empty { color:var(--tm-muted); font-size:12px; margin:0; line-height:1.6; }
 .tm-stage-sdk-node details { width:100%; }
 .tm-stage-sdk-node summary { display:flex; align-items:baseline; gap:10px; padding:5px 0; font-size:11px; line-height:1.5; }
-.tm-stage-sdk-node summary::before { content:'▸'; flex:none; }
-.tm-stage-sdk-node details[open] > summary::before { content:'▾'; }
+.tm-stage-sdk-node summary::before { content:''; width:5px; height:5px; border:solid currentColor; border-width:0 1px 1px 0; transform:rotate(-45deg); flex:none; }
+.tm-stage-sdk-node details[open] > summary::before { transform:rotate(45deg); }
 .tm-stage-sdk-node summary span { overflow-wrap:anywhere; }
 .tm-stage-sdk-node summary time { margin-left:auto; white-space:nowrap; }
 .tm-stage-sdk-node details[open] { padding-bottom:8px; }
-html[data-sciver-theme="white"] .tm-stage-reader .tm-stage-timeline > .tm-stage-sdk-node { background:transparent; color:var(--tm-muted); }
+html[data-sciver-theme="white"] .tm-stage-reader .tm-stage-records .tm-stage-sdk-node { background:transparent; color:var(--tm-muted); }
 .tm-stage-reader :focus-visible { outline:2px solid #60a5fa; outline-offset:3px; }
 html[data-sciver-theme="white"] .tm-stage-reader .tm-stage-toolbar { background:#f8f9fb; }
 html[data-sciver-theme="white"] .tm-stage-reader .tm-stage-heading > strong { color:var(--tm-text); }
@@ -70,7 +90,7 @@ html[data-sciver-theme="white"] .tm-stage-reader .tm-stage-coverage { background
   .tm-stage-prompt,.tm-stage-agent-message { width:100%; max-width:100%; }
 }
 </style><div class="tm-stage-reader" data-tui-pane="secondary" aria-label="Stage Conversation">
-      <div class="tm-stage-intro"><h2>运行对话</h2><p>按执行顺序查看每个阶段的输入、回复和工具活动。</p></div>
+      <div class="tm-stage-intro"><h2>运行对话</h2><p>按阶段阅读提示词、模型回复和交付内容。</p></div>
       <div class="tm-stage-toolbar">
         <label>Cycle <select data-stage-cycle aria-label="选择 Cycle"></select></label>
         <label>视图 <select data-stage-density><option value="normal">对话模式</option>
@@ -84,6 +104,12 @@ html[data-sciver-theme="white"] .tm-stage-reader .tm-stage-coverage { background
         <span data-stage-current-text></span>
         <button type="button" data-stage-switch-current>查看当前 Cycle</button>
       </div>
+      <details class="tm-stage-records" data-stage-records>
+        <summary><span>运行记录</span><small data-stage-record-count>SDK 流程与已加载阶段的过程记录</small></summary>
+        <p class="tm-stage-records-note">SDK 流程、工具活动及无正文事件。阶段记录随对话按需加载，可展开查看原始字段。</p>
+        <div class="tm-stage-records-body"><div data-stage-sdk-records></div><div data-stage-runtime-records></div></div>
+      </details>
+      <h3 class="tm-stage-content-title">对话内容</h3>
       <div data-stage-timeline class="tm-stage-timeline"></div>
     </div>'''
 
@@ -180,6 +206,18 @@ def script(ident: str) -> str:
       // Token accounting is retained in the source ledger and usage panels,
       // but its high-frequency per-Turn events are not conversation messages.
       function showConversationEvent(item){return item?.kind!=="TOKEN_USAGE";}
+      function isReadingEvent(item){
+        if(!['AGENT_INPUT','LLM_MESSAGE','AGENT_COMPLETED'].includes(item?.kind))return false;
+        if(item.content_chars!==undefined && Number(item.content_chars)===0)return false;
+        let text=String(item.content||'').trim();
+        if(item.kind==='AGENT_INPUT')text=text.replace(/^\\[(?:实际发送：|历史逻辑 Stage Prompt)[^\\r\\n]*\\]\\s*/, '').trim();
+        if(!text)return false;
+        try{
+          const value=JSON.parse(text);
+          if(value===null || (typeof value==='object' && Object.keys(value).length===0))return false;
+        }catch(_err){/* Plain text is readable content. */}
+        return true;
+      }
       function eventCard(item,density,stage){
         const kind=String(item.kind||"");
         if(kind==="TOKEN_USAGE")return "";
@@ -208,12 +246,13 @@ def script(ident: str) -> str:
           '><summary>原始事件字段 · Thread / Turn / 来源</summary>'+
           jsonViewer(JSON.stringify({event:kind,seq:item.seq,thread_id:item.thread_id,
             turn_id:item.turn_id,time:item.time,meta:meta}))+'</details>';
-        if(Object.prototype.hasOwnProperty.call(eventTitles,kind) && kind!=="AGENT_COMPLETED" && !isSkill && (kind!=="OPERATOR_ROUTE_APPLIED" || !item.content)){
-          let summary=eventTitles[kind];
-          return '<div class="tm-stage-milestone"><strong>'+summary+'</strong>'+
+        if(!isReadingEvent(item) && !isTool){
+          const summary=eventTitles[kind]||kind;
+          const content=String(item.content||'');
+          return '<details class="tm-stage-process-event"'+(density==='raw'?' open':'')+'><summary><strong>'+esc(summary)+'</strong>'+
             '<span>'+esc(context||meta.role||'当前 Stage')+'</span>'+
             (turn?'<span>Turn '+esc(turn.slice(0,12))+'…</span>':'')+
-            '<time>'+when+'</time>'+raw+'</div>';
+            '<time>'+when+'</time></summary>'+(content?'<pre>'+esc(content)+'</pre>':'')+raw+'</details>';
         }
         const agentName=roles[resolvedRole]||resolvedRole||'未知 Agent';
         const label=isPrompt?agentName+' · Prompt 输入':
@@ -303,6 +342,58 @@ def script(ident: str) -> str:
         const box=root.querySelector(".tm-stage-reader");
         if(!box)return;
         const timeline=box.querySelector("[data-stage-timeline]");
+        const records=box.querySelector('[data-stage-records]');
+        const sdkRecords=box.querySelector('[data-stage-sdk-records]');
+        const runtimeRecords=box.querySelector('[data-stage-runtime-records]');
+        const recordCount=box.querySelector('[data-stage-record-count]');
+        const stageRecords=new Map();
+        function syncRecordCount(){
+          if(!recordCount)return;
+          const runtime=[...stageRecords.values()].reduce((total,entry)=>total+entry.count,0);
+          recordCount.textContent=(overview?.transitions?.length||0)+' 条 SDK · '+runtime+' 条已加载阶段记录';
+        }
+        function paintStageRecords(stage,items,mode){
+          if(!runtimeRecords)return;
+          let entry=stageRecords.get(stage.id);
+          if(!entry&&!items.length)return;
+          if(!entry){
+            const node=document.createElement('section');
+            node.className='tm-stage-records-group';
+            node.dataset.recordStageId=stage.id;
+            entry={node,count:0};
+            stageRecords.set(stage.id,entry);
+            runtimeRecords.append(node);
+          }
+          const previous=entry.items;
+          entry.items=items;
+          if(previous&&previous.every((item,index)=>item===items[index])){
+            const added=items.slice(previous.length);
+            if(!added.length)return;
+            if(typeof entry.node.insertAdjacentHTML==='function'){
+              entry.node.insertAdjacentHTML('beforeend',dialogueBlocks(added,mode,stage));
+              entry.count=items.length;
+              syncRecordCount();
+              return;
+            }
+          }
+          // Full replacement deduplicates earlier pages; retain explicitly opened events.
+          const opened=new Set([...entry.node.querySelectorAll('.tm-stage-event-item')]
+            .filter(node=>node.querySelector('details[open]')).map(node=>node.dataset.stageEventSeq));
+          entry.count=items.length;
+          entry.node.innerHTML='<h4>'+esc(roles[stage.role]||stage.role)+' · '+esc(stage.stage)+'</h4>'+(!stage.rework?continuation(stage):'')+dialogueBlocks(items,mode,stage);
+          for(const event of entry.node.querySelectorAll('.tm-stage-event-item')){
+            if(opened.has(event.dataset.stageEventSeq)){
+              const fold=event.querySelector('details');
+              if(fold)fold.open=true;
+            }
+          }
+          syncRecordCount();
+        }
+        function revealRecord(node){
+          for(let parent=node?.parentElement;parent&&parent!==box;parent=parent.parentElement){
+            if(parent.tagName==='DETAILS')parent.open=true;
+          }
+        }
         box.addEventListener('click',event=>{
           const button=event.target.closest('[data-stage-json-toggle]');
           if(!button||!box.contains(button))return;
@@ -463,19 +554,24 @@ def script(ident: str) -> str:
             // The event renderer needs the enclosing Invocation/Stage for
             // Agent name, stage name and role-specific event semantics.
             const visible=items.filter(showConversationEvent);
+            const reading=visible.filter(isReadingEvent);
+            const process=visible.filter(item=>!isReadingEvent(item));
+            paintStageRecords(stage,process,mode);
             const omitted=items.length-visible.length;
             const ahead=start>0;
             const behind=cursor!==null&&cursor!==undefined;
             const statusLine='<div class="tm-stage-coverage">已加载 '+items.length+' / '+data.total+
-              ' 条原始事件 · 显示 '+visible.length+' 条'+
+              ' 条原始事件 · 可读消息 '+reading.length+' 条 · 运行记录 '+process.length+' 条'+
               (omitted?' · 已省略 '+omitted+' 条 Token 用量记录':'')+
               (ahead?' · 前面还有 '+start+' 条':'')+
               (behind?' · 仍有后续记录':(ahead?' · 后面已到头':' · 当前 Stage 已加载完毕'))+
               (data.warnings?.length?' · 源文件存在读取限制':' · 源读取无截断告警')+'</div>';
             const dialogue=Number.isInteger(appendFrom)?body.querySelector('.tm-stage-dialogue'):null;
             if(dialogue&&typeof dialogue.insertAdjacentHTML==='function'){
-              const added=items.slice(appendFrom).filter(showConversationEvent);
+              const added=items.slice(appendFrom).filter(isReadingEvent);
               const chunk=dialogueBlocks(added,mode,stage);
+              const empty=body.querySelector('.tm-stage-reading-empty');
+              if(chunk&&empty)empty.remove();
               if(chunk)dialogue.insertAdjacentHTML('beforeend',chunk);
               const coverage=body.querySelector('.tm-stage-coverage');
               if(coverage)coverage.outerHTML=statusLine;
@@ -486,10 +582,10 @@ def script(ident: str) -> str:
               bindPager();
               return;
             }
-            const content=dialogueBlocks(visible,mode,stage);
+            const content=dialogueBlocks(reading,mode,stage);
             body.innerHTML=statusLine+
               (ahead?'<button type="button" data-stage-prev>滚动到顶自动加载更早一批（每次 45 条）</button>':'')+
-              '<div class="tm-stage-dialogue">'+(content||"<p>该 Stage 没有留存可读取消息。</p>")+'</div>'+
+              '<div class="tm-stage-dialogue">'+(content||'<p class="tm-stage-reading-empty">当前已加载记录中没有提示词或回复，可展开“运行记录”查看过程信息。</p>')+'</div>'+
               (behind?'<button type="button" data-stage-more>滚动到底自动加载下一批（每次 45 条）</button>':'')+
               (data.warnings?.length?'<div class="tm-stage-warning">'+data.warnings.map(esc).join(" · ")+'</div>':'');
             bindPager();
@@ -513,9 +609,12 @@ def script(ident: str) -> str:
             paint(data, resume&&previous>0?previous:null);
             syncJumper();
             if(sourceTarget&&!resume){
-              const original=[...body.querySelectorAll('.tm-stage-event-item')].find(
+              const processNode=stageRecords.get(stage.id)?.node;
+              const original=[...body.querySelectorAll('.tm-stage-event-item'),
+                ...(processNode?[...processNode.querySelectorAll('.tm-stage-event-item')]:[])].find(
                 el=>el.dataset.stageEventSeq===String(sourceTarget.target));
               if(original){
+                revealRecord(original);
                 const fold=original.closest('details');
                 if(fold) fold.open=true;
                 original.classList.add('tm-stage-jump-target');
@@ -570,6 +669,11 @@ def script(ident: str) -> str:
           const expanded=new Set([...timeline.querySelectorAll('.tm-stage-heading[aria-expanded="true"]')]
             .map(button=>button.closest('.tm-stage-section')?.dataset.stageId));
           timeline.replaceChildren();
+          if(sdkRecords)sdkRecords.replaceChildren();
+          if(!live){
+            stageRecords.clear();
+            if(runtimeRecords)runtimeRecords.replaceChildren();
+          }
           let count=0;
           const needle=search.value.toLowerCase().trim();
           const role=roleFilter.value;
@@ -583,7 +687,7 @@ def script(ident: str) -> str:
             if(item.type==="sdk"){
               if(role!=="all"||needle)return;
               const keptSdk=savedSdk&&savedSdk.get(String(item.sdk.seq));
-              if(keptSdk){timeline.append(keptSdk);return;}
+              if(keptSdk){if(sdkRecords)sdkRecords.append(keptSdk);return;}
               const node=document.createElement("section");
               node.className="tm-stage-sdk-node";
               node.dataset.sdkSeq=String(item.sdk.seq);
@@ -602,7 +706,7 @@ def script(ident: str) -> str:
                   else pre.textContent=event;
                 }catch(error){pre.textContent='无法读取 SDK 原始记录：'+error.message;}
               });
-              timeline.append(node);return;
+              if(sdkRecords)sdkRecords.append(node);return;
             }
             const stage=item.stage;
             const searchable=[stage.stage,stage.role,stage.state,stage.id].join(" ").toLowerCase();
@@ -625,7 +729,7 @@ def script(ident: str) -> str:
               '<strong>'+esc(stage.stage)+'</strong><span class="tm-stage-iteration" data-stage-state>'+
               (stage.rework?'Rework · ':(stage.round>1?'第 '+stage.round+' 次 Agent 调用 · ':''))+esc(stage.state)+'</span>'+
               '<span data-stage-count>'+stage.count+' events</span><span aria-hidden="true">⌄</span></button>'+
-              meta(stage)+continuation(stage)+
+              meta(stage)+(stage.rework?continuation(stage):'')+
               '<div class="tm-stage-messages" hidden></div>';
             section.querySelector(".tm-stage-heading").addEventListener("click",async()=>{
               const button=section.querySelector(".tm-stage-heading");
@@ -656,6 +760,7 @@ def script(ident: str) -> str:
           }
           status.textContent=overview.cycle+" · "+count+" 个 Stage · "+overview.transitions.length+" 个 SDK 过渡 · "+
             (overview.warnings.length?overview.warnings.join("；"):"源记录已读取")+" · 按需展开对话";
+          syncRecordCount();
         }
         async function followEventLink(){
           if(!pendingSource||attemptedSource||!overview)return;
@@ -695,7 +800,7 @@ def script(ident: str) -> str:
               const detail=document.createElement("pre");
               detail.textContent=event.content;
               section.append(heading,detail);
-              timeline.prepend(section);
+              if(sdkRecords){sdkRecords.prepend(section);if(records)records.open=true;}
               section.scrollIntoView({block:"center"});
               status.textContent="已定位 Cycle "+result.cycle+" · Event #"+result.target+
                 " · 非 Agent Invocation 事件";
@@ -704,6 +809,7 @@ def script(ident: str) -> str:
         }
         async function fetchOverview(cycle){
           timeline.textContent="正在构建 Stage 时间轴…";
+          if(records)records.open=false;
           try{
             const data=await request("index",cycle);
             if(own!==token)return;
@@ -768,7 +874,7 @@ def script(ident: str) -> str:
             }else{
               const reuse=new Map([...timeline.querySelectorAll('.tm-stage-section')]
                 .map(el=>[el.dataset.stageId,el]));
-              const savedSdk=new Map([...timeline.querySelectorAll('[data-sdk-seq]')]
+              const savedSdk=new Map([...(sdkRecords?sdkRecords.querySelectorAll('[data-sdk-seq]'):[])]
                 .map(el=>[el.dataset.sdkSeq,el]));
               overview=data;
               draw({reuse,savedSdk,live:true});
