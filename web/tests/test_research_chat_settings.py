@@ -46,6 +46,7 @@ class ResearchChatSettingsTests(unittest.TestCase):
         routes = _chat_routes("gpt-6.1-sol", "xhigh")
         backend = CodexBackend.__new__(CodexBackend)
         backend.routes = routes
+        backend.cwd = self.root
         provider = routes["research_chat"].provider
         config = backend._thread_config("research_chat", provider)
         self.assertEqual(config["model_reasoning_effort"], "xhigh")

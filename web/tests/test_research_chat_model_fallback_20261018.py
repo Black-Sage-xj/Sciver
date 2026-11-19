@@ -23,7 +23,7 @@ def test_only_explicit_unsupported_model_retries_once_and_preserves_question(sta
     set_model(root, ident, 'gpt-6.1-sol')
     seen = []
     class FakeClient:
-        def __init__(self, cwd, routes):
+        def __init__(self, cwd, routes, **kwargs):
             self.model = routes['research_chat'].model
         def ensure_thread(self, role, thread_id, model, provider):
             assert thread_id is None
@@ -55,7 +55,7 @@ def test_generic_bad_request_not_switched_and_not_retried(state):
     set_model(root, ident, 'gpt-6.1-sol')
     seen = []
     class FakeClient:
-        def __init__(self, cwd, routes): pass
+        def __init__(self, cwd, routes, **kwargs): pass
         def ensure_thread(self, role, thread_id, model, provider): return 'first-thread'
         def invoke(self, role, prompt, thread_id, model, provider, **kwargs):
             seen.append(model)

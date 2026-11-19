@@ -30,7 +30,7 @@ _SCIENCE_EDGES = {"", "scientific_lineage", "hypothesis_evolution"}
 CHAT_SKILLS = ("research-progress", "research-discussion", "research-intervention",
                "research-evidence", "research-next-steps")
 PREPARATION_SKILL = "research-preparation"
-_AGENT_POLICY_VERSION = 9
+_AGENT_POLICY_VERSION = 10
 _JOBS_LOCK = threading.RLock()
 _JOBS: dict[str, dict[str, Any]] = {}
 MAX_MESSAGE_CHARS = 120_000
@@ -1091,7 +1091,11 @@ def _model_reply(task: dict[str, Any] | None, row: dict[str, Any], backend: Any 
         if owns_client:
             cwd = selected_vault or state_dir / "research-chat-model"
             cwd.mkdir(mode=0o700, parents=True, exist_ok=True)
-            client = CodexBackend(cwd, routes=_chat_routes(selected_model, reasoning_effort))
+            from theory_master.codex_accounts import account_root, runtime_home
+            writable_roots = tuple(dict.fromkeys(
+                root.resolve() for root in (state_dir, search_root, runtime_home(), account_root()) if root is not None))
+            client = CodexBackend(cwd, routes=_chat_routes(selected_model, reasoning_effort),
+                                  writable_roots=writable_roots)
         try:
             ensure_thread = getattr(client, "ensure_thread", None)
             if callable(ensure_thread):

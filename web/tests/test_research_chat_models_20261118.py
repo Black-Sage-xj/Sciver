@@ -148,6 +148,7 @@ def test_model_validation_refreshes_once_and_explicit_switch_adapts_effort(catal
     from theory_master.codex_backend import CodexBackend
     backend = CodexBackend.__new__(CodexBackend)
     backend.routes = {"research_chat": route}
+    backend.cwd = tmp_path
     assert backend._thread_config("research_chat", route.provider)["model_reasoning_effort"] == "ultra"
     chat.set_model(tmp_path, ident, "gpt-new-terra")
     chat.set_reasoning_effort(tmp_path, ident, "ultra")

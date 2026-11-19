@@ -45,8 +45,15 @@ from .codex_errors import (
 
 class CodexBackend:
     """Thin official-SDK adapter; imports lazily so offline use has no dependency."""
-    def __init__(self, cwd: Path, routes: dict[str, RoleRoute] | None = None, *, task_config_path: Path | None = None):
+    def __init__(self, cwd: Path, routes: dict[str, RoleRoute] | None = None, *,
+                 task_config_path: Path | None = None,
+                 writable_roots: tuple[Path, ...] | None = None):
         self.cwd = cwd
+        # Only Research Chat consumes these account-scoped capabilities. Normal
+        # scientific roles retain their existing Cycle-local sandbox policy.
+        self.writable_roots = tuple(dict.fromkeys(
+            Path(root).expanduser().resolve() for root in (writable_roots or ())
+        ))
         # TheoryMaster owns one stable Codex runtime. Account switching changes
         # only runtime_home/auth.json via the account selector, never config/skills.
         active_codex_home = _codex_home()
@@ -183,6 +190,17 @@ class CodexBackend:
         if provider in ACCOUNT_PROVIDERS and self._native_compaction_enabled():
             config["model_auto_compact_token_limit"] = self._native_compact_threshold()
             config["model_auto_compact_token_limit_scope"] = self._native_compact_scope()
+        if role == "research_chat":
+            # Preparation commands need to persist plans, literature indexes and
+            # project registration in this account's state/workspace. Do not
+            # inherit a globally writable /tmp or ambient TMPDIR alongside them.
+            roots = (Path(self.cwd).expanduser().resolve(), *getattr(self, "writable_roots", ()))
+            config["sandbox_workspace_write"] = {
+                "writable_roots": [str(root) for root in dict.fromkeys(roots)],
+                "network_access": True,
+                "exclude_tmpdir_env_var": True,
+                "exclude_slash_tmp": True,
+            }
         return config
 
     @classmethod
@@ -478,6 +496,17 @@ class CodexBackend:
                 self._ensure_openai_https_provider_registered()
             overrides, _provider_env = self._runtime_config(self.routes)
             environment = self._sdk_environment(self.routes)
+            if (set(routes) == {"research_chat"}
+                    or os.environ.get("THEORYMASTER_CHAT_SANDBOX") == "1"):
+                # Nested literature SDK/CLI processes need temporary IPC/files,
+                # while the chat sandbox deliberately excludes global /tmp.
+                # Each backend uses its own cwd: reusing the parent's TMPDIR
+                # hits its read-only synthetic bubblewrap mount-registry lock.
+                # Pass this workspace directory to the client, not the host env.
+                temp_root = Path(self.cwd).expanduser().resolve() / ".theory-master-tmp"
+                temp_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+                environment["TMPDIR"] = str(temp_root)
+                environment["THEORYMASTER_CHAT_SANDBOX"] = "1"
             pinned = (os.environ.get("THEORYMASTER_WORKER_PINNED_ACCOUNT") or "").strip()
             if account_backed and pinned:
                 # Private Worker CODEX_HOME permanently resolves to this identity;
@@ -568,7 +597,7 @@ class CodexBackend:
     @staticmethod
     def _thread_sandbox(role: str):
         from openai_codex import Sandbox  # type: ignore
-        return Sandbox.workspace_write if role in WRITE_ROLES else Sandbox.read_only
+        return Sandbox.workspace_write if role in WRITE_ROLES or role == "research_chat" else Sandbox.read_only
 
     def ensure_thread(self, role: str, thread_id: str | None, model: str, provider: str) -> str:
         # Keep the thread lifecycle testable with a minimal SDK facade.  Actual
