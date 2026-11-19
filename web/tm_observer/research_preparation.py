@@ -16,7 +16,7 @@ import re
 import shutil
 import stat
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -92,14 +92,43 @@ def _write_meta(root: Path, value: dict) -> None:
 
 
 @contextmanager
-def _locked(root: Path):
+def _locked(root: Path, *, blocking: bool = True, material: bool = False):
+    name = ".preparation-material.lock" if material else ".preparation.lock"
     try:
-        fd = os.open(root / ".preparation.lock", os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        fd = os.open(root / name, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
     except OSError as exc:
         raise PreparationError("筹备锁路径不可用或不安全", 409) from exc
     with os.fdopen(fd, "a+") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+        except BlockingIOError as exc:
+            message = ("文献资料仍在更新，请完成或暂停调研后重新审阅立项" if material
+                       else "筹备记录正被其他操作或旧版文献作业使用，请稍后重试")
+            raise PreparationError(message, 409) from exc
         yield
+
+
+def _material_locked(root: Path, *, blocking: bool = True):
+    return _locked(root, blocking=blocking, material=True)
+
+
+def _material_revision(root: Path) -> str:
+    """Fingerprint visible corpus metadata without reading in-progress bodies."""
+    records = []
+    for directory, directories, files in os.walk(root, followlinks=False):
+        directories[:] = sorted(name for name in directories
+                                if not name.startswith(".") and name not in {"__pycache__", "tmp"})
+        for name in sorted(files):
+            path = Path(directory) / name
+            relative = path.relative_to(root)
+            if name.startswith(".") or str(relative) in {"metadata.json", "research_plan.md"}:
+                continue
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                continue  # Publication may proceed while the user edits a Plan.
+            records.append((relative.as_posix(), info.st_size, info.st_mtime_ns, info.st_ino))
+    return _sha(json.dumps(records, separators=(",", ":")).encode())
 
 
 def _metadata(root: Path, ident: str) -> dict:
@@ -121,7 +150,9 @@ def _snapshot(root: Path, value: dict) -> dict:
         raise PreparationError("计划草稿须使用 UTF-8", 409) from exc
     reviewed = {key: value[key] for key in ("entry", "title", "intent")}
     reviewed["draft"] = draft
-    revision = _review_revision(reviewed)
+    plan_revision = _review_revision(reviewed)
+    material_revision = _material_revision(root)
+    revision = _review_revision(reviewed, material_revision)
     plan_ready = False
     if draft.strip():
         try:
@@ -129,14 +160,22 @@ def _snapshot(root: Path, value: dict) -> dict:
             plan_ready = True
         except PreparationError:
             pass
-    return {**value, "draft": draft, "revision": revision, "draft_revision": _sha(draft.encode()),
+    return {**value, "draft": draft, "revision": revision, "plan_revision": plan_revision,
+            "material_revision": material_revision, "draft_revision": _sha(draft.encode()),
             "plan_ready": plan_ready,
             "creation_status": "created" if value.get("created_task") else "creating" if value.get("creation") else "preparing",
             "execution_started": False}
 
 
-def _review_revision(reviewed: dict) -> str:
-    return _sha(json.dumps(reviewed, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode())
+def _review_revision(reviewed: dict, material_revision: str | None = None) -> str:
+    plan = _sha(json.dumps(reviewed, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode())
+    return plan if material_revision is None else plan + "." + material_revision
+
+
+def _plan_revision(revision: Any) -> str | None:
+    if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{64}(?:\.[a-f0-9]{64})?", revision):
+        return None
+    return revision.split(".", 1)[0]
 
 
 def _text(value: Any, field: str, limit: int) -> str:
@@ -171,11 +210,8 @@ def initialize(state_dir: Path, ident: str, entry: str, title: str = "") -> dict
 
 def snapshot(state_dir: Path, ident: str) -> dict:
     root = workspace(state_dir, ident)
-    # Literature holds the material lock throughout acquisition so project
-    # creation cannot freeze a partial corpus. Reading Chat must remain usable
-    # during that work. Each file is atomically published; retry an observed
-    # change instead of joining the long-running material transaction. Mutations
-    # and creation still recheck the review revision under their exclusive lock.
+    # Reading and editing the Plan remain independent of a long Literature job.
+    # Creation checks both the Plan and corpus revision under their own locks.
     for _ in range(3):
         metadata = _metadata(root, ident)
         result = _snapshot(root, metadata)
@@ -188,12 +224,12 @@ def update(state_dir: Path, ident: str, payload: dict) -> dict:
     if not isinstance(payload, dict) or set(payload) - {"title", "intent", "draft", "expected_revision"} or "expected_revision" not in payload:
         raise PreparationError("筹备保存参数无效")
     root = workspace(state_dir, ident)
-    with _locked(root):
+    with _locked(root, blocking=False):
         value = _metadata(root, ident)
         current = _snapshot(root, value)
         if value.get("creation") or value.get("created_task"):
             raise PreparationError("该筹备已确认立项，请完成创建或在正式项目中编辑", 409)
-        if payload["expected_revision"] != current["revision"]:
+        if _plan_revision(payload["expected_revision"]) != current["plan_revision"]:
             raise PreparationError("计划草稿已变化，请刷新并重新审阅", 409)
         for field, limit in (("title", 800), ("intent", 20_000), ("draft", _LIMIT)):
             if field in payload:
@@ -226,8 +262,11 @@ def _freeze(root: Path, value: dict, draft: str, conversation: Any) -> dict[str,
         raise PreparationError("筹备对话快照格式无效") from exc
     if len(dialogue) > _LIMIT:
         raise PreparationError("筹备对话快照超过 1 MiB", 413)
+    preparation = {key: value[key] for key in ("schema", "id", "session_id", "entry", "title", "intent", "created_at")}
+    if value.get("material_revision") is not None:
+        preparation["material_revision"] = value["material_revision"]
     files = {"research_plan.md": draft.encode(), "conversation.json": dialogue,
-             "preparation.json": json.dumps({key: value[key] for key in ("schema", "id", "session_id", "entry", "title", "intent", "created_at")}, ensure_ascii=False, indent=2).encode()}
+             "preparation.json": json.dumps(preparation, ensure_ascii=False, indent=2).encode()}
     total = sum(map(len, files.values()))
     for path in sorted(root.rglob("*")):
         relative = path.relative_to(root)
@@ -279,7 +318,10 @@ def _verify_snapshot(target: Path, draft_revision: str, manifest_sha256: str,
         preparation = json.loads(_read(home / "preparation.json"))
         reviewed = {key: preparation[key] for key in ("entry", "title", "intent")}
         reviewed["draft"] = draft
-        if _review_revision(reviewed) != reviewed_revision:
+        material_revision = preparation.get("material_revision")
+        if material_revision is not None and not re.fullmatch(r"[a-f0-9]{64}", str(material_revision)):
+            raise ValueError("invalid reviewed material revision")
+        if _review_revision(reviewed, material_revision) != reviewed_revision:
             raise ValueError("reviewed preparation changed")
         _valid_plan(draft)
         return draft
@@ -386,18 +428,19 @@ def create_project(state_dir: Path, search_root: Path, ident: str, payload: dict
         raise PreparationError("请明确确认已审阅的计划后创建新项目")
     root = workspace(state_dir, ident)
     search = _directory(Path(search_root))
-    with _locked(root):
+    with _locked(root, blocking=False), ExitStack() as freezing:
         value = _metadata(root, ident)
         target = search / "projects" / ("project-" + ident)
         if value.get("created_task"):
             if value["created_task"].get("task_root") != str(target):
                 raise PreparationError("已创建项目不属于当前工作区，不能更换创建目标", 409)
             return {**value["created_task"], "idempotent": True}
+        freezing.enter_context(_material_locked(root, blocking=False))
         current = _snapshot(root, value)
         creation = value.get("creation")
         if creation is None:
             if payload["expected_revision"] != current["revision"]:
-                raise PreparationError("计划草稿已变化，请刷新并重新审阅", 409)
+                raise PreparationError("计划草稿或文献资料已变化，请刷新并重新审阅", 409)
             _valid_plan(current["draft"])
             chat_path = Path(state_dir) / "research-chat" / (ident + ".json")
             if chat_path.exists() or chat_path.is_symlink():
@@ -409,7 +452,7 @@ def create_project(state_dir: Path, search_root: Path, ident: str, payload: dict
                         or chat.get("mode") != "preparation" or not isinstance(chat.get("messages"), list)):
                     raise PreparationError("筹备对话绑定无效，尚未创建项目", 409)
                 conversation = chat["messages"]
-            files = _freeze(root, value, current["draft"], conversation)
+            files = _freeze(root, {**value, "material_revision": current["material_revision"]}, current["draft"], conversation)
             _directory(search / "projects", create=True)
             if target.exists() or target.is_symlink():
                 raise PreparationError("新项目目录已被占用；未覆盖已有项目", 409)

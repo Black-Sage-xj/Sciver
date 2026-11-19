@@ -107,6 +107,7 @@ def test_creates_fresh_task_with_empty_science_and_immutable_material_snapshots(
     (workspace / "literature" / "search-1").mkdir(parents=True)
     source = workspace / "literature" / "search-1" / "metadata.json"
     source.write_text('{"source_access":"metadata","title":"A lead, not verified evidence"}')
+    current = prep.snapshot(state, IDENT)
     conversation = [{"id": "message", "role": "user", "content": "A discussed question", "sources": []}]
     receipt = prep.create_project(state, search, IDENT, confirm(current), conversation=conversation)
     assert receipt["status"] == "created" and not receipt["execution_started"]
@@ -137,8 +138,15 @@ def test_creates_fresh_task_with_empty_science_and_immutable_material_snapshots(
 def test_duplicate_and_concurrent_creation_return_one_task(project):
     state, search = project
     current = ready(project)
+    def create_or_retry(_):
+        try:
+            return prep.create_project(state, search, IDENT, confirm(current))
+        except prep.PreparationError as exc:
+            assert exc.status == 409
+            return None
     with ThreadPoolExecutor(max_workers=2) as pool:
-        receipts = list(pool.map(lambda _: prep.create_project(state, search, IDENT, confirm(current)), range(2)))
+        results = list(pool.map(create_or_retry, range(2)))
+    receipts = [row or prep.create_project(state, search, IDENT, confirm(current)) for row in results]
     assert receipts[0]["task_root"] == receipts[1]["task_root"]
     assert sum(row["idempotent"] for row in receipts) == 1
     assert len(list((search / "projects").iterdir())) == 1
@@ -343,6 +351,7 @@ def test_unrelated_existing_project_and_symlink_paths_are_preserved(project):
     sentinel.unlink()
     existing.rmdir()
     (prep.workspace(state, IDENT) / "escaped.pdf").symlink_to(search / "private.pdf")
+    current = prep.snapshot(state, IDENT)
     with pytest.raises(prep.PreparationError, match="符号链接"):
         prep.create_project(state, search, IDENT, confirm(current))
     assert not existing.exists()
@@ -375,8 +384,7 @@ def test_invalid_preparation_identity_never_creates_directories(project, ident):
     assert not state.exists()
 
 
-def test_committed_snapshot_reads_while_material_lock_still_excludes_mutations(project):
-    from concurrent.futures import TimeoutError
+def test_snapshot_reads_while_legacy_lock_rejects_mutations(project):
     import threading
     state, _search = project
     current = ready(project)
@@ -392,9 +400,10 @@ def test_committed_snapshot_reads_while_material_lock_still_excludes_mutations(p
             assert read.result(timeout=1)['revision'] == current['revision']
             write = pool.submit(update_after_lock)
             assert started.wait(1)
-            with pytest.raises(TimeoutError):
-                write.result(timeout=.05)
-        assert write.result(timeout=2)['title'] == 'Next title'
+            with pytest.raises(prep.PreparationError) as busy:
+                write.result(timeout=1)
+            assert busy.value.status == 409
+        assert update_after_lock()['title'] == 'Next title'
 
 
 def test_snapshot_retries_observed_atomic_publication_changes(project, monkeypatch):

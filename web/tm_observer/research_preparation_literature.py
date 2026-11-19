@@ -5,7 +5,6 @@ import argparse
 from contextlib import contextmanager
 import csv
 from datetime import datetime, timezone
-import fcntl
 import hashlib
 import json
 import os
@@ -54,11 +53,15 @@ def _workspace(value: Path) -> Path:
 
 @contextmanager
 def _locked_workspace(value: Path) -> Iterator[Path]:
+    from .research_preparation import PreparationError, _locked, _material_locked
     root = _workspace(value)
-    fd = os.open(root / ".preparation.lock", os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    with os.fdopen(fd, "a+") as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
-        yield _workspace(root)
+    try:
+        # Match project creation's lock order. Retrieval itself uses hidden
+        # staging outside this short publication transaction.
+        with _locked(root, blocking=False), _material_locked(root, blocking=False):
+            yield _workspace(root)
+    except PreparationError as exc:
+        raise PreparationLiteratureError(str(exc)) from exc
 
 
 def _child(root: Path, relative: str) -> Path:

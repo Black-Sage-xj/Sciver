@@ -490,8 +490,9 @@ def run_study(state_dir: Path, search_root: Path, ident: str, payload: dict, *, 
     binding = _binding(state, row, search_root)
     job_id, request = _request(payload, binding)
     root = _job_root(binding, job_id)
-    guard = prep._locked(prep.workspace(state, ident)) if row['mode'] == 'preparation' else nullcontext()
-    # Freeze must wait until the complete material set is stable; no Chat lock.
+    guard = prep._material_locked(prep.workspace(state, ident)) if row['mode'] == 'preparation' else nullcontext()
+    # Corpus acquisition never holds the Plan lock. Creation rejects a busy
+    # corpus instead of freezing a partial material set; no Chat lock is used.
     with guard, ExitStack() as execution:
         if row['mode'] == 'preparation':
             metadata = prep._metadata(prep.workspace(state, ident), ident)
