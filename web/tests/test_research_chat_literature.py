@@ -166,7 +166,16 @@ def test_report_cross_session_and_symlink_are_rejected(prepared, tmp_path):
 
 def test_paused_job_and_retry_retain_original_chat_route(prepared):
     state, search, ident = prepared
-    backend, retrieve = LiteratureBackend(fail_once=True), Retriever()
+    class PreInvokeFailure(LiteratureBackend):
+        prepared = False
+
+        def ensure_thread(self, *args):
+            if not self.prepared:
+                self.prepared = True
+                raise ConnectionError('fixture pre-invocation connection failure')
+            return super().ensure_thread(*args)
+
+    backend, retrieve = PreInvokeFailure(), Retriever()
     failed = literature.run_study(state, search, ident, request(), backend=backend, retriever=retrieve)
     assert failed['status'] == 'failed'
     path = state / 'research-chat' / (ident + '.json')
@@ -285,6 +294,7 @@ def test_browser_reads_actual_literature_status_and_report_without_model(prepare
     result = literature.run_study(state, search, ident, request(), backend=backend, retriever=retrieve)
     manifest_path = Path(result['manifest'])
     manifest = json.loads(manifest_path.read_text())
+    manifest.pop('delivery_integrity')  # This test projects a legacy unsealed fixture.
     manifest['sources'].insert(0, {'source_id': 'raw-unselected', 'title': 'Unscreened retrieval result',
                                   'reading_level': 'metadata', 'url': 'https://example.org/raw'})
     manifest_path.write_text(json.dumps(manifest))
@@ -394,6 +404,7 @@ def test_browser_opens_running_study_before_report_and_keeps_job_selection(prepa
                                   backend=backend, retriever=retrieve)
     second_path = Path(second['manifest'])
     manifest = json.loads(second_path.read_text())
+    manifest.pop('delivery_integrity')  # An in-progress fixture has no completed-job seal.
     manifest.update(status='running', literature_agent_invoked=True, model_invoked=True,
                     output={'landscape': {'major_routes': [{'name': '<script>Preliminary mechanism</script>',
                                                            'focus': 'A preliminary scientific map is already available.'}]}})

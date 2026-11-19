@@ -352,6 +352,15 @@ def _projection(entry: dict, binding: dict, session_id: str, *, include_output: 
     turns = sum(isinstance(item, dict) and item.get('status') == 'completed' for item in manifest.get('invocations', []))
     invoked = manifest.get('literature_agent_invoked') is True and manifest.get('model_invoked') is True
     status = str(manifest.get('status') or 'registered')
+    integrity_error = ''
+    delivery_verification = ''
+    if status == 'completed' or manifest.get('delivery_integrity') is not None:
+        from theory_master.literature_delivery_integrity import LiteratureDeliveryIntegrityError, verify_completed_delivery
+        try:
+            delivery_verification = verify_completed_delivery(root, manifest)['status']
+        except LiteratureDeliveryIntegrityError:
+            integrity_error = 'Literature 交付资料缺损、已变化或绑定不一致；请检查原始交付记录。'
+            status = 'incomplete'
     if status == 'running' and not _owner_live(entry.get('active_owner')):
         status = 'interrupted'
     if status == 'completed' and not (invoked and turns > 0 and report.strip()):
@@ -373,6 +382,11 @@ def _projection(entry: dict, binding: dict, session_id: str, *, include_output: 
               'report_available': bool(report.strip()),
               'report_href': f'/api/research-chat/{session_id}/literature/{ident}/report',
               'scientific_evidence_created': False}
+    if delivery_verification:
+        result['delivery_verification'] = delivery_verification
+    if integrity_error:
+        result.update(stop_reason='delivery_integrity_failed', error=integrity_error,
+                      report_available=False)
     if include_details:
         result.update(sources=_public_sources(manifest), activity=_public_activity(manifest, status),
             access_revalidated=any(isinstance(item, dict) and item.get('access_validation_version') == 2
@@ -473,8 +487,11 @@ def read_study(state_dir: Path, ident: str, job_id: str) -> dict:
 
 def read_report(state_dir: Path, ident: str, job_id: str) -> str:
     listing = list_studies(state_dir, ident)
-    if not any(item['job_id'] == job_id for item in listing['jobs']):
+    projected = next((item for item in listing['jobs'] if item['job_id'] == job_id), None)
+    if projected is None:
         raise ChatLiteratureError('文献报告不存在', 404)
+    if projected.get('stop_reason') == 'delivery_integrity_failed':
+        raise ChatLiteratureError('Literature 交付资料缺损或已变化，不能读取为完整报告', 409)
     state, row = _session(state_dir, ident)
     index = _index(_index_path(state, ident), ident)
     binding = _binding(state, row, recorded=index.get('binding'))

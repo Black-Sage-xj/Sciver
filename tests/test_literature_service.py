@@ -168,18 +168,18 @@ def test_source_budget_is_an_execution_limit_not_a_claim_of_complete_review(tmp_
     assert "paused" in Path(result["report"]).read_text()
 
 
-def test_failed_model_turn_resumes_without_retrieving_completed_sources_again(tmp_path):
+def test_unanswered_model_turn_holds_without_retrieving_or_calling_again(tmp_path):
     backend, retrieve = LiteratureBackend(fail_once=True), Retriever()
     failed = run_literature(tmp_path / "job", request(), backend=backend, retriever=retrieve)
     assert failed["status"] == "failed"
     assert "fixture transient model failure" in failed["error"]
     first_retrievals = len(retrieve.calls)
-    completed = run_literature(tmp_path / "job", request(), backend=backend, retriever=retrieve)
-    assert completed["status"] == "completed", completed
-    assert len(retrieve.calls) == first_retrievals + 1  # only the not-yet-started second source
-    assert [row["stage"] for row in backend.calls].count("landscape") == 2
-    state = json.loads(Path(completed["manifest"]).read_text())
-    assert state["invocations"][1]["attempts"] == 2
+    held = run_literature(tmp_path / "job", request(), backend=backend, retriever=retrieve)
+    assert held["status"] == "failed" and "no durable response" in held["error"]
+    assert len(retrieve.calls) == first_retrievals
+    assert len(backend.calls) == 2  # discovery plus the original unanswered source turn
+    state = json.loads(Path(held["manifest"]).read_text())
+    assert state["invocations"][1]["attempts"] == 1
     assert len({row["thread_id"] for row in state["invocations"]}) == 1
 
 

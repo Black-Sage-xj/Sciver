@@ -23,6 +23,11 @@ import uuid
 from .backend_config import build_model_profile, read_model_profile, read_model_provider
 from .contract_closure import close_agent_output
 from .contracts import role_contract
+from .literature_delivery_integrity import (
+    LiteratureDeliveryIntegrityError, capture_completed_delivery, capture_invocation_delivery,
+    capture_transport_delivery, validate_saved_invocation, verify_completed_delivery,
+    verify_invocation_delivery, verify_transport_delivery,
+)
 from .output_normalization import normalize_agent_output
 from .prompt_stages import build_continuation_prompt, build_initial_prompt, stage_context
 from .runtime import atomic, now, write_json
@@ -34,14 +39,32 @@ from .stage_registry import stage_for
 SCHEMA = "sciver/literature-job/v1"
 MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
 MAX_IMPORT_BYTES = 96 * 1024 * 1024
+MAX_AGENT_ATTEMPTS = 2
+MAX_RETRIEVAL_ATTEMPTS = 2
 
 
 class LiteratureServiceError(ValueError):
     pass
 
 
+class LiteratureTransportError(LiteratureServiceError):
+    pass
+
+
 class _Paused(Exception):
     pass
+
+
+def _retryable_invocation_error(error: Exception) -> bool:
+    """Use the planner's bounded transport retry classification, never content."""
+    from .codex_errors import CodexProviderRequestRejected, CodexTurnCancelled
+    from .provider_errors import ProviderQuotaExhausted
+    from .workflow_support import RecoveryStop
+    if isinstance(error, (RecoveryStop, ProviderQuotaExhausted, CodexProviderRequestRejected, CodexTurnCancelled)):
+        return False
+    return isinstance(error, (ConnectionError, TimeoutError)) or bool(re.search(
+        r"transient|temporar|reconnect|connection|timed?\s*out|\b50[234]\b", str(error), re.I
+    ))
 
 
 def _json(path: Path, default: Any = None) -> Any:
@@ -174,6 +197,8 @@ def _import_manifest(root: Path, path_text: str, number: int) -> dict[str, Any]:
     manifest = _json(path)
     if not isinstance(manifest, dict) or manifest.get("schema") != "sciver/preparation-literature/v1":
         raise LiteratureServiceError("Only SDK preparation retrieval manifests may be reused")
+    if manifest.get("status") == "blocked" or (manifest.get("transport") or {}).get("status") == "blocked" or (manifest.get("transport") or {}).get("transport_ok") is False:
+        raise LiteratureTransportError("Reused Literature retrieval is blocked; connector failure cannot be used as source material")
     old = path.parent
     transport = _transport_paths(old, manifest.get("transport"))
     rows = manifest.get("artifacts")
@@ -576,6 +601,7 @@ def run_literature(workspace: Path, request: dict[str, Any], *, backend: Any = N
     stage deliveries. Resource limits may increase on an explicit resumed call.
     """
     request = _request(request)
+    owns_backend = backend is None
     with _locked(workspace) as root:
         manifest_path = _child(root, "manifest.json")
         state = _json(manifest_path)
@@ -606,8 +632,15 @@ def run_literature(workspace: Path, request: dict[str, Any], *, backend: Any = N
         selected_route = {"model": route.model, "provider": route.provider, "reasoning_effort": route.reasoning_effort}
         if state.get("route") and state["route"] != selected_route:
             raise LiteratureServiceError("Resume the Literature job with its original model/provider route")
-        if state.get("status") == "completed":
-            return _receipt(root, state)
+        if state.get("status") == "completed" or state.get("delivery_integrity") is not None:
+            try:
+                verification = verify_completed_delivery(root, state)
+            except LiteratureDeliveryIntegrityError as exc:
+                state.update(status="failed", stop_reason="delivery_integrity_failed", error=str(exc))
+                write_json(manifest_path, state)
+                return _receipt(root, state)
+            if state.get("status") == "completed":
+                return {**_receipt(root, state), "delivery_verification": verification["status"]}
         state["route"] = selected_route
         state["document_conversion"] = _conversion_capability()
         state.update({"status": "running", "error": "", "stop_reason": ""})
@@ -630,6 +663,9 @@ def run_literature(workspace: Path, request: dict[str, Any], *, backend: Any = N
         def retrieve(key: str, task: dict[str, Any]) -> dict[str, Any]:
             existing = next((item for item in state["transports"] if item["key"] == key), None)
             if existing:
+                if existing["transport"].get("status") == "blocked" or existing["transport"].get("transport_ok") is False:
+                    raise LiteratureTransportError("Saved Literature retrieval is blocked; its connector failure cannot be reused as source material")
+                verify_transport_delivery(root, existing)
                 return existing["transport"]
             check_cancel()
             fingerprint = hashlib.sha256(json.dumps({
@@ -643,14 +679,34 @@ def run_literature(workspace: Path, request: dict[str, Any], *, backend: Any = N
             }, sort_keys=True).encode()).hexdigest()
             reused = next((item for item in state["transports"] if item.get("query_fingerprint") == fingerprint), None)
             if reused:
+                verify_transport_delivery(root, reused)
                 state["transports"].append({"key": key, "task": task, "transport": reused["transport"],
-                                            "reused_from": reused["key"], "query_fingerprint": fingerprint})
+                                            "reused_from": reused["key"], "query_fingerprint": fingerprint,
+                                            "delivery_integrity": reused.get("delivery_integrity")})
                 save()
                 emit("literature.retrieval_reused", key=key, reused_from=reused["key"])
                 return reused["transport"]
+            attempts = state.setdefault("retrieval_attempt_history", [])
+            prior_attempts = [item for item in attempts if item.get("key") == key]
+            if len(prior_attempts) >= MAX_RETRIEVAL_ATTEMPTS:
+                raise LiteratureTransportError("Literature retrieval retry bound reached; original connector receipts were retained")
+            attempt = {"key": key, "attempt": len(prior_attempts) + 1, "started_at": now(), "status": "running"}
+            attempts.append(attempt)
+            save()
             emit("literature.retrieval_started", key=key, task_type=task["task_type"])
-            transport = _transport_paths(root, retriever(task, root))
-            state["transports"].append({"key": key, "task": task, "transport": transport, "query_fingerprint": fingerprint})
+            try:
+                transport = _transport_paths(root, retriever(task, root))
+                attempt.update(transport=transport, completed_at=now())
+                if transport.get("status") == "blocked" or transport.get("transport_ok") is False:
+                    raise LiteratureTransportError(str(transport.get("reason") or transport.get("error") or "Literature source connectors failed")[:1200])
+                seal = capture_transport_delivery(root, transport)
+                attempt["status"] = "completed"
+            except Exception as exc:
+                attempt.update(status="failed", completed_at=now(), error=f"{type(exc).__name__}: {exc}"[:1200])
+                save()
+                raise
+            state["transports"].append({"key": key, "task": task, "transport": transport,
+                                       "query_fingerprint": fingerprint, "delivery_integrity": seal})
             save()
             emit("literature.retrieval_completed", key=key, status=transport.get("status"),
                  metadata_hit_count=transport.get("metadata_hit_count", 0),
@@ -661,16 +717,10 @@ def run_literature(workspace: Path, request: dict[str, Any], *, backend: Any = N
             nonlocal backend
             previous = next((item for item in state["invocations"] if item["key"] == key), None)
             if previous and previous.get("status") == "completed":
-                output = _json(_child(root, previous["output_path"], file=True))
-                if not isinstance(output, dict):
-                    raise LiteratureServiceError("Saved Literature delivery cannot be recovered")
-                raw_path = _child(root, Path(previous["output_path"]).parent / "agent_output.json")
-                raw = _json(_child(root, raw_path, file=True)) if raw_path.is_file() else None
-                if isinstance(raw, dict):
-                    output = _access(output, raw, papers, sources)
-                    write_json(_child(root, previous["output_path"]), output)
-                    previous["access_validation_version"] = 2
-                return output
+                verify_invocation_delivery(root, previous)
+                # Contract and access checks are repeated against current
+                # retained material; replay never rewrites the original receipt.
+                return validate_saved_invocation(root, previous, papers, sources, exact=False)
             check_cancel()
             context = {"literature_task": task, "sdk_scholarly_retrieval": corpus}
             stage = stage_for("literature", {}, context)
@@ -679,8 +729,10 @@ def run_literature(workspace: Path, request: dict[str, Any], *, backend: Any = N
             home = _child(root, f"invocations/{key}")
             home.mkdir(parents=True, exist_ok=True)
             developer = developer_instructions("literature")
-            atomic(home / "developer.md", developer)
-            write_json(home / "context.json", context)
+            if not (home / "developer.md").exists():
+                atomic(home / "developer.md", developer)
+            if not (home / "context.json").exists():
+                write_json(home / "context.json", context)
             continuation = bool(state["thread_id"])
             if continuation:
                 prompt = build_continuation_prompt(role="literature", stage=stage,
@@ -690,57 +742,109 @@ def run_literature(workspace: Path, request: dict[str, Any], *, backend: Any = N
                 prompt = build_initial_prompt(prefix=f"Literature job {state['job_id']} (independent preparation/Chat work; no scientific Cycle).",
                     role="literature", stage=stage, contract_ref=contract.ref,
                     contract_schema=contract.prompt_projection(projection), context=projection, write_rule=rule)
-            atomic(home / "prompt.md", prompt)
+            if (home / "prompt.md").is_file():
+                prompt = _child(root, home / "prompt.md", file=True).read_text(encoding="utf-8")
+            else:
+                atomic(home / "prompt.md", prompt)
             invocation = previous or {"key": key, "role": "literature", "stage": stage,
                 "contract": contract.descriptor(), "skills": [ref.directory for ref in role_skills("literature")],
                 "prompt_path": str(home / "prompt.md"), "developer_path": str(home / "developer.md"),
+                "context_path": str(home / "context.json"),
                 "output_path": str(home / "output.json"), "raw_output_path": str(home / "response.txt"),
                 "route": selected_route, "attempts": 0}
             if previous is None:
                 state["invocations"].append(invocation)
             raw_path = _child(root, invocation["raw_output_path"])
-            if not raw_path.is_file() or invocation.get("status") == "failed":
-                if backend is None:
-                    from .codex_backend import CodexBackend
-                    # CodexBackend gives the Literature role its own cwd under
-                    # the supplied SDK workspace; do not nest it a second time.
-                    backend = CodexBackend(root, routes={"literature": route})
-                if Path(getattr(backend, "cwd", root)).resolve() != root:
-                    raise LiteratureServiceError("Literature backend must be bound to this dedicated job workspace")
-                thread = backend.ensure_thread("literature", state.get("thread_id"), route.model, route.provider)
-                state["thread_id"] = thread
-                invocation.update({"status": "running", "started_at": now(), "thread_id": thread,
-                                   "attempts": invocation["attempts"] + 1})
-                state["model_invoked"] = True
-                state["literature_agent_invoked"] = True
-                save()
-                emit("literature.agent_started", stage=stage, invocation_key=key, thread_id=thread,
-                     model=route.model, provider=route.provider)
-                try:
-                    parameters = inspect.signature(backend.invoke).parameters
-                    kwargs = {"cancel_event": cancel_event} if "cancel_event" in parameters else {}
-                    actual_thread, raw = backend.invoke("literature", prompt, thread, route.model, route.provider, **kwargs)
-                    state["thread_id"] = actual_thread
-                    invocation["thread_id"] = actual_thread
-                    atomic(raw_path, raw)
+            # A persisted response is the original delivery, even if its syntax
+            # or contract failed. Re-entry must never pay to replace that raw.
+            if not raw_path.exists():
+                attempts = invocation.get("attempts", 0)
+                if isinstance(attempts, bool) or not isinstance(attempts, int) or attempts < 0:
+                    raise LiteratureServiceError("Saved Literature invocation attempts are invalid")
+                phase = invocation.get("phase")
+                can_start = attempts == 0 and (not previous or phase in {"thread_start", "before_invocation"})
+                can_retry = (invocation.get("status") == "failed" and invocation.get("retryable") is True
+                             and phase in {"thread_start", "before_invocation"})
+                if attempts >= MAX_AGENT_ATTEMPTS:
+                    invocation.update({"status": "failed", "phase": "attempt_limit", "retryable": False,
+                                       "error": "Literature invocation transport retry bound reached"})
                     save()
+                    raise LiteratureServiceError(invocation["error"])
+                if not can_start and not can_retry:
+                    invocation.update({"status": "blocked", "retryable": False,
+                        "error": "Prior Literature invocation has no durable response; recover its original thread before another model request"})
+                    save()
+                    raise LiteratureServiceError(invocation["error"])
+                attempt = None
+                try:
+                    invocation.update({"status": "running", "phase": "thread_start", "retryable": False,
+                                       "attempts": attempts + 1})
+                    attempt = {"attempt": attempts + 1, "thread_id": invocation.get("thread_id") or state.get("thread_id"),
+                               "started_at": now(), "status": "running"}
+                    invocation.setdefault("attempt_history", []).append(attempt)
+                    save()
+                    if backend is None:
+                        from .codex_backend import CodexBackend
+                        # Keep the role cwd below this job; do not nest it twice.
+                        backend = CodexBackend(root, routes={"literature": route})
+                    if Path(getattr(backend, "cwd", root)).resolve() != root:
+                        raise LiteratureServiceError("Literature backend must be bound to this dedicated job workspace")
+                    original_thread = invocation.get("thread_id") or state.get("thread_id")
+                    thread = backend.ensure_thread("literature", original_thread, route.model, route.provider)
+                    if original_thread and thread != original_thread:
+                        raise LiteratureServiceError("Literature retries must retain the original thread")
+                    state["thread_id"] = thread
+                    invocation.update({"status": "running", "phase": "invoking", "started_at": now(),
+                                       "thread_id": thread})
+                    attempt["thread_id"] = thread
+                    state["model_invoked"] = True
+                    state["literature_agent_invoked"] = True
+                    save()
+                    emit("literature.agent_started", stage=stage, invocation_key=key, thread_id=thread,
+                         model=route.model, provider=route.provider)
+                    parameters = inspect.signature(backend.invoke).parameters
+                    supports_kwargs = any(item.kind == inspect.Parameter.VAR_KEYWORD for item in parameters.values())
+                    kwargs = {"cancel_event": cancel_event} if "cancel_event" in parameters or supports_kwargs else {}
+                    actual_thread, raw = backend.invoke("literature", prompt, thread, route.model, route.provider, **kwargs)
+                    invocation["returned_thread_id"] = actual_thread
+                    invocation["phase"] = "response_received"
+                    save()
+                    if not isinstance(raw, str) or len(raw.encode("utf-8")) > MAX_ARTIFACT_BYTES:
+                        raise LiteratureServiceError("Literature response must be bounded textual JSON")
+                    atomic(raw_path, raw)
+                    attempt.update({"status": "response_received", "completed_at": now()})
+                    save()
+                    if actual_thread != thread:
+                        raise LiteratureServiceError("Literature response returned from a different thread; raw receipt retained")
                 except Exception as exc:
-                    invocation.update({"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:1200]})
+                    retryable = (invocation.get("phase") in {"thread_start", "before_invocation"}
+                                 and _retryable_invocation_error(exc)
+                                 and int(invocation["attempts"]) < MAX_AGENT_ATTEMPTS)
+                    invocation.update({"status": "failed", "retryable": retryable,
+                                       "error": f"{type(exc).__name__}: {exc}"[:1200]})
+                    if attempt is not None:
+                        attempt.update({"status": "failed", "error": invocation["error"], "completed_at": now()})
                     save()
                     raise
-            raw = raw_path.read_text(encoding="utf-8")
             try:
+                invocation.update({"phase": "validation", "retryable": False})
+                if invocation.get("returned_thread_id", invocation.get("thread_id")) != invocation.get("thread_id"):
+                    raise LiteratureServiceError("Literature response returned from a different thread; raw receipt retained")
+                raw = _child(root, raw_path, file=True).read_text(encoding="utf-8")
                 value = normalize_agent_output(raw).value
                 contract.validate(value, context)
                 closed = close_agent_output("literature", stage, value, context, {})
                 closed = _access(closed, value, papers, sources)
             except Exception as exc:
-                invocation.update({"status": "failed", "error": f"{type(exc).__name__}: {exc}"[:1200]})
+                invocation.update({"status": "failed", "retryable": False,
+                                   "error": f"{type(exc).__name__}: {exc}"[:1200]})
                 save()
                 raise
             write_json(home / "agent_output.json", value)
             write_json(home / "output.json", closed)
-            invocation.update({"status": "completed", "completed_at": now(), "error": ""})
+            invocation.update({"status": "completed", "phase": "completed", "completed_at": now(), "error": "", "retryable": False,
+                               "access_validation_version": 2})
+            invocation["delivery_integrity"] = capture_invocation_delivery(root, invocation)
             save()
             emit("literature.agent_completed", stage=stage, invocation_key=key, thread_id=state["thread_id"],
                  remaining_scientific_question=closed.get("remaining_scientific_question", ""))
@@ -749,6 +853,11 @@ def run_literature(workspace: Path, request: dict[str, Any], *, backend: Any = N
         save()
         emit("literature.job_started", resumed=bool(state["invocations"]))
         try:
+            for entry in state["transports"]:
+                verify_transport_delivery(root, entry)
+            for invocation in state["invocations"]:
+                if invocation.get("status") == "completed":
+                    verify_invocation_delivery(root, invocation)
             check_cancel()
             if retriever is None:
                 from .scholarly_transport import retrieve_scholarly
@@ -757,7 +866,8 @@ def run_literature(workspace: Path, request: dict[str, Any], *, backend: Any = N
                 key = f"import-{index:02d}"
                 if not any(item["key"] == key for item in state["transports"]):
                     transport = _import_manifest(root, manifest, index)
-                    state["transports"].append({"key": key, "transport": transport, "source_manifest": manifest})
+                    state["transports"].append({"key": key, "transport": transport, "source_manifest": manifest,
+                                                "delivery_integrity": capture_transport_delivery(root, transport)})
                     save()
             if state.get("workflow_version") == 2 and not state.get("search_plan"):
                 emit("literature.planning_started")
@@ -858,13 +968,30 @@ def run_literature(workspace: Path, request: dict[str, Any], *, backend: Any = N
             state.update({"status": "paused", "stop_reason": str(exc)})
         except Exception as exc:
             cancelled = cancel_event is not None and cancel_event.is_set()
-            state.update({"status": "paused" if cancelled else "failed", "stop_reason": "cancelled" if cancelled else "execution_failed",
+            reason = "delivery_integrity_failed" if isinstance(exc, LiteratureDeliveryIntegrityError) else "transport_blocked" if isinstance(exc, LiteratureTransportError) else "execution_failed"
+            state.update({"status": "paused" if cancelled else "failed", "stop_reason": "cancelled" if cancelled else reason,
                           "error": f"{type(exc).__name__}: {exc}"[:1600]})
+        finally:
+            if owns_backend and callable(getattr(backend, "close", None)):
+                try:
+                    backend.close()
+                except Exception as exc:
+                    state["cleanup_error"] = f"{type(exc).__name__}: {exc}"[:1200]
+                    save()
         save()
         atomic(_child(root, "report.md"), _report(state))
+        if state["status"] == "completed":
+            try:
+                state["delivery_integrity"] = capture_completed_delivery(root, state)
+            except LiteratureDeliveryIntegrityError as exc:
+                state.update(status="failed", stop_reason="delivery_integrity_failed", error=str(exc))
+            save()
         emit("literature.job_finished", status=state["status"], stop_reason=state["stop_reason"],
              source_count=len(state["sources"]), agent_turns=len(state["invocations"]))
-        return _receipt(root, state)
+        receipt = _receipt(root, state)
+        if state["status"] == "completed":
+            receipt["delivery_verification"] = "sealed"
+        return receipt
 
 
 def _receipt(root: Path, state: dict[str, Any]) -> dict[str, Any]:
