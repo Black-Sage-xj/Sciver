@@ -1,12 +1,12 @@
 """Bind Chat literature jobs to real sessions and the shared Literature service.
 
-The Chat session may already be locked by its caller. This module only uses its
-own short index lock and the preparation material lock; it never locks Chat.
+The Chat session may already be locked by its caller. This module uses its own
+short index lock, per-job execution lease and preparation lock; it never locks Chat.
 """
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from datetime import datetime, timezone
 import fcntl
 import hashlib
@@ -39,23 +39,64 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec='microseconds')
 
 
-def _process_token(pid: int) -> str:
-    try:
-        return Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[19]
-    except (OSError, IndexError):
-        return ''
+_OWNER_LOCK = '.chat-literature-owner.lock'
+_SERVICE_LOCK = '.literature-job.lock'
 
 
-def _owner_live(owner: Any) -> bool:
-    if not isinstance(owner, dict) or type(owner.get('pid')) is not int or owner['pid'] <= 0:
+def _owner() -> dict:
+    """Diagnostic identity only; kernel locks determine whether a job is live."""
+    owner = {'lease_id': uuid.uuid4().hex, 'pid': os.getpid(), 'process_token': '', 'pid_namespace': ''}
+    try:
+        # /proc may belong to the host while getpid() uses an SDK PID namespace.
+        # /proc/self identifies this process in that procfs view. Record its
+        # namespace explicitly: the Web process may observe a different one.
+        record = Path('/proc/self/stat').read_text()
+        owner.update(pid=int(record.split('(', 1)[0]),
+                     process_token=record.rsplit(')', 1)[1].split()[19],
+                     pid_namespace=str(Path('/proc/self/ns/pid').readlink()))
+    except (OSError, IndexError, ValueError):
+        pass
+    return owner
+
+
+def _lock_held(path: Path) -> bool:
+    """Read lock state without creating a file or interpreting namespace PIDs."""
+    if path.is_symlink():
+        raise ChatLiteratureError('文献运行锁不安全', 409, 'literature_lock_invalid')
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
+    except FileNotFoundError:
         return False
     try:
-        os.kill(owner['pid'], 0)
-    except ProcessLookupError:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
         return False
-    except PermissionError:
-        return True
-    return not owner.get('process_token') or owner['process_token'] == _process_token(owner['pid'])
+    finally:
+        os.close(descriptor)
+
+
+def _owner_live(root: Path) -> bool:
+    # The service lock also recognizes older jobs whose index stored only a PID.
+    return _lock_held(root / _OWNER_LOCK) or _lock_held(root / _SERVICE_LOCK)
+
+
+@contextmanager
+def _owner_lease(root: Path):
+    root = _directory(root, create=True)
+    lock = root / _OWNER_LOCK
+    if lock.is_symlink():
+        raise ChatLiteratureError('文献运行锁不安全', 409, 'literature_lock_invalid')
+    descriptor = os.open(lock, os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+    with os.fdopen(descriptor, 'a+') as stream:
+        try:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise ChatLiteratureError('该文献调研已在执行，请先等待或取消原调用', 409, 'already_running') from exc
+        # Cover registration and final cleanup as well as the service itself.
+        # Keep the lock file: unlinking would let a second inode bypass exclusion.
+        yield
 
 
 def _directory(path: Path, *, create: bool = False) -> Path:
@@ -402,7 +443,7 @@ def _projection(entry: dict, binding: dict, session_id: str, *, include_output: 
         except LiteratureDeliveryIntegrityError:
             integrity_error = 'Literature 交付资料缺损、已变化或绑定不一致；请检查原始交付记录。'
             status = 'incomplete'
-    if status == 'running' and not _owner_live(entry.get('active_owner')):
+    if status == 'running' and not _owner_live(root):
         status = 'interrupted'
     if status == 'completed' and not (invoked and turns > 0 and report.strip()):
         status = 'incomplete'
@@ -447,13 +488,15 @@ def run_study(state_dir: Path, search_root: Path, ident: str, payload: dict, *, 
     state, row = _session(state_dir, ident)
     binding = _binding(state, row, search_root)
     job_id, request = _request(payload, binding)
+    root = _job_root(binding, job_id)
     guard = prep._locked(prep.workspace(state, ident)) if row['mode'] == 'preparation' else nullcontext()
     # Freeze must wait until the complete material set is stable; no Chat lock.
-    with guard:
+    with guard, ExitStack() as execution:
         if row['mode'] == 'preparation':
             metadata = prep._metadata(prep.workspace(state, ident), ident)
             if metadata.get('creation') is not None or metadata.get('created_task') is not None:
                 raise ChatLiteratureError('该筹备已确认立项，不能追加未纳入审阅的文献调研', 409, 'preparation_frozen')
+        execution.enter_context(_owner_lease(root))
         path = _index_path(state, ident, create=True)
         with _locked_index(path):
             index = _index(path, ident)
@@ -461,7 +504,9 @@ def run_study(state_dir: Path, search_root: Path, ident: str, payload: dict, *, 
             if entry:
                 if _entry_binding(state, row, index, entry, search_root) != binding:
                     raise ChatLiteratureError('筹备文献已冻结，请在正式项目中创建新的文献调研', 409, 'preparation_frozen')
-                if _owner_live(entry.get('active_owner')):
+                # Our lease excludes new adapters. The existing service lock
+                # excludes an older worker without consulting its PID receipt.
+                if _lock_held(root / _SERVICE_LOCK):
                     raise ChatLiteratureError('该文献调研已在执行，请先等待或取消原调用', 409, 'already_running')
                 previous = entry['request']
                 for key in _BUDGET_FIELDS:
@@ -488,9 +533,8 @@ def run_study(state_dir: Path, search_root: Path, ident: str, payload: dict, *, 
                 index['jobs'].append(entry)
                 index.setdefault('binding', binding)
             entry['binding'] = binding
-            entry['active_owner'] = {'pid': os.getpid(), 'process_token': _process_token(os.getpid())}
+            entry['active_owner'] = _owner()
             _save(path, index)
-        root = _job_root(binding, job_id)
         try:
             run_literature(root, request, backend=backend, retriever=retriever,
                            model=entry['model'], reasoning_effort=entry['reasoning_effort'],

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import fcntl
 import json
 from pathlib import Path
 import threading
@@ -577,6 +578,8 @@ def test_browser_opens_running_study_before_report_and_keeps_job_selection(prepa
     index = json.loads(index_path.read_text())
     index['jobs'][-1]['active_owner'] = {'pid': __import__('os').getpid()}
     index_path.write_text(json.dumps(index))
+    owner_handle = (second_path.parent / '.literature-job.lock').open('a+')
+    fcntl.flock(owner_handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     service_calls = len(backend.calls), len(retrieve.calls)
     server = ThreadingHTTPServer(('127.0.0.1', 0), make_handler(StateCache(search), field_notes_state_dir=state))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -634,6 +637,7 @@ def test_browser_opens_running_study_before_report_and_keeps_job_selection(prepa
             browser.close()
         assert service_calls == (len(backend.calls), len(retrieve.calls))
     finally:
+        owner_handle.close()
         server.shutdown()
         server.server_close()
         thread.join(timeout=3)
