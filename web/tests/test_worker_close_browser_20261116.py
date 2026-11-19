@@ -81,7 +81,7 @@ def test_browser_close_cancel_error_retry_and_live_completion(tmp_path):
             state_path.write_text(json.dumps(state))
             page.reload()
             page.once('dialog',lambda dialog:dialog.accept())
-            with patch.object(wr,'_launch_detached_service') as launch:
+            with patch('theory_master.worker_launch._launch_detached_service') as launch:
                 page.locator('[data-worker-close="worker-3"]').click()
                 expect(page.locator('[data-worker-feedback]')).to_contain_text('安全暂停并关闭')
                 assert launch.call_count==1

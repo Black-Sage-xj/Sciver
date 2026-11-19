@@ -97,7 +97,8 @@ def dispatch(specified: dict[str, Any]) -> dict[str, Any]:
         with scheduler_lock.open("a+", encoding="utf-8") as handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             visible = sum(not worker.get("dismissed") for worker in list_workers(spec.research_root))
-            return reduce_one_worker_request(spec.research_root, registered_count=visible)
+            return reduce_one_worker_request(spec.research_root, registered_count=visible,
+                                             missing_ok=True)
     if action == "start_worker_scheduler":
         from .worker_mode import read_mode
         from .worker_runtime import start_scheduler

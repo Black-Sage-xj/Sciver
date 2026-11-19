@@ -83,12 +83,15 @@ def request_one_worker(research_root: Path, *, registered_count: int) -> dict[st
 
 
 def reduce_one_worker_request(research_root: Path, *, registered_count: int,
-                              require_pending: bool = True, operation_id: str | None = None) -> dict[str, Any]:
+                              require_pending: bool = True, operation_id: str | None = None,
+                              missing_ok: bool = False) -> dict[str, Any]:
     """Reduce the desired future concurrency without touching running Cycles.
 
     For explicit pending cancellation, reject a count already claimed by a
     Worker. For an archived finished Worker, caller has already hidden its
     card, so one capacity slot may be released without affecting live owners.
+    Web cancellation may accept an already absent request as a read-only
+    success, so a stale card can refresh without reporting an uncertain write.
     """
     if type(registered_count) is not int or registered_count < 0:
         raise ValueError("invalid registered Worker count")
@@ -104,6 +107,12 @@ def reduce_one_worker_request(research_root: Path, *, registered_count: int,
             return {"requested_agents": raw.get("requested_agents", current["desired_agents"]),
                     "desired_agents": current["desired_agents"], "running_cycles_unaffected": True}
         requested = raw.get("requested_agents")
+        explicit = type(requested) is int and 1 <= requested <= 1024
+        if require_pending and missing_ok and (
+                not explicit or requested <= max(1, registered_count)):
+            return {"requested_agents": requested if explicit else current["desired_agents"],
+                    "desired_agents": current["desired_agents"],
+                    "running_cycles_unaffected": True, "already_satisfied": True}
         if type(requested) is not int or not 1 <= requested <= 1024:
             if require_pending:
                 raise ValueError("no explicit pending Agent request to cancel")

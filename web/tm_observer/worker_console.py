@@ -29,7 +29,9 @@ def registered_workers(run: dict[str, Any]) -> list[dict[str, Any]]:
         if not WORKER_ID.fullmatch(path.parent.name) or path.is_symlink() or path.parent.is_symlink():
             continue
         try:
-            if path.stat().st_size > 65536:
+            # Runtime provenance includes bounded source history and can
+            # exceed 64 KiB for a healthy Worker after several code updates.
+            if path.stat().st_size > 1048576:
                 continue
             value = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, UnicodeError):
@@ -207,7 +209,9 @@ def tab_bar(run: dict[str, Any], workers: list[dict[str, Any]], selected: str | 
                          f'<span class="tm-worker-dot" data-status="{status}"></span>'
                          f'Agent {number}<small>{label}</small></{tag}>'
                          f'{close(worker, number)}</span>')
-    count = len(workers)
+    # The fallback Agent 1 card occupies the minimum slot even before a
+    # Worker runtime is registered. Do not show it again as pending Agent 2.
+    count = max(1, len(workers))
     waiting = max(0, requested_worker_slots(run, count) - count)
     existing_numbers = {int(w["worker_id"].split("-")[1]) for w in workers}
     next_number = max(existing_numbers | {1}) + 1
