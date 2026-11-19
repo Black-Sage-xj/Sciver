@@ -419,7 +419,7 @@ def _chat_failure_message(exc: Exception, record: dict[str, Any]) -> tuple[str, 
 
 
 def _recover_selected_session(root: Path, ident: str) -> dict[str, Any]:
-    """Turn an orphaned in-memory run into an explicit, retryable state."""
+    """Recover an orphan only after ruling out a turn owned by another process."""
     row = _read(root, ident)
     with _JOBS_LOCK:
         job = _JOBS.get(ident)
@@ -432,20 +432,46 @@ def _recover_selected_session(root: Path, ident: str) -> dict[str, Any]:
     orphaned_legacy_turn = (run is None and row.get("mode") in {"project", "frontier"}
                             and isinstance(last, dict) and last.get("role") == "user")
     if status in {"starting", "streaming", "stopping"} or orphaned_legacy_turn:
-        if run is None:
-            run = {"id": uuid.uuid4().hex, "content": str(last.get("content") or ""),
-                   "user_message_id": str(last.get("id") or ""), "started_at": last.get("created_at") or _stamp()}
-            row["active_run"] = run
-        run.update({"status": "interrupted", "interrupted_at": _stamp(),
-                    "error_type": "ObserverProcessRestarted"})
-        notice = "上一条回复没有完成：服务重启后，旧版聊天任务的运行状态无法恢复。原问题已保留；点击「重试上一条消息」可重新回答。"
-        partial = str(run.get("stream_text") or "").strip()
-        if partial:
-            _message(row, "assistant", partial + "\n\n（回复因服务重启中断；以上只是未完成的部分内容。）")
-        elif not (isinstance(last, dict) and str(last.get("content") or "").startswith("上一条回复没有完成：")):
-            _message(row, "assistant", notice)
-        _finish_run(root, row, "interrupted")
-        _write(root, row)
+        lock = _file(root, ident).with_suffix(".lock")
+        with lock.open("a+") as handle:
+            if not _try_session_lock(handle):
+                # Another Web process owns the turn. Its runtime is readable,
+                # but this process must not close or acquire control of it.
+                persisted = _runtime(root, ident).get("run") or {}
+                if run and persisted.get("id") == run.get("id"):
+                    row["active_run"] = {**run, **persisted}
+                return row
+            try:
+                # The owner may have completed between our first read and the
+                # lock check. Re-read while holding the lock before any write.
+                row = _read(root, ident)
+                with _JOBS_LOCK:
+                    job = _JOBS.get(ident)
+                    if job and job.get("status") in _ACTIVE:
+                        return row
+                run = row.get("active_run") if isinstance(row.get("active_run"), dict) else None
+                status = str(run.get("status") or "") if run else ""
+                last = row.get("messages", [])[-1] if row.get("messages") else {}
+                orphaned_legacy_turn = (run is None and row.get("mode") in {"project", "frontier"}
+                                       and isinstance(last, dict) and last.get("role") == "user")
+                if status not in _ACTIVE and not orphaned_legacy_turn:
+                    return row
+                if run is None:
+                    run = {"id": uuid.uuid4().hex, "content": str(last.get("content") or ""),
+                           "user_message_id": str(last.get("id") or ""), "started_at": last.get("created_at") or _stamp()}
+                    row["active_run"] = run
+                run.update({"status": "interrupted", "interrupted_at": _stamp(),
+                            "error_type": "ObserverProcessRestarted"})
+                notice = "上一条回复没有完成：服务重启后，旧版聊天任务的运行状态无法恢复。原问题已保留；点击「重试上一条消息」可重新回答。"
+                partial = str(run.get("stream_text") or "").strip()
+                if partial:
+                    _message(row, "assistant", partial + "\n\n（回复因服务重启中断；以上只是未完成的部分内容。）")
+                elif not (isinstance(last, dict) and str(last.get("content") or "").startswith("上一条回复没有完成：")):
+                    _message(row, "assistant", notice)
+                _finish_run(root, row, "interrupted")
+                _write(root, row)
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
     return row
 
 
@@ -476,7 +502,7 @@ def snapshot(state_dir: Path, state: dict[str, Any], selected: str | None = None
         if selected_row.get("mode") == "preparation" or selected_row.get("preparation_id") == selected_row.get("id"):
             selected_row["preparation"] = preparation_state(state_dir, selected_row["id"])
         run = selected_row.get("active_run") if isinstance(selected_row.get("active_run"), dict) else {}
-        selected_row["streaming"] = bool(job and job.get("status") in {"starting", "streaming", "stopping"})
+        selected_row["streaming"] = job.get("status") in _ACTIVE or run.get("status") in _ACTIVE
         selected_row["stream_text"] = (job.get("text", "") if job else
                                         str(run.get("stream_text") or "") if run.get("status") in {"starting", "streaming", "stopping"} else "")
         selected_row["stream_status"] = job.get("status") if job else run.get("status")
