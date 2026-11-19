@@ -78,6 +78,133 @@ def test_preparation_uses_real_role_current_route_report_and_idempotent_job(prep
                              backend=backend, retriever=retrieve)
 
 
+def test_explicit_budget_increase_resumes_same_job_and_keeps_progress_readable(prepared):
+    state, search, ident = prepared
+    backend, retrieve = LiteratureBackend(remaining=True), Retriever()
+    first = literature.run_study(state, search, ident, request(max_rounds=1, max_sources=3),
+                                 backend=backend, retriever=retrieve)
+    assert first['status'] == 'paused' and first['stop_reason'] == 'round_budget_exhausted'
+    original_calls = len(backend.calls)
+    observed = []
+    def progress(event):
+        if event['event'] == 'literature.job_started':
+            observed.append(literature.read_study(state, ident, first['job_id'])['job'])
+    resumed = literature.run_study(state, search, ident,
+        request(job_id=first['job_id'], max_rounds=2), backend=backend, retriever=retrieve, on_event=progress)
+    assert resumed['job_id'] == first['job_id'] and resumed['round'] == 2
+    assert len(backend.calls) > original_calls and observed
+    manifest = json.loads(Path(resumed['manifest']).read_text())
+    index = json.loads(literature._index_path(state, ident).read_text())
+    assert manifest['request'] == index['jobs'][0]['request']
+    assert manifest['request']['max_rounds'] == 2 and manifest['request']['max_sources'] == 3
+    calls_before = len(backend.calls), len(retrieve.calls)
+    for limits in ({}, {'max_rounds': 1, 'max_sources': 1}):
+        literature.run_study(state, search, ident, request(job_id=first['job_id'], **limits),
+                             backend=backend, retriever=retrieve)
+        current = json.loads(Path(resumed['manifest']).read_text())['request']
+        assert current['max_rounds'] == 2 and current['max_sources'] == 3
+    assert (len(backend.calls), len(retrieve.calls)) == calls_before
+
+
+def test_explicit_source_budget_increase_reads_remaining_source(prepared):
+    state, search, ident = prepared
+    backend, retrieve = LiteratureBackend(remaining=True), Retriever()
+    first = literature.run_study(state, search, ident, request(max_sources=1),
+                                 backend=backend, retriever=retrieve)
+    assert first['status'] == 'paused' and first['stop_reason'] == 'source_budget_exhausted'
+    backend.remaining = False
+    resumed = literature.run_study(state, search, ident, request(job_id=first['job_id'], max_sources=2),
+                                   backend=backend, retriever=retrieve)
+    assert resumed['status'] == 'completed'
+    assert len([call for call in retrieve.calls if call['task_type'] == 'targeted_source']) == 2
+    calls_before = len(backend.calls), len(retrieve.calls)
+    again = literature.run_study(state, search, ident,
+        request(job_id=first['job_id'], max_sources=12, max_rounds=4), backend=backend, retriever=retrieve)
+    assert again['status'] == 'completed'
+    assert (len(backend.calls), len(retrieve.calls)) == calls_before
+    assert json.loads(Path(again['manifest']).read_text())['request']['max_sources'] == 2
+
+
+@pytest.mark.parametrize('changed', [
+    {'query': 'Another question'}, {'scope': 'Another scope'},
+    {'max_rounds': 5}, {'max_sources': 13},
+])
+def test_resume_keeps_assigned_question_and_hard_budget_limits(prepared, changed):
+    state, search, ident = prepared
+    backend, retrieve = LiteratureBackend(remaining=True), Retriever()
+    first = literature.run_study(state, search, ident, request(max_rounds=1),
+                                 backend=backend, retriever=retrieve)
+    before = literature._index_path(state, ident).read_bytes()
+    calls_before = len(backend.calls), len(retrieve.calls)
+    with pytest.raises(ValueError):
+        literature.run_study(state, search, ident, request(job_id=first['job_id'], **changed),
+                             backend=backend, retriever=retrieve)
+    assert literature._index_path(state, ident).read_bytes() == before
+    assert (len(backend.calls), len(retrieve.calls)) == calls_before
+
+
+def promote_preparation(state, search, ident):
+    current = prep.snapshot(state, ident)
+    current = prep.update(state, ident, {'expected_revision': current['revision'], 'draft': PLAN,
+                                       'title': 'Fixture project', 'intent': 'Compare the mechanism.'})
+    created = prep.create_project(state, search, ident, {'confirm': True, 'expected_revision': current['revision']})
+    path = state / 'research-chat' / (ident + '.json')
+    row = json.loads(path.read_text())
+    row.update(mode='project', task_id=created['observer_id'], preparation_id=ident)
+    path.write_text(json.dumps(row))
+    return created
+
+
+def test_promoted_chat_keeps_legacy_reports_and_places_new_jobs_in_project(prepared):
+    state, search, ident = prepared
+    backend, retrieve = LiteratureBackend(), Retriever()
+    old = literature.run_study(state, search, ident, request(), backend=backend, retriever=retrieve)
+    index_path = literature._index_path(state, ident)
+    index = json.loads(index_path.read_text())
+    index['jobs'][0].pop('binding')  # Existing installations stored one index binding.
+    literature._save(index_path, index)
+    old_report = literature.read_report(state, ident, old['job_id'])
+    created = promote_preparation(state, search, ident)
+    assert literature.read_report(state, ident, old['job_id']) == old_report
+    assert literature.read_study(state, ident, old['job_id'])['job']['status'] == 'completed'
+    with pytest.raises(literature.ChatLiteratureError, match='筹备文献已冻结'):
+        literature.run_study(state, search, ident, request(job_id=old['job_id']),
+                             backend=backend, retriever=retrieve)
+    new = literature.run_study(state, search, ident, request(query='Follow up in this project'),
+                               backend=backend, retriever=retrieve)
+    assert Path(new['manifest']).is_relative_to(Path(created['research_root']) / 'chat-literature' / ident)
+    assert {job['job_id'] for job in literature.list_studies(state, ident)['jobs']} == {old['job_id'], new['job_id']}
+    assert literature.read_report(state, ident, old['job_id']) == old_report
+    assert literature.read_report(state, ident, new['job_id'])
+    saved = json.loads(index_path.read_text())
+    assert saved['binding']['mode'] == 'preparation'
+    assert saved['jobs'][1]['binding']['mode'] == 'project'
+
+
+@pytest.mark.parametrize('tamper', ['preparation_id', 'created_task', 'workspace_root'])
+def test_promoted_preparation_reports_require_verified_origin(prepared, tamper):
+    state, search, ident = prepared
+    old = literature.run_study(state, search, ident, request(), backend=LiteratureBackend(), retriever=Retriever())
+    promote_preparation(state, search, ident)
+    if tamper == 'preparation_id':
+        path = state / 'research-chat' / (ident + '.json')
+        row = json.loads(path.read_text())
+        row['preparation_id'] = 'f' * 32
+        path.write_text(json.dumps(row))
+    elif tamper == 'created_task':
+        root = prep.workspace(state, ident)
+        metadata = prep._metadata(root, ident)
+        metadata['created_task']['observer_id'] = 'f' * 16
+        prep._write_meta(root, metadata)
+    else:
+        path = literature._index_path(state, ident)
+        index = json.loads(path.read_text())
+        index['jobs'][0]['binding']['workspace_root'] = str(search)
+        literature._save(path, index)
+    with pytest.raises(literature.ChatLiteratureError, match='绑定不一致'):
+        literature.read_report(state, ident, old['job_id'])
+
+
 @pytest.mark.parametrize('field', ['creation', 'created_task'])
 def test_frozen_preparation_refuses_new_literature_without_model(prepared, field):
     state, search, ident = prepared
@@ -227,12 +354,45 @@ def test_cli_uses_receipt_and_sanitizes_exception(prepared, monkeypatch, capsys)
     args = ['--state-dir', str(state), '--search-root', str(search), '--session', ident, '--query', QUERY]
     assert literature.main(args) == 0
     assert json.loads(capsys.readouterr().out)['thread_id'] == 'thread'
-    assert payloads[0]['max_rounds'] == 2 and payloads[0]['max_sources'] == 6
+    assert 'max_rounds' not in payloads[0] and 'max_sources' not in payloads[0]
+    _, fresh_request = literature._request(payloads[0], {})
+    assert fresh_request['max_rounds'] == 2 and fresh_request['max_sources'] == 6
+    assert literature.main([*args, '--job-id', 'b' * 32, '--max-rounds', '2']) == 0
+    capsys.readouterr()
+    assert payloads[1]['max_rounds'] == 2 and 'max_sources' not in payloads[1]
+    assert literature.main([*args, '--max-rounds', '3', '--max-sources', '8']) == 0
+    capsys.readouterr()
+    assert payloads[2]['max_rounds'] == 3 and payloads[2]['max_sources'] == 8
     def fail(*args, **kwargs):
         raise ValueError('fixture private API key must not echo')
     monkeypatch.setattr(literature, 'run_study', fail)
     assert literature.main(args) == 1
     assert 'private API key' not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize('reason,message', [
+    ('binding_mismatch', '文献索引与当前会话任务绑定不一致'),
+    ('literature_record_invalid', '文献记录无法读取'),
+])
+def test_cli_preserves_safe_service_error_details(prepared, monkeypatch, capsys, reason, message):
+    state, search, ident = prepared
+    def fail(*args, **kwargs):
+        raise literature.ChatLiteratureError(message, 409, reason)
+    monkeypatch.setattr(literature, 'run_study', fail)
+    assert literature.main(['--state-dir', str(state), '--search-root', str(search),
+                            '--session', ident, '--query', QUERY]) == 1
+    assert json.loads(capsys.readouterr().out) == {
+        'ok': False, 'status': 'blocked', 'error': message, 'http_status': 409, 'stop_reason': reason}
+
+
+def test_cli_invalid_budget_is_actionable_without_invoking_a_model(prepared, capsys):
+    state, search, ident = prepared
+    assert literature.main(['--state-dir', str(state), '--search-root', str(search),
+                            '--session', ident, '--query', QUERY, '--max-rounds', '5']) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output['http_status'] == 400 and output['stop_reason'] == 'invalid_budget'
+    assert 'max_rounds' in output['error'] and '1 to 4' in output['error']
+    assert not (prep.workspace(state, ident) / 'literature').exists()
 
 
 def test_read_only_http_status_report_and_unknown_job(prepared):

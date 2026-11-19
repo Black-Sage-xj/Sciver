@@ -29,9 +29,10 @@ _MAX_JSON = 32 * 1024 * 1024
 
 
 class ChatLiteratureError(ValueError):
-    def __init__(self, message: str, status: int = 400):
+    def __init__(self, message: str, status: int = 400, stop_reason: str = 'literature_request_rejected'):
         super().__init__(message)
         self.status = status
+        self.stop_reason = stop_reason
 
 
 def _now() -> str:
@@ -70,13 +71,13 @@ def _directory(path: Path, *, create: bool = False) -> Path:
 
 def _json(path: Path) -> dict:
     if path != path.resolve() or path.is_symlink() or not path.is_file() or path.stat().st_size > _MAX_JSON:
-        raise ChatLiteratureError('文献记录不存在或不安全', 409)
+        raise ChatLiteratureError('文献记录不存在或不安全', 409, 'literature_record_invalid')
     try:
         value = json.loads(path.read_text(encoding='utf-8'))
     except (OSError, ValueError, UnicodeError) as exc:
-        raise ChatLiteratureError('文献记录无法读取', 409) from exc
+        raise ChatLiteratureError('文献记录无法读取', 409, 'literature_record_invalid') from exc
     if not isinstance(value, dict):
-        raise ChatLiteratureError('文献记录格式无效', 409)
+        raise ChatLiteratureError('文献记录格式无效', 409, 'literature_record_invalid')
     return value
 
 
@@ -144,25 +145,64 @@ def _binding(state: Path, row: dict, search_root: Path | None = None, recorded: 
     else:
         task = (recorded or {}).get('task')
     if not isinstance(task, dict) or task.get('observer_id') != row.get('task_id'):
-        raise ChatLiteratureError('会话绑定的科研任务不存在', 404)
+        raise ChatLiteratureError('会话绑定的科研任务不存在', 404, 'binding_mismatch')
     research_chat._chat_task_binding(task)
     research_root = _directory(Path(str(task.get('research_root') or '')))
     if hashlib.sha256(str(research_root).encode()).hexdigest()[:16] != row.get('task_id'):
-        raise ChatLiteratureError('文献任务与当前科研目录绑定不一致', 409)
+        raise ChatLiteratureError('文献任务与当前科研目录绑定不一致', 409, 'binding_mismatch')
     clean_task = {key: task[key] for key in ('observer_id', 'task_root', 'research_root')}
     return {'mode': row['mode'], 'task_id': row['task_id'], 'task': clean_task,
             'workspace_root': str(research_root / 'chat-literature' / ident)}
 
 
+def _entry_binding(state: Path, row: dict, index: dict, entry: dict,
+                   search_root: Path | None = None) -> dict:
+    recorded = entry.get('binding', index.get('binding'))
+    if not isinstance(recorded, dict):
+        raise ChatLiteratureError('文献索引与当前会话任务绑定不一致', 409, 'binding_mismatch')
+    if recorded.get('mode') == 'preparation' and row['mode'] != 'preparation':
+        # A promoted conversation retains its own frozen preparation reports.
+        # Verify both ends of the creation receipt before reading the old root.
+        if row.get('preparation_id') != row['id']:
+            raise ChatLiteratureError('文献索引与当前会话任务绑定不一致', 409, 'binding_mismatch')
+        metadata = prep._metadata(prep.workspace(state, row['id']), row['id'])
+        created = metadata.get('created_task')
+        if not isinstance(created, dict) or created.get('observer_id') != row.get('task_id'):
+            raise ChatLiteratureError('文献索引与当前会话任务绑定不一致', 409, 'binding_mismatch')
+        _binding(state, row, search_root, recorded={'task': created})
+        current = _binding(state, {'id': row['id'], 'mode': 'preparation'})
+    else:
+        current = _binding(state, row, search_root, recorded=recorded)
+    if recorded != current:
+        raise ChatLiteratureError('文献索引与当前会话任务绑定不一致', 409, 'binding_mismatch')
+    return current
+
+
+_BUDGET_FIELDS = {'max_rounds', 'max_sources'}
+
+
+def _within_authorized_budget(actual: Any, authorized: dict) -> bool:
+    if not isinstance(actual, dict):
+        return False
+    return ({key: value for key, value in actual.items() if key not in _BUDGET_FIELDS}
+            == {key: value for key, value in authorized.items() if key not in _BUDGET_FIELDS}
+            and all(type(actual.get(key)) is int and type(authorized.get(key)) is int
+                    and 1 <= actual[key] <= authorized[key] for key in _BUDGET_FIELDS))
+
+
 def _request(payload: dict, binding: dict) -> tuple[str, dict]:
-    from theory_master.literature_service import _request as normalize
+    from theory_master.literature_service import LiteratureServiceError, _request as normalize
     if not isinstance(payload, dict) or set(payload) - {'query', 'scope', 'job_id', 'max_rounds', 'max_sources', 'retrieval_manifests'}:
         raise ChatLiteratureError('文献调研参数无效')
     ident = payload.get('job_id', '')
     if not isinstance(ident, str) or (ident and not _ID.fullmatch(ident)):
         raise ChatLiteratureError('文献调研标识无效')
     ident = ident or uuid.uuid4().hex
-    request = normalize({key: value for key, value in payload.items() if key != 'job_id'})
+    try:
+        request = normalize({key: value for key, value in payload.items() if key != 'job_id'})
+    except LiteratureServiceError as exc:
+        reason = 'invalid_budget' if str(exc).startswith(('max_rounds ', 'max_sources ')) else 'invalid_request'
+        raise ChatLiteratureError(str(exc), 400, reason) from exc
     manifests = request['retrieval_manifests']
     if manifests:
         if binding['mode'] != 'preparation':
@@ -346,7 +386,8 @@ def _projection(entry: dict, binding: dict, session_id: str, *, include_output: 
     manifest = _json(root / 'manifest.json') if (root / 'manifest.json').exists() else {}
     if manifest and manifest.get('schema') != 'sciver/literature-job/v1':
         raise ChatLiteratureError('文献调研执行记录无效', 409)
-    if manifest and (manifest.get('job_id') != entry['job_id'] or manifest.get('request') != entry['request']):
+    if manifest and (manifest.get('job_id') != entry['job_id']
+                     or not _within_authorized_budget(manifest.get('request'), entry['request'])):
         raise ChatLiteratureError('文献执行记录与已登记问题不一致', 409)
     report = _report(root)
     turns = sum(isinstance(item, dict) and item.get('status') == 'completed' for item in manifest.get('invocations', []))
@@ -412,18 +453,32 @@ def run_study(state_dir: Path, search_root: Path, ident: str, payload: dict, *, 
         if row['mode'] == 'preparation':
             metadata = prep._metadata(prep.workspace(state, ident), ident)
             if metadata.get('creation') is not None or metadata.get('created_task') is not None:
-                raise ChatLiteratureError('该筹备已确认立项，不能追加未纳入审阅的文献调研', 409)
+                raise ChatLiteratureError('该筹备已确认立项，不能追加未纳入审阅的文献调研', 409, 'preparation_frozen')
         path = _index_path(state, ident, create=True)
         with _locked_index(path):
             index = _index(path, ident)
-            if index.get('binding', binding) != binding:
-                raise ChatLiteratureError('文献索引与当前会话任务绑定不一致', 409)
             entry = next((item for item in index['jobs'] if item.get('job_id') == job_id), None)
             if entry:
-                if entry.get('request') != request:
-                    raise ChatLiteratureError('同一文献调研不能更换问题、范围或资源上限', 409)
+                if _entry_binding(state, row, index, entry, search_root) != binding:
+                    raise ChatLiteratureError('筹备文献已冻结，请在正式项目中创建新的文献调研', 409, 'preparation_frozen')
                 if _owner_live(entry.get('active_owner')):
-                    raise ChatLiteratureError('该文献调研已在执行，请先等待或取消原调用', 409)
+                    raise ChatLiteratureError('该文献调研已在执行，请先等待或取消原调用', 409, 'already_running')
+                previous = entry['request']
+                for key in _BUDGET_FIELDS:
+                    # Omitted defaults never enlarge a previously bounded job;
+                    # lower values retain the service's existing monotonic cap.
+                    request[key] = max(previous[key], request[key]) if key in payload else previous[key]
+                if not _within_authorized_budget(previous, request):
+                    raise ChatLiteratureError('同一文献调研不能更换问题或范围', 409, 'request_mismatch')
+                manifest_path = _job_root(binding, job_id) / 'manifest.json'
+                manifest = _json(manifest_path) if manifest_path.exists() else {}
+                if manifest.get('status') == 'completed' or manifest.get('delivery_integrity') is not None:
+                    # Completed delivery seals include the original request.
+                    # Returning that delivery requires no further resources.
+                    request = dict(manifest['request'])
+                    if not _within_authorized_budget(request, previous):
+                        raise ChatLiteratureError('文献执行记录与已登记问题不一致', 409)
+                entry['request'] = request
             else:
                 if len(index['jobs']) >= 1000:
                     raise ChatLiteratureError('该会话文献任务已达到上限，请使用新会话', 413)
@@ -431,7 +486,8 @@ def run_study(state_dir: Path, search_root: Path, ident: str, payload: dict, *, 
                          'model': row.get('model') or 'gpt-6-sol',
                          'reasoning_effort': row.get('reasoning_effort') or 'medium'}
                 index['jobs'].append(entry)
-                index['binding'] = binding
+                index.setdefault('binding', binding)
+            entry['binding'] = binding
             entry['active_owner'] = {'pid': os.getpid(), 'process_token': _process_token(os.getpid())}
             _save(path, index)
         root = _job_root(binding, job_id)
@@ -461,10 +517,9 @@ def list_studies(state_dir: Path, ident: str) -> dict:
     index = _index(path, ident)
     if not index['jobs']:
         return {'ok': True, 'session_id': ident, 'jobs': []}
-    binding = _binding(state, row, recorded=index.get('binding'))
-    if index.get('binding') != binding:
-        raise ChatLiteratureError('文献索引与当前会话任务绑定不一致', 409)
-    return {'ok': True, 'session_id': ident, 'jobs': [_projection(entry, binding, ident) for entry in reversed(index['jobs'])]}
+    return {'ok': True, 'session_id': ident, 'jobs': [
+        _projection(entry, _entry_binding(state, row, index, entry), ident)
+        for entry in reversed(index['jobs'])]}
 
 
 def read_study(state_dir: Path, ident: str, job_id: str) -> dict:
@@ -479,9 +534,7 @@ def read_study(state_dir: Path, ident: str, job_id: str) -> dict:
     entry = next((item for item in index['jobs'] if item.get('job_id') == job_id), None)
     if entry is None:
         raise ChatLiteratureError('文献调研不存在', 404)
-    binding = _binding(state, row, recorded=index.get('binding'))
-    if index.get('binding') != binding:
-        raise ChatLiteratureError('文献索引与当前会话任务绑定不一致', 409)
+    binding = _entry_binding(state, row, index, entry)
     return {'ok': True, 'session_id': ident, 'job': _projection(entry, binding, ident, include_details=True)}
 
 
@@ -494,7 +547,8 @@ def read_report(state_dir: Path, ident: str, job_id: str) -> str:
         raise ChatLiteratureError('Literature 交付资料缺损或已变化，不能读取为完整报告', 409)
     state, row = _session(state_dir, ident)
     index = _index(_index_path(state, ident), ident)
-    binding = _binding(state, row, recorded=index.get('binding'))
+    entry = next(item for item in index['jobs'] if item.get('job_id') == job_id)
+    binding = _entry_binding(state, row, index, entry)
     root = _job_root(binding, job_id)
     text = _report(root)
     if not text.strip():
@@ -512,8 +566,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--query', required=True)
     parser.add_argument('--scope', default='')
     parser.add_argument('--job-id', default='')
-    parser.add_argument('--max-rounds', type=int, default=2)
-    parser.add_argument('--max-sources', type=int, default=6)
+    parser.add_argument('--max-rounds', type=int)
+    parser.add_argument('--max-sources', type=int)
     parser.add_argument('--retrieval-manifest', action='append', default=[])
     args = parser.parse_args(argv)
     cancel = threading.Event()
@@ -522,10 +576,18 @@ def main(argv: list[str] | None = None) -> int:
         for signum in (signal.SIGTERM, signal.SIGINT):
             previous[signum] = signal.signal(signum, lambda _signum, _frame: cancel.set())
     try:
+        payload = {'query': args.query, 'scope': args.scope, 'job_id': args.job_id,
+                   'retrieval_manifests': args.retrieval_manifest}
+        if args.max_rounds is not None:
+            payload['max_rounds'] = args.max_rounds
+        if args.max_sources is not None:
+            payload['max_sources'] = args.max_sources
         result = run_study(args.state_dir, args.search_root, args.session,
-                           {'query': args.query, 'scope': args.scope, 'job_id': args.job_id,
-                            'max_rounds': args.max_rounds, 'max_sources': args.max_sources,
-                            'retrieval_manifests': args.retrieval_manifest}, cancel_event=cancel)
+                           payload, cancel_event=cancel)
+    except ChatLiteratureError as exc:
+        print(json.dumps({'ok': False, 'status': 'blocked', 'error': str(exc),
+                          'http_status': exc.status, 'stop_reason': exc.stop_reason}, ensure_ascii=False))
+        return 1
     except (OSError, ValueError, RuntimeError):
         print(json.dumps({'ok': False, 'status': 'blocked', 'error': '文献调研未完成，请检查会话绑定、资料与执行记录。'}, ensure_ascii=False))
         return 1
