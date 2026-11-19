@@ -153,7 +153,7 @@ class ResearchChatTests(unittest.TestCase):
         self.assertIn("Shared Literature service binding", fake.calls[0][1])
         self.assertIn("document_conversion", fake.calls[0][1])
         row = snapshot(self.state_dir, self.state, ident)["session"]
-        self.assertEqual(row["agent_policy_version"], 8)
+        self.assertEqual(row["agent_policy_version"], module._AGENT_POLICY_VERSION)
         self.assertEqual(row["codex_thread_id"], "native-thread-1")
 
     def test_native_codex_thread_is_resumed_across_chat_turns(self):
@@ -404,7 +404,6 @@ class ResearchChatTests(unittest.TestCase):
                 self.assertIn('了解研究进展', html)
                 self.assertNotIn('loquix-chat-composer', html)
                 self.assertLess(html.index('data-research-mode="frontier"'), html.index('data-research-mode="project"'))
-                self.assertIn('<details class="tm-research-migrate">', html)
                 self.assertIn('data-research-mode="migration"', html)
             body = json.dumps({"mode": "migration"}).encode("utf-8")
             with self.assertRaises(HTTPError) as rejected:

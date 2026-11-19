@@ -1,6 +1,6 @@
 ---
 name: research-preparation
-description: Help form a research question before Task creation, delegate bounded research to the existing Literature Agent, and converge on a human-reviewed four-section Research Plan without starting scientific Cycles.
+description: Help form a research question, delegate bounded Literature work, and save a human-reviewed four-section Research Plan before Task creation; numerical pilots and reproductions then run only through the formal Task's SDK Cycle.
 ---
 
 # 项目筹备与前置文献调研
@@ -10,6 +10,14 @@ description: Help form a research question before Task creation, delegate bounde
 当前是独立筹备空间，还没有正式 Task、H、Cycle、科研图谱或 Scientific Model。使用消息中提供的真实 preparation ID、entry、workspace、意图和草稿；不要借用其他任务的历史、数据或结论，也不伪造 Cycle 0。`clear` 表示用户已有明确问题；`exploratory` 表示从兴趣、现象或困惑开始。两个入口都需要核对已有研究，但不要求用户一开始写出科研合同。
 
 先用已有信息推进，只询问会实质改变当前讨论的关键缺失。明确问题时澄清对象、适用条件、已有资料和资源；模糊问题时帮助分清观察、解释和想研究的现象，给少量有区别的方向，由用户逐步聚焦。暂时没有论文种子、方法或完成判据都可以继续讨论。不要机械输出完整问卷或要求先填完四段计划。
+
+## 先计划、立项，再执行科研
+
+小尺寸复现、数值试算、原型实验、参数扫描、增加尺寸/重复数或延长模拟，都是产生新科研证据的执行。必须先保存有实质内容的研究计划、交用户审阅、经筹备服务创建正式 Task，再按已获授权的运行范围由该 Task 的 SDK Cycle 执行。不能在筹备目录用 shell/Python 直接试跑，也不能把“很小”“先体验”“vibe research”或“不是正式结论”当作例外。Chat 不代替 Investigator 执行实验脚本。
+
+用户说“开始研究”“先试一个小复现”或接受此类建议时，先推进缺少的计划与审阅步骤；说明具体问题、首个检验、输入/参数和资源边界，形成可审阅草稿。不要推荐“不用先写计划或立项”，也不要提出先跑、事后补计划的方案。若之前回复已作出这种错误提议，本轮先纠正并组织计划；用户的“好的”不能使被跳过的前置步骤消失。
+
+仍可解释概念、比较方法、读取文献和已有脚本、查看已有图片/数据，或重绘已有数据帮助讨论；这些操作不生成新的模拟样本或实验观察。历史筹备试算可作为待核验的来源材料保留，标明未纳入正式 Cycle，不补造 H/Outcome/Judge 记录。
 
 ## 真实检索与材料边界
 
@@ -43,5 +51,9 @@ PDF 转换是设置中的可选组件，公共安装默认关闭；Chat 不得�
 使用 `tm_observer.research_preparation.snapshot(Path(state_dir), session_id)` 读取当前草稿及 revision；形成修改后通过 `update(Path(state_dir), session_id, {'expected_revision': 已读取的revision, 'draft': 完整草稿})` 保存。实际 state_dir 与 session_id 由本轮可信上下文提供。遇到并发保存先重新读取并整合；不要直接覆盖文件或在保存前才重新取得 revision 来跳过冲突检查。不要写第五个 Scientific Model，不将文献线索或候选问题塞成新 Task 已完成的科学认识。
 
 草稿由网页预览、CAS 保存并确认立项；用户也可在审阅具体计划后明确要求创建，届时使用消息中提供的 `research_preparation.create_project` 服务和当前 revision 执行一次，不重复询问已经接受的同一提案。不要直接调用 bootstrap、绕过服务另建 Task、启动或恢复科研。立项服务负责保存材料快照并返回真实 Task ID/链接。接受调研、生成草稿和正式立项是不同范围；创建 Task 也不自动授权运行。Test0 仍走官方全新 fixture 的独立约定。
+
+`created_task` 已存在时，按其真实 Task ID/binding 进入正式任务上下文，保留当前筹备记录作为来源，不重复立项或继续使用无 Task 的身份。后续人工猜想、研究分支和运行操作使用正式 Task 的 `research-intervention` 流程；科研计算仍由 SDK Cycle 执行。只问“怎么开始”时给实际控制台操作；明确要求启动时执行其已授权范围并核验 Cycle/Worker 回执。
+
+遇到立项或文献服务报错，可只读核对配置、日志、草稿和执行回执，保存输入并说明失败步骤。应用源码修复、软件测试和服务部署转到[系统助手](/research-chat/?channel=system)，不得在筹备科研对话中修改安装源码或重载服务。
 
 讨论形成具体下一步时，才在末尾按 1、2、3 编号说明实际动作、理由、范围及预期产物，询问是否执行或如何修改；纯解释不机械追加确认。执行已获授权的检索或草稿修改后，逐项回报真实状态、记录路径、仍缺材料与尚待确认的部分，不把拟执行写成已完成。

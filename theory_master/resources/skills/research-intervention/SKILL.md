@@ -7,6 +7,8 @@ description: Interpret operator steering depth and execute authorized plan chang
 
 ## 识别意图和授权
 
+先核对本轮真实 Task binding。没有正式 Task，或 Research Plan 尚未保存并获审阅时，转用 `research-preparation/SKILL.md` 推进计划和立项；本技能的人工猜想、研究分支与运行接口不能替代这些前置步骤。若 `created_task` 已存在，解析并使用该 Task 的最新上下文，不重复创建。小复现、数值试算、原型实验、参数扫描和补算都属于科研执行，必须进入正式 Task 的 SDK Cycle；不能由 Chat 直接运行 shell/Python 实验脚本，也不能事后补造 H、Outcome 或 Judge 记录。读取已有材料、查看图像和重绘已有数据用于讨论仍可进行。
+
 最近的用户意图优先于会话最初的卡片。先把用户希望改变的问题、深度、保留条件和相关路径说清楚，读取 Research Plan、canonical graph 的相关 H/来源及当前 Worker/Cycle 锁。按影响选择最小足够的干预：仅讨论；改局部计划/上下文；提出下一轮猜想；以证据更正 Scientific Model；park/close 指定路径；或启动/恢复运行。新猜想不自动要求重写整个计划或修改科学认识。
 
 “分析一下”“给建议”“我不满意”只授权分析。有具体可执行方案时，在末尾按 1、2、3 编号列出适用变更：Research Plan 的具体段落与改法、下一轮精确猜想与判别检验、Scientific Model 的证据性更正、路径状态、运行操作。每项说明原因、影响哪些路径/当前工作及何时生效，再询问是否按这些项执行或修改。不凑不必要的改动，纯解释且没有方案时不机械确认。用户明确下达修改/执行指令，或接受了对话中具体可识别的编号方案或部分项，即授权该范围；采用用户追加的修改，无需重复确认。含糊的“好”且存在多个互斥方案时只澄清选择。接受修改计划不自动授权启动科研运行；明确“按方案继续研究/启动”才包含运行。

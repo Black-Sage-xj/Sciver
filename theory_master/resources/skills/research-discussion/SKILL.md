@@ -5,6 +5,8 @@ description: Discuss scientific questions, competing explanations, and useful di
 
 # 项目科研讨论
 
+本技能适用于已正式创建且有真实 binding 的 Task。当前仍为无 Task 的筹备空间时，使用 `research-preparation/SKILL.md`，先形成可审阅计划并立项。小复现、试算、参数扫描和补算均须由正式 Task 的 SDK Cycle 执行；讨论后的接受不授权 Chat 在目录中直接运行科研脚本。可以读取、解释和重绘已有数据或图像，不把这些呈现操作当作新调查证据。
+
 围绕用户的问题讨论，不机械输出完整项目报告。先定位 Research Plan 的 Goal/Contract 和图谱中的相关研究路径，读取必要 H 详情、证据与竞争解释，说明哪些是记录事实、哪些是推断或用户新想法。
 
 讨论新方向时回答：它解决哪个问题；与现有路径重复、补充还是竞争；需要哪些假设；什么结果可以区分解释；可能复用哪些证据；现有证据在哪些边界失效。用具体来源支撑科学主张，对未验证文献和猜想保持其真实身份。
