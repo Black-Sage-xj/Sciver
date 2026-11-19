@@ -20,6 +20,18 @@ def shell() -> str:
 .tm-stage-heading { gap:8px 12px; padding:16px 18px; }
 .tm-stage-heading > strong { font-size:15px; color:var(--tm-text); overflow-wrap:anywhere; }
 .tm-stage-heading[aria-expanded="true"] { background:var(--tm-hover); }
+/* A closed stage is a navigation row; its transcript becomes the reading surface. */
+.tm-stage-section:has(> .tm-stage-heading[aria-expanded="false"]) { border-color:transparent; background:transparent; }
+.tm-stage-heading[aria-expanded="false"] { background:transparent; padding:8px 12px; }
+.tm-stage-heading[aria-expanded="false"] > strong { font-size:13px; font-weight:600; color:var(--tm-muted); }
+.tm-stage-heading[aria-expanded="false"] .tm-role-chip { background:transparent; border-color:transparent; color:var(--tm-muted); padding:0; }
+.tm-stage-heading[aria-expanded="false"] .tm-stage-iteration { background:transparent; color:var(--tm-muted); padding:0; }
+.tm-stage-heading[aria-expanded="false"] + .tm-stage-meta { display:none; }
+.tm-stage-heading[aria-expanded="false"]:hover { background:var(--tm-hover); }
+html[data-sciver-theme="white"] .tm-stage-reader .tm-stage-section:has(> .tm-stage-heading[aria-expanded="false"]),
+html[data-sciver-theme="white"] .tm-stage-reader .tm-stage-heading[aria-expanded="false"] { background:transparent; }
+html[data-sciver-theme="white"] .tm-stage-reader .tm-stage-heading[aria-expanded="false"] > strong { color:var(--tm-muted); }
+html[data-sciver-theme="white"] .tm-stage-reader .tm-stage-heading[aria-expanded="false"]:hover { background:var(--tm-hover); }
 .tm-stage-round,.tm-stage-heading > span:nth-last-child(2) { font-size:12px; }
 .tm-stage-meta { display:block; padding:0 18px; border:0; font-size:12px; }
 .tm-stage-meta summary { cursor:pointer; padding:9px 0; }
