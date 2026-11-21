@@ -1735,6 +1735,9 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
     short_identity = (str(parts.get("identity") or "").split("Supervisor:", 1)[0]
                       .split("错误排查:", 1)[0].strip())
     ident = str(run.get("observer_id") or "")
+    trace_query = urlencode({"tab": "trace", "cycle": selected_history_cycle or cycle or ""})
+    trace_link = (f'<a class="tm-plan-header-link" href="/run/{_e(ident)}/?{_e(trace_query)}">轨迹审查</a>'
+                  if not secondary else "")
     titlebar = f'''<div class="tm-tui-titlebar tm-titlebar-report">
         <div class="tm-tui-title-main">
             <span class="tm-tui-eyebrow">TASK CONSOLE</span>
@@ -1744,6 +1747,7 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
         {render_report_entry(master_run, placement="console")}
         <div class="tm-tui-title-actions">
           <span class="tm-run-freshness" data-run-freshness role="status" aria-live="polite">初始只读快照 · 8 秒自动检查</span>
+          {trace_link}
           <a class="tm-plan-header-link" href="/research-plan/?observer_id={_e(ident)}" title="查看或编辑当前任务的 Research Plan" style="font-size:12px;white-space:nowrap;color:var(--tm-link)">Research Plan ↗</a>
           <a class="tm-run-settings-link" href="/settings/?observer_id={_e(ident)}"
              aria-label="运行设置" title="运行设置">

@@ -91,6 +91,25 @@ def get_page(self, path: str, state: dict, ctx: RequestContext, services: RouteS
                                 back_href=f"/run/{ident}/", breadcrumb_leaf="Supervisor").encode("utf-8")
             self._send(payload, "text/html; charset=utf-8")
             return True
+        if (params.get("tab") or [""])[0] == "trace":
+            from .review_trace import project
+            from .review_trace_ui import as_html, as_text
+            try:
+                trace = project(run, cycle=(params.get("cycle") or [""])[0],
+                                page=int((params.get("page") or ["1"])[0]),
+                                stage_id=(params.get("stage") or [""])[0],
+                                view=(params.get("view") or [""])[0])
+            except (ValueError, OSError):
+                self._send("找不到所选 Cycle、阶段或轨迹页。".encode(), "text/plain; charset=utf-8",
+                           HTTPStatus.NOT_FOUND)
+                return True
+            if (params.get("format") or [""])[0] == "txt":
+                self._send(as_text(trace).encode(), "text/plain; charset=utf-8")
+            else:
+                page = services._page("Sciver Observatory — 轨迹审查", as_html(trace), active="run",
+                                      back_href=f"/run/{ident}/", breadcrumb_leaf="轨迹审查")
+                self._send(page.encode(), "text/html; charset=utf-8", set_cookie=services._console_cookie(ident))
+            return True
         try:
             services.vault_root(ctx.cache.search_root, ident, state)
             canvas_available = True
