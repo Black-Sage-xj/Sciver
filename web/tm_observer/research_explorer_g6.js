@@ -226,7 +226,7 @@ function displayCycle(n){
 }
 function compactCycleLabel(n){
   const type=knownType(n);
-  if(type==='External')return externalCycleEstimate(n)?.display||'E?';
+  if(type==='External')return externalDisplayId(n);
   const cycle=displayCycle(n);
   if(Number.isSafeInteger(cycle)&&cycle>=0)return String(cycle);
   return type==='Hypothesis'?'C?':(palette[type]||palette.Unknown).short;
@@ -275,9 +275,16 @@ function compareNodes(a,b){const x=rank(a),y=rank(b);return x[0]-y[0]||stable(x[
 function isResearchReference(e){
   return e.edge_type==='research_source'||e.type==='research_source'||e.lineage_role==='other';
 }
+function isDiscussionContext(e){return e.edge_type==='discussion_context'}
+function externalDisplayId(n){
+  // SQLite External numbers identify inputs; historical Canvas labels retain
+  // their original Cycle-based convention. Neither is a scientific H Cycle.
+  const label=n?.semantic?.external?.display_id||n?.semantic?.external_label;
+  return /^E[1-9]\d*$/.test(label||'')?label:externalCycleEstimate(n)?.display||'E?';
+}
 function isScientificEdge(e){
   // Preserve all real edges, but reference/provenance edges do not advance a scientific branch.
-  return !isResearchReference(e)&&!['external_reference','research_source'].includes(e.edge_type)&&
+  return !isDiscussionContext(e)&&!isResearchReference(e)&&!['external_reference','research_source'].includes(e.edge_type)&&
     !['external_reference','research_source'].includes(e.type);
 }
 function structure(nodes,edges){
@@ -286,11 +293,13 @@ function structure(nodes,edges){
   // Choose from the complete index, before local scope or folding. A view
   // change must not silently choose a different predecessor for the same node.
   const lineage=globalThis.SciverTreeLayout.projectForest(nodes,
-    realEdges.filter(e=>!isResearchReference(e)).map(e=>({id:ID(e.id||e.fromNode+'->'+e.toNode),source:e.fromNode,
+    realEdges.filter(e=>!isResearchReference(e)&&(!isDiscussionContext(e)||e.display_primary)).map(e=>({id:ID(e.id||e.fromNode+'->'+e.toNode),source:e.fromNode,
       target:e.toNode,data:{sourceEdge:e}}))).edges.map(e=>e.data.sourceEdge);
   // Only the chosen predecessor belongs on the tree. Other recorded sources
   // remain available in the reader through the unmodified index.
-  const allEdges=lineage;
+  const chosen=new Set(lineage.map(e=>ID(e.id||e.fromNode+'->'+e.toNode)));
+  const allEdges=[...lineage,...realEdges.filter(e=>isDiscussionContext(e)&&
+    !chosen.has(ID(e.id||e.fromNode+'->'+e.toNode)))];
   const children=new Map(nodes.map(n=>[n.id,[]])),parents=new Map(nodes.map(n=>[n.id,[]]));
   for(const e of lineage){children.get(e.fromNode).push(e.toNode);parents.get(e.toNode).push(e.fromNode)}
   for(const v of children.values())v.sort(stable);
@@ -542,6 +551,7 @@ function hasRecordedOutcome(outcome){
 }
 function cardCycleText(n,edges,lookup){
   // An External timeline label is read-only provenance, not a scientific Cycle.
+  if(knownType(n)==='External'&&n.semantic?.external)return externalDisplayId(n)+' · 外部输入';
   if(knownType(n)==='External')return externalCycleEstimate(n)?.heading||'C?';
   // The creation Cycle wins over any later Outcome Cycle.
   const own=displayCycle(n);
@@ -713,7 +723,7 @@ function g6Data(layoutBase=false){
     const height=Math.max(cardHeight(inCount),hasOutcome?198:CARD_H);
     // Technical IDs stay in graph data and deep links, not card labels.
     const cardLabel=type==='Hypothesis'?'':
-      cycleLabel+' · '+style.short+fold+'\n'+
+      cycleLabel+(type==='External'&&semantic.external?'':' · '+style.short)+fold+'\n'+
       shortCardTitle(cardScientificTitle(n))+
       (stateLine?'\n'+stateLine:'');
     const externalLabel=type==='External'?externalCycleEstimate(n)?.display:null;
@@ -756,7 +766,10 @@ function g6Data(layoutBase=false){
       style:{sourcePort:'out:'+key,targetPort:'in:'+key,
         stroke:bright,
         lineWidth:edgeWidth(baseLineWidth,highlighted),
-        lineDash:isResearchReference(e)?[6,4]:[],endArrow:true,
+        lineDash:isDiscussionContext(e)?[8,5]:isResearchReference(e)?[6,4]:[],endArrow:!isDiscussionContext(e),
+        ...(isDiscussionContext(e)?{labelText:e.label||'讨论关联',labelFill:bright,
+          labelFontSize:12,labelBackground:true,labelBackgroundFill:lightGraph()?'#ffffff':'#101319',
+          labelPadding:[3,5],labelAutoRotate:false}:{}),
         opacity:highlighted?1:dim?(lightGraph()?.55:.28):1,
         zIndex:isHovered?24:active?20:isDownstream?12:isIncoming?11:1,
         router:{type:'orth',padding:18},
@@ -765,7 +778,8 @@ function g6Data(layoutBase=false){
         cursor:'pointer',increasedLineWidthForHitTesting:12}
     };
   });
-  globalThis.SciverTreeLayout.treeCoordinates(nodes,edges);
+  globalThis.SciverTreeLayout.treeCoordinates(nodes,edges.filter(e=>
+    !isDiscussionContext(e.data.sourceEdge)||e.data.sourceEdge.display_primary));
   return {nodes,edges};
 }
 
@@ -889,7 +903,7 @@ async function restoreView(delta){
 }
 function compactSourceLabel(source){
   const type=knownType(source||{});
-  if(type==='External')return externalCycleEstimate(source)?.display||'E?';
+  if(type==='External')return externalDisplayId(source);
   const cycle=displayCycle(source);
   return Number.isSafeInteger(cycle)&&cycle>0?'C'+cycle:'C?';
 }
@@ -1412,7 +1426,9 @@ function graphInit(){
         ('前沿 '+frontierSummary(sem)+' / 科学 '+statusLabels[hypothesisVerdict(sem)]):
         ([sem.scientific_status||sem.verdict,sem.frontier_status].filter(Boolean).join(' / ')||'未标注状态');
     const source=isExternal&&sem.source?' · 来源 '+sem.source:'';
-    const timeNote=isExternal?' · '+(externalCycleEstimate(n)?.note||'未估算时间'):'';
+    const timeNote=isExternal?' · '+(sem.external?
+      externalDisplayId(n)+(sem.external.proposal_cycle_id?' · 讨论输入 Cycle '+sem.external.proposal_cycle_id:''):
+      externalCycleEstimate(n)?.note||'未估算时间'):'';
     tooltip.innerHTML='<strong>'+esc(sem.title||n.label)+'</strong>'+
       esc(isExternal?'外部资料':knownType(n))+' · '+esc(status+source+timeNote)+
       '<small>单击查看详情 · 双击放大并居中 · 悬停连线可操作子分支</small>';
@@ -1511,68 +1527,86 @@ function resolve(target,source){
       anchor:target.split('#')[1]?.split('|')[0]||''};
   }}return null;
 }
-function mdHtml(text,source){
-  if(!window.marked||!window.DOMPurify)return '<pre>'+esc(text)+'</pre>';
-  const math=[];
-  let protectedText=text.replace(/(```[\s\S]*?```|~~~[\s\S]*?~~~|`+[^`\n]*`+)|(\$\$[\s\S]*?\$\$|(?<!\\)\$(?!\$)[^\n$]+(?<!\\)\$)/g,(raw,code)=>{
-    if(code)return code;
-    const block=raw.startsWith('$$');math.push({value:raw.slice(block?2:1,block?-2:-1),block});
-    return 'TMKATEXPLACEHOLDER'+(math.length-1)+'END';
-  });
-  protectedText=protectedText.replace(/(```[\s\S]*?```|~~~[\s\S]*?~~~|`+[^`\n]*`+)|!\[\[([^\]\n]+)\]\]/g,(full,code,link)=>{
-    if(code)return code;
-    const [target,label]=link.split('|'),width=/^\d{1,4}$/.test(label||'')?Number(label):null;
-    if(target.split('#')[0].toLowerCase().endsWith('.md'))return '[['+link+']]';
-    return '<img src="'+esc(target)+'" alt="'+esc(width?target:(label||target))+
-      '" data-vault-image="1"'+(width?' width="'+width+'"':'')+'>';
-  });
-  protectedText=protectedText.replace(/(?<!!)\[\[([^\]\n]+)\]\]/g,(full,link)=>{
-    const label=link.split('|')[1]||link.split('|')[0],ref=resolve(link,source);
-    return ref?'['+label.replace(/[\[\]]/g,'')+'](#tmref='+encodeURIComponent(ref.kind+':'+ref.id)+
-      (ref.anchor?'%23'+encodeURIComponent(ref.anchor):'')+')':esc(label);
-  });
-  const result=window.DOMPurify.sanitize(window.marked.parse(protectedText));
-  const doc=new DOMParser().parseFromString('<div id="parsed">'+result+'</div>','text/html');
-  const wrap=doc.getElementById('parsed');
-  if(window.Prism)wrap.querySelectorAll('pre code[class*="language-"]').forEach(code=>{
-    window.Prism.highlightElement(code);
-  });
-  wrap.querySelectorAll('img').forEach(img=>{
-    const raw=img.getAttribute('src')||'';
-    if(!/^https?:\/\//i.test(raw)){
-      if(!raw||/^[a-z][a-z\d+.-]*:/i.test(raw)||raw.startsWith('//')){img.remove();return}
-      let target;try{target=decodeURIComponent(raw.split('#')[0])}catch{img.remove();return}
-      img.setAttribute('src',base()+'/image?path='+encodeURIComponent(target)+
-        '&source='+encodeURIComponent(source||'')+(img.dataset.vaultImage?'&vault=1':''));
-    }
-    img.removeAttribute('srcset');img.removeAttribute('sizes');
-    img.setAttribute('loading','lazy');img.setAttribute('referrerpolicy','no-referrer');
-  });
-  wrap.querySelectorAll('a').forEach(a=>{
-    const href=a.getAttribute('href')||'';
-    if(href.startsWith('#tmref=')){a.dataset.ref=decodeURIComponent(href.slice(7));a.removeAttribute('href')}
-    else if(href.startsWith('#')){}
-    else if(/^https?:\/\//i.test(href)){a.target='_blank';a.rel='noopener noreferrer'}
-    else{const ref=resolve(href,source);if(ref){
-      a.dataset.ref=uri(ref.kind,ref.id)+(ref.anchor?'#'+ref.anchor:'');a.removeAttribute('href');
-    }else a.removeAttribute('href')}
-  });
-  wrap.querySelectorAll('*').forEach(el=>{for(const child of Array.from(el.childNodes)){
-    if(child.nodeType!==3||!child.textContent.includes('TMKATEXPLACEHOLDER'))continue;
-    const fragment=doc.createDocumentFragment(),re=/TMKATEXPLACEHOLDER(\d+)END/g;
-    let pos=0,m;
-    while((m=re.exec(child.textContent))){
-      fragment.append(doc.createTextNode(child.textContent.slice(pos,m.index)));
-      const spec=math[Number(m[1])],box=doc.createElement(spec.block?'div':'span');
-      try{if(window.katex)box.innerHTML=window.katex.renderToString(spec.value,{
-        displayMode:spec.block,throwOnError:false,trust:false,output:'html'
-      });else box.textContent=spec.value}catch{box.textContent=spec.value}
-      fragment.append(box);pos=re.lastIndex;
-    }
-    fragment.append(doc.createTextNode(child.textContent.slice(pos)));child.replaceWith(fragment);
-  }});
-  return wrap.innerHTML;
+const taskReportSources=new Map();
+function taskReportSourceId(version,ref){return encodeURIComponent(JSON.stringify({version,ref}))}
+function unpackTaskReportSource(id){
+  try{const value=JSON.parse(decodeURIComponent(id));
+    return typeof value.version==='string'&&typeof value.ref==='string'?value:null;
+  }catch{return null}
 }
+function taskReportVersion(source){return /^final-reports\/([^/]+)\//.exec(source||'')?.[1]||null}
+function taskReportMarkdownContext(source){
+  const version=taskReportVersion(source),sources=taskReportSources.get(version)||{};
+  if(!version)return {};
+  const keys=Object.keys(sources);
+  return {imageUrl:(target,origin,isVaultEmbed)=>base()+'/image?path='+encodeURIComponent(target)+
+    '&source='+encodeURIComponent(origin)+(isVaultEmbed&&origin!=='final-reports/'+version+'/report.md'?'&vault=1':''),
+    resolve:(target,origin)=>{
+    const graphRef=resolve(target,origin);
+    let key;try{key=decodeURIComponent(String(target).split('|')[0].split('#')[0])}catch{return graphRef}
+    if(!Object.hasOwn(sources,key)){
+      key=keys.find(ref=>sources[ref]?.path===key||sources[ref]?.id===key)||key;
+    }
+    if(!Object.hasOwn(sources,key))return graphRef;
+    const isCycle=sources[key]?.kind==='cycle';
+    const label=isCycle?(sources[key].title||'Cycle '+sources[key].id):'['+(keys.indexOf(key)+1)+']';
+    return graphRef&&!isCycle?{...graphRef,label}:{kind:'task-report-source',
+      id:taskReportSourceId(version,key),anchor:String(target).split('#')[1]||'',label};
+  }};
+}
+function ensureTaskReportButton(){
+  let button=$('ex-task-report');
+  if(!index||!Object.hasOwn(index,'final_report')||index.final_report?.task_complete===false){if(button)button.hidden=true;return}
+  if(!button){
+    const toolbar=$('ex-vault-open')?.parentElement||document.querySelector('.ex-toolbar-main');
+    if(!toolbar)return;
+    button=document.createElement('button');button.id='ex-task-report';button.type='button';
+    toolbar.insertBefore(button,$('ex-vault-open')?.nextSibling||null);
+    button.onclick=()=>navigate('task-report',String(index?.final_report?.version||'current'));
+  }
+  const report=index?.final_report||{},running=['queued','running','collecting','composing','reviewing'].includes(report.state);
+  button.hidden=false;
+  button.textContent=running?'总报告 · 生成中':'总报告';
+  button.title=report.available?'在右侧阅读任务总报告':running?'总报告生成中，点击查看状态':
+    report.state==='failed'?'总报告生成失败，点击查看状态':'查看任务总报告与生成状态';
+  button.dataset.state=report.state||'missing';
+}
+function taskReportUnavailable(state,message){
+  const text=message||(['queued','running','collecting','composing','reviewing'].includes(state)?
+    '总报告正在生成，可以继续查看图谱，稍后刷新报告状态。':state==='failed'?
+    '总报告暂未就绪，研究结果已经保留。刷新后可查看新的报告状态。':
+    '当前任务尚无总报告。任务完成后会独立整理研究结果。');
+  return '<button class="ex-ref" type="button" data-doc-back="1">← 返回图谱位置</button>'+
+    '<h2 class="ex-document-title">任务总报告</h2><p class="ex-reader-empty">'+esc(text)+'</p>'+
+    '<button class="ex-ref" type="button" data-task-report-refresh="1">刷新报告状态</button>';
+}
+function taskReportContents(doc){
+  const version=String(doc.version||''),target=uri('task-report',version);
+  const versions=index?.final_report?.versions||[];
+  return '<button class="ex-ref" type="button" data-doc-back="1">← 返回图谱位置</button>'+
+    '<h2 class="ex-document-title">'+esc(doc.title||'任务总报告')+'</h2>'+
+    (doc.state==='needs_revision'?'<p class="ex-reader-notice">这份报告还有审核意见，当前显示待修订稿。</p>':'')+
+    (versions.length>1?'<label class="ex-meta">报告版本 <select data-task-report-version="1" aria-label="选择总报告版本">'+
+      versions.map(item=>'<option value="'+esc(item.version)+'"'+(String(item.version)===version?' selected':'')+'>'+esc(item.title||item.version)+
+        (item.created_at?' · '+esc(item.created_at):'')+'</option>').join('')+'</select></label>':'')+
+    (doc.section?'<button class="ex-ref" data-ref="'+esc(target)+'">查看完整报告</button>':'')+
+    '<details class="ex-report-toc"><summary>报告目录 · 按章节阅读</summary><nav aria-label="总报告章节">'+
+    (doc.sections||[]).filter(section=>section.level===2).map(section=>'<button class="ex-ref" data-ref="'+
+      esc(target+'#'+section.id)+'">'+esc(section.title)+'</button>').join('')+'</nav></details>'+
+    '<div class="ex-md" data-doc-content="1">'+mdHtml(withoutRepeatedTitle(doc.content||'',doc.title),doc.id)+'</div>'+
+    (doc.next_offset!==null&&doc.next_offset!==undefined?'<button class="ex-ref" data-task-report-more="'+doc.next_offset+'">加载后续报告内容 ↓</button>':'')+
+    '<details class="ex-report-toc" data-task-report-cycles="1"><summary>研究轮次</summary><div>'+Object.entries(doc.source_index||{}).map(([ref,item],i)=>
+      '<button class="ex-ref" data-ref="'+esc(uri('task-report-source',taskReportSourceId(version,ref)))+'">'+
+      (item.kind==='cycle'?'':'['+(i+1)+'] ')+esc(item.title||ref)+'</button>').join('')+'</div></details>';
+}
+let markdownReader=null;
+function mdHtml(text,source){
+  if(!markdownReader&&globalThis.GraphResearchMarkdown)
+    markdownReader=globalThis.GraphResearchMarkdown.create({escape:esc,resolve,base});
+  return markdownReader?markdownReader.render(text,source,taskReportMarkdownContext(source)):
+    '<pre>'+esc(text)+'</pre>';
+}
+
 function refsBlock(key){
   const refs=index.backlinks[key]||[];
   return '<div class="ex-section"><strong>反向引用 ('+refs.length+')</strong><div>'+
@@ -1625,14 +1659,6 @@ function researchTransition(sem={}){
     ['prior_gap','current_change','why_now','goal_advance'].every(key=>typeof value[key]==='string')&&
     Array.isArray(value.sources)?value:null;
 }
-function transitionStatus(value){
-  return ({supported:'支持',rejected:'反驳',open:'尚无法判定',none:'尚无整体裁决',
-    unadjudicated:'未裁决'})[value]||'未标记';
-}
-function transitionOutcomeStatus(outcome){
-  const originals=Array.isArray(outcome.original_verdicts)?outcome.original_verdicts.filter(Boolean):[];
-  return originals.length?'历史裁决：'+originals.join('/') : transitionStatus(outcome.verdict);
-}
 function transitionSourcesHtml(sources){
   const ordered=[...sources].sort((a,b)=>(a.role==='main'?0:1)-(b.role==='main'?0:1));
   const link=source=>{
@@ -1645,25 +1671,6 @@ function transitionSourcesHtml(sources){
   const main=ordered.filter(s=>s.role==='main'),others=ordered.filter(s=>s.role!=='main');
   return ordered.length?'<nav class="ex-transition-sources" aria-label="前序研究来源">'+
     group(main,'main','主来源')+group(others,'other',main.length?'参考来源':'前序来源')+'</nav>':'';
-}
-function transitionSourceNotesHtml(sources){
-  const ordered=[...sources].sort((a,b)=>(a.role==='main'?0:1)-(b.role==='main'?0:1));
-  const notes=ordered.map(source=>{
-    const id=String(source.hypothesis_id||''),linked=index.nodes.find(n=>n.id===id);
-    const summary=linked?.semantic?.hypothesis_summary;
-    const claim=typeof summary==='string'?(/^主张：([\s\S]+)；条件：[\s\S]+；状态：[^\n]+。$/.exec(summary)?.[1]||summary):'';
-    const records=(source.outcome_refs||[]).filter(outcome=>String(outcome.cycle_id||'').trim());
-    return '<div class="ex-source-note" data-source-role="'+(source.role==='main'?'main':'other')+'">'+
-      '<h5>'+esc(id)+' <span>'+esc(source.title||linked?.label||'')+'</span></h5>'+
-      '<dl><div><dt>前序研究问题 <small>当前来源记录</small></dt><dd class="ex-md"'+(claim?' data-discussion-node="'+esc(id)+'"':'')+'>'+
-      (claim?mdHtml(claim,null):'<span class="ex-reader-empty">未记录问题概述，可点击来源查看原文。</span>')+'</dd></div>'+
-      (source.contribution?'<div><dt>本步承接</dt><dd class="ex-transition-contribution ex-md">'+mdHtml(source.contribution,null)+'</dd></div>':'')+'</dl>'+
-      (records.length?'<div class="ex-transition-results" aria-label="来源的检验记录">'+
-        records.map(outcome=>'<button type="button" class="ex-ref" data-ref="'+esc(uri('report',outcome.cycle_id))+'">'+
-          'Cycle '+esc(outcome.cycle_id)+' · '+esc(transitionOutcomeStatus(outcome))+'</button>').join('')+'</div>':'')+'</div>';
-  }).join('');
-  const missing=ordered.filter(s=>!s.contribution).map(s=>s.hypothesis_id);
-  return notes+(missing.length?'<p class="ex-source-notes-missing">'+esc(missing.join('、'))+' 未记录逐来源的承接说明；本步的总体变化见下方。</p>':'');
 }
 function researchTransitionHtml(node){
   const transition=researchTransition(node.semantic);
@@ -1681,7 +1688,7 @@ function researchTransitionHtml(node){
   if(transition){
     const fields=[['prior_gap','前序留下的问题'],
       ['current_change','这一步改变什么'],['why_now','为什么现在研究']];
-    content=transitionSourcesHtml(sources)+transitionSourceNotesHtml(sources)+
+    content=transitionSourcesHtml(sources)+
       '<dl class="ex-transition-facts">'+fields.map(([key,label])=>'<div><dt>'+label+
         '</dt><dd class="ex-md">'+mdHtml(transition[key],null)+'</dd></div>').join('')+'</dl>'+
       (transition.goal_advance?'<div class="ex-transition-goal"><h5>对研究目标的推进</h5><div class="ex-md">'+
@@ -1691,6 +1698,57 @@ function researchTransitionHtml(node){
   }
   return '<section class="ex-research-transition" aria-label="为什么研究到这里">'+
     '<h4>为什么研究到这里</h4>'+content+'</section>';
+}
+function externalRelationsHtml(node){
+  const edges=(index.edges||[]).filter(e=>isDiscussionContext(e)&&
+    (e.fromNode===node.id||e.toNode===node.id));
+  if(!edges.length)return '';
+  return '<section class="ex-discussion-relations" aria-label="讨论与图谱的关联">'+
+    '<h3>相关节点 <span class="ex-result-count">'+edges.length+'</span></h3>'+
+    '<ul>'+edges.map(edge=>{
+      const id=edge.fromNode===node.id?edge.toNode:edge.fromNode;
+      const related=index.nodes.find(n=>n.id===id);
+      const name=knownType(related||{})==='External'?externalDisplayId(related):id;
+      const title=related?.semantic?.title||related?.label||id;
+      return '<li><div class="ex-relation-heading"><button type="button" class="ex-ref" data-ref="'+
+        esc(uri('node',id))+'" title="'+esc(title)+'">'+esc(name)+' · '+esc(abbreviate(title,70))+
+        '</button><span>'+esc(edge.label||'讨论关联')+'</span></div>'+
+        '<p>'+esc(edge.reason||'来源记录中的讨论关联')+'</p>'+
+        '<button type="button" class="ex-ref ex-relation-evidence" data-ref="'+
+        esc(uri('edge',ID(edge.id||edge.fromNode+'->'+edge.toNode)))+'">查看连线依据</button></li>';
+    }).join('')+'</ul></section>';
+}
+function externalReaderHtml(node,header,key){
+  const ext=node.semantic.external;
+  const statuses={pending:'等待下次提案',claimed:'已进入提案流程',consumed:'已送入本轮讨论',
+    revoked:'已撤回',superseded:'已被后续方向替代',reconciliation_required:'处理状态待核对'};
+  const date=ext.created_at?new Date(ext.created_at):null;
+  const stamp=date&&Number.isFinite(date.getTime())?date.toLocaleString('zh-CN',{
+    timeZone:'Asia/Shanghai',hour12:false} )+' 北京时间':ext.created_at||'';
+  const fields=[['hypothesis','研究方向'],['decisive_test','判别检验'],['reason','调整原因']]
+    .filter(([field])=>ext[field]);
+  const content=fields.length?'<dl class="ex-external-facts">'+fields.map(([field,label])=>
+    '<div><dt>'+label+'</dt><dd>'+esc(ext[field])+'</dd></div>').join('')+'</dl>':
+    '<div class="ex-md ex-external-prose">'+mdHtml(withoutRepeatedTitle(header.body,node.label),null)+'</div>';
+  return '<section class="ex-external-details" aria-label="外部研究输入">'+
+    '<h2 class="ex-external-title">'+esc(externalDisplayId(node))+' · '+esc(ext.title||node.label)+'</h2>'+
+    '<p class="ex-external-meta">'+esc(node.semantic.source==='human'?'人工提出':'外部输入')+
+    (ext.delivery_status?' · '+esc(statuses[ext.delivery_status]||ext.delivery_status):'')+'</p>'+
+    (stamp?'<p class="ex-node-time">'+esc(stamp)+'</p>':'')+
+    '<p class="ex-external-caption">'+(ext.delivery_status==='consumed'?
+      '已交付提案流程；正式研究内容与裁决见相关 H 节点。 ':'')+
+    'E 编号按外部输入登记顺序排列，Cycle 单独记录。</p></section>'+
+    externalRelationsHtml(node)+'<section class="ex-external-content">'+content+'</section>'+
+    '<details class="ex-reader-context ex-external-records"><summary>来源与处理记录</summary>'+
+    (ext.proposal_cycle_id?'<p>关联提案 Cycle '+esc(ext.proposal_cycle_id)+'</p>':'')+
+    (ext.event_history?.length?'<ol class="ex-external-events">'+ext.event_history.map(event=>
+      '<li>'+esc(statuses[event.status]||event.status)+
+      (event.detail?.cycle_id?' · Cycle '+esc(event.detail.cycle_id):'')+
+      (event.timestamp?' <time>'+esc(compactTime(event.timestamp))+'</time>':'')+'</li>').join('')+'</ol>':'')+
+    nodeHeaderDisclosure(header.fields)+
+    (ext.source_session?'<p class="ex-meta">讨论会话 · '+esc(ext.source_session)+'</p>':'')+
+    (index.references[key]?.length?outbound(key):'')+
+    (index.backlinks[key]?.length?refsBlock(key):'')+'</details>';
 }
 function hypothesisReaderHtml(node,header,timeLine,key){
   const sem=node.semantic||{};
@@ -1719,7 +1777,7 @@ function hypothesisReaderHtml(node,header,timeLine,key){
     '<header class="ex-reader-section-head">'+(Number.isInteger(sem.cycle)&&sem.cycle>=0?'<p class="ex-reader-cycle">Cycle '+esc(sem.cycle)+'</p>':'')+'<h3 id="ex-hypothesis-title">猜想</h3></header>'+
     '<div class="ex-hypothesis-heading"><h2 class="ex-hypothesis-title">'+esc(node.label)+'</h2>'+timeLine+'</div>'+researchTransitionHtml(node)+body+
     '<div class="ex-reader-documents">'+dossier+'</div></section>'+
-    outcomeDetailsHtml(outcomes)+
+    outcomeDetailsHtml(outcomes)+externalRelationsHtml(node)+
     '<details class="ex-reader-context"><summary>研究分支 · '+esc(branchLabels[frontier])+'</summary>'+
     '<p class="muted">记录后续研究安排与收束原因。</p>'+
     (branchReasons.length?branchReasons.map(f=>'<p><strong>'+esc(branchLabels[f.status]||f.status)+
@@ -1747,16 +1805,7 @@ html[data-sciver-theme] .ex-reader .ex-hypothesis-heading .ex-node-time{margin:0
 .ex-source-group{color:var(--source-color)}
 .ex-source-group>span:first-child{font-size:11px;color:var(--read-muted)}
 html[data-sciver-theme] .ex-reader .ex-source-group .ex-transition-source-link{margin:0;padding:0;border:0;border-radius:0;background:transparent;color:inherit;font:inherit;text-decoration:underline;text-underline-offset:3px;white-space:nowrap}
-.ex-source-note{margin:0 0 20px}
-.ex-reader .ex-source-note h5{margin:0 0 9px;font-size:12px;color:var(--source-color);line-height:1.6}
-.ex-source-note h5 span{font-weight:500;color:var(--read-muted)}
-.ex-source-note dl,.ex-source-note dd{margin:0}
-.ex-source-note dl>div+div{margin-top:10px}
-.ex-source-note dt,.ex-reader .ex-transition-goal h5{margin:0 0 5px;font-size:12px;font-weight:650;color:var(--read-muted)}
-.ex-source-note dt small{margin-left:6px;font-size:10px;font-weight:400}
-html[data-sciver-theme] .ex-reader .ex-source-note .ex-md{font-size:13px;line-height:1.75}
-.ex-source-note .ex-transition-results{margin-top:7px}
-.ex-source-notes-missing{font-size:11px;line-height:1.7;color:var(--read-muted);margin:0 0 20px}
+.ex-reader .ex-transition-goal h5{margin:0 0 5px;font-size:12px;font-weight:650;color:var(--read-muted)}
 .ex-reader .ex-transition-goal{margin-top:16px;color:var(--read-text)}
 .ex-selection-popover{position:absolute;z-index:1000;max-width:min(280px,calc(100% - 16px));padding:5px;border:1px solid var(--read-border);border-radius:9px;background:var(--read-card);color:var(--read-text);box-shadow:0 4px 18px #0005}
 .ex-selection-popover[hidden]{display:none}
@@ -1764,6 +1813,25 @@ html[data-sciver-theme] .ex-reader .ex-source-note .ex-md{font-size:13px;line-he
 .ex-selection-popover button:hover,.ex-selection-popover button:focus-visible{background:var(--read-soft)}
 .ex-selection-popover p{margin:2px 9px 5px;font-size:12px;line-height:1.4}
 .ex-selection-popover p:empty{display:none}
+.ex-reader .ex-external-title{margin:0 0 12px;font-size:22px;line-height:1.45;color:var(--read-text);text-wrap:pretty}
+.ex-reader .ex-external-meta{margin:0 0 7px;font-size:13px;color:var(--read-blue)}
+.ex-reader .ex-external-caption{margin:16px 0 24px;font-size:12px;line-height:1.7;color:var(--read-muted)}
+.ex-external-facts{margin:0;max-width:72ch}
+.ex-external-facts>div+div{margin-top:24px}
+.ex-external-facts dt{margin-bottom:7px;font-size:14px;font-weight:650;color:var(--read-text)}
+.ex-external-facts dd{margin:0;white-space:pre-wrap;font-size:14px;line-height:1.85;color:var(--read-text)}
+.ex-external-prose h1,.ex-external-prose h2,.ex-external-prose h3{font-size:16px;line-height:1.6}
+.ex-external-events{padding-left:20px;font-size:12px;line-height:1.8;color:var(--read-text)}
+.ex-external-events time{display:block;color:var(--read-muted)}
+.ex-discussion-relations{margin:28px 0 22px;padding-top:20px;border-top:1px solid var(--read-border)}
+.ex-reader .ex-discussion-relations h3{margin:0 0 12px;font-size:16px;color:var(--read-text)}
+.ex-discussion-relations ul{list-style:none;margin:0;padding:0}
+.ex-discussion-relations li+li{margin-top:16px;padding-top:16px;border-top:1px solid var(--read-border)}
+.ex-relation-heading{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 12px}
+html[data-sciver-theme] .ex-reader .ex-relation-heading .ex-ref{margin:0;padding:0;border:0;border-radius:0;background:transparent;color:var(--read-blue);text-align:left;line-height:1.6;text-decoration:underline;text-underline-offset:3px}
+.ex-relation-heading>span{font-size:12px;color:var(--read-muted)}
+.ex-discussion-relations li p{margin:6px 0;font-size:12px;line-height:1.75;color:var(--read-muted)}
+html[data-sciver-theme] .ex-reader .ex-relation-evidence{margin:0;padding:3px 0;border:0;background:transparent;font-size:12px;color:var(--read-blue)}
 @media(max-width:600px){.ex-reader .ex-hypothesis-heading .ex-hypothesis-title{font-size:21px}.ex-transition-sources{gap:14px}}
 `;
 function discussionTools(){
@@ -1785,13 +1853,16 @@ window.addEventListener('sciver-chat-reference-result',event=>{
 });
 async function navigate(kind,id,anchor='',options={}){
   if(!index)return;
+  if(['task-report','task-report-source'].includes(kind)&&index.final_report?.task_complete===false)return;
+  if(!['node','edge','doc','report','task-report','task-report-source'].includes(kind))return;
   discussionStatusTarget=null;
   if(kind==='node'&&!index.nodes.some(n=>n.id===id))return;
   if(kind==='edge'&&!index.edges.some(e=>ID(e.id||e.fromNode+'->'+e.toNode)===id))return;
-  if(['doc','report'].includes(kind))mobileReadingRequested=true;
+  const readingKinds=['doc','report','task-report','task-report-source'];
+  if(readingKinds.includes(kind))mobileReadingRequested=true;
   else showMobileGraph();
   const request=++navSerial;
-  if(['doc','report'].includes(kind)&&!['doc','report'].includes(selected?.kind))docOriginView=captureView();
+  if(readingKinds.includes(kind)&&!readingKinds.includes(selected?.kind))docOriginView=captureView();
   if(options.record!==false)rememberBefore();
   selected={kind,id,anchor};
   readingSourceVersion='';
@@ -1811,6 +1882,7 @@ async function navigate(kind,id,anchor='',options={}){
     const timeLine=when?'<div class="ex-node-time">'+esc(when)+'</div>':'';
     const estimatedNote=timeEstimate?'<p class="muted">'+esc(timeEstimate.note)+'</p>':'';
     reader.innerHTML=knownType(node)==='Hypothesis'?hypothesisReaderHtml(node,header,timeLine,key):
+      knownType(node)==='External'&&m.external?externalReaderHtml(node,header,key):
       '<h2>'+esc(node.label)+'</h2>'+timeLine+
       nodeHeaderDisclosure(header.fields)+estimatedNote+
       '<div class="ex-md">'+mdHtml(withoutRepeatedTitle(header.body,node.label),null)+'</div>'+
@@ -1836,7 +1908,10 @@ async function navigate(kind,id,anchor='',options={}){
     if(options.reveal!==false){
       revealNode(edge.fromNode);revealNode(edge.toNode);
     }
-    reader.innerHTML='<h2>科研连线</h2><div class="ex-meta">'+esc(edge.id||id)+'</div>'+
+    reader.innerHTML='<h2>'+esc(isDiscussionContext(edge)?edge.label||'讨论关联':'科研连线')+'</h2>'+
+      (isDiscussionContext(edge)?'<p>'+esc(edge.reason||'讨论记录中的关联')+'</p>'+
+        '<p class="ex-external-caption">虚线表示讨论与处理事件，连接两个相关对象。</p>':'')+
+      '<div class="ex-meta">'+esc(edge.id||id)+'</div>'+
       '<p><strong>来源：</strong><button class="ex-ref" data-ref="'+esc(uri('node',edge.fromNode))+'">'+esc(edge.fromNode)+'</button></p>'+
       '<p><strong>目标：</strong><button class="ex-ref" data-ref="'+esc(uri('node',edge.toNode))+'">'+esc(edge.toNode)+'</button></p>'+
       '<p><strong>关系：</strong>'+esc(edge.edge_type||edge.label||'Canvas directed edge')+'</p>'+
@@ -1875,6 +1950,41 @@ async function navigate(kind,id,anchor='',options={}){
         (doc.next_offset!==null&&doc.next_offset!==undefined?'<button class="ex-ref" data-report-more="'+doc.next_offset+'">加载后续报告内容 ↓</button>':'');
       await updateSelectionWithoutLayout();
     }catch(e){reader.textContent='无法加载研究报告：'+e.message}
+  }else if(kind==='task-report'){
+    try{
+      const version=id&&id!=='current'?'&version='+encodeURIComponent(id):'';
+      const doc=await api(base()+'/final-report?section='+encodeURIComponent(anchor)+version);
+      if(request!==navSerial||selected?.kind!==kind||selected.id!==id)return;
+      if(doc.available===false||!doc.content){
+        reader.innerHTML=taskReportUnavailable(doc.state||index.final_report?.state,doc.message);
+      }else{
+        const actual=String(doc.version||id);selected.id=actual;
+        taskReportSources.set(actual,doc.source_index||{});
+        readingSourceVersion=doc.source_sha256||'';
+        reader.innerHTML=taskReportContents({...doc,version:actual,section:anchor});
+      }
+      await updateSelectionWithoutLayout();
+    }catch(e){reader.innerHTML=taskReportUnavailable(index.final_report?.state,'无法加载总报告：'+e.message)}
+  }else if(kind==='task-report-source'){
+    const source=unpackTaskReportSource(id);
+    if(!source){reader.textContent='无法读取报告来源：来源定位无效。';return}
+    try{
+      const doc=await api(base()+'/final-report-source?version='+encodeURIComponent(source.version)+
+        '&ref='+encodeURIComponent(source.ref)+'&section='+encodeURIComponent(anchor));
+      if(request!==navSerial||selected?.kind!==kind||selected.id!==id)return;
+      if(doc.source_index)taskReportSources.set(source.version,doc.source_index);
+      readingSourceVersion=doc.source_sha256||'';
+      reader.innerHTML='<button class="ex-ref" type="button" data-task-report-back="'+esc(source.version)+'">← 返回总报告</button>'+
+        '<h2 class="ex-document-title">'+esc(doc.title||source.ref)+'</h2>'+
+        '<div class="ex-md" data-doc-content="1">'+mdHtml(withoutRepeatedTitle(doc.content||'',doc.title),doc.id)+'</div>'+
+        (doc.next_offset!==null&&doc.next_offset!==undefined?
+          '<button class="ex-ref" type="button" data-task-report-source-more="'+doc.next_offset+'">加载后续来源内容 ↓</button>':'');
+      await updateSelectionWithoutLayout();
+    }catch(e){
+      if(request!==navSerial||selected?.kind!==kind||selected.id!==id)return;
+      reader.innerHTML='<button class="ex-ref" type="button" data-task-report-back="'+esc(source.version)+'">← 返回总报告</button>'+
+        '<p class="ex-reader-empty">无法读取冻结来源：'+esc(e.message)+'</p>';
+    }
   }
   if(request!==navSerial)return;
   if(['node','doc','report'].includes(kind))reader.insertAdjacentHTML('afterbegin',discussionTools());
@@ -1891,7 +2001,7 @@ async function navigate(kind,id,anchor='',options={}){
       positionSourceRail();pulseNode(nodeId);
     }
   }
-  if(['doc','report'].includes(kind)&&mobileReadingRequested)layout.dataset.mobileReading='true';
+  if(readingKinds.includes(kind)&&mobileReadingRequested)layout.dataset.mobileReading='true';
   reader.scrollTop=0;
   if(anchor){
     const outcomeTarget=anchor==='outcome'&&kind==='node'?
@@ -1945,7 +2055,68 @@ document.addEventListener('selectionchange',()=>{
 reader.addEventListener('pointerdown',e=>{
   if(e.target.closest('[data-selection-popover] button'))e.preventDefault();
 });
+reader.addEventListener('keydown',event=>{
+  if(!['Enter',' '].includes(event.key))return;
+  const reference=event.target.closest('a[data-ref]');
+  if(reference){event.preventDefault();reference.click()}
+});
 reader.addEventListener('click',async e=>{
+  if(e.target.closest('[data-task-report-refresh]')){await load();return;}
+  const reportBack=e.target.closest('[data-task-report-back]');
+  if(reportBack){
+    const previous=trail[trailPosition()-1];
+    if(previous?.selected?.kind==='task-report'&&previous.selected.id===reportBack.dataset.taskReportBack)
+      await restoreView(-1);
+    else await navigate('task-report',reportBack.dataset.taskReportBack);
+    return;
+  }
+  const taskReportSourceMore=e.target.closest('[data-task-report-source-more]');
+  if(taskReportSourceMore&&selected?.kind==='task-report-source'){
+    if(taskReportSourceMore.disabled)return;
+    const target={...selected},source=unpackTaskReportSource(target.id),request=navSerial,
+      offset=Number(taskReportSourceMore.dataset.taskReportSourceMore);
+    if(!source||!Number.isSafeInteger(offset)||offset<0)return;
+    const current=()=>request===navSerial&&selected?.kind===target.kind&&selected.id===target.id&&
+      selected.anchor===target.anchor&&taskReportSourceMore.isConnected;
+    taskReportSourceMore.disabled=true;
+    taskReportSourceMore.setAttribute('aria-busy','true');
+    taskReportSourceMore.textContent='正在加载后续来源内容…';
+    try{
+      const page=await api(base()+'/final-report-source?version='+encodeURIComponent(source.version)+
+        '&ref='+encodeURIComponent(source.ref)+'&section='+encodeURIComponent(target.anchor||'')+'&offset='+offset);
+      if(!current())return;
+      if(page.source_index)taskReportSources.set(source.version,page.source_index);
+      reader.querySelector('[data-doc-content]')?.insertAdjacentHTML('beforeend',mdHtml(page.content,page.id));
+      if(page.next_offset===null||page.next_offset===undefined)taskReportSourceMore.remove();
+      else{
+        taskReportSourceMore.dataset.taskReportSourceMore=String(page.next_offset);
+        taskReportSourceMore.disabled=false;
+        taskReportSourceMore.removeAttribute('aria-busy');
+        taskReportSourceMore.textContent='加载后续来源内容 ↓';
+      }
+    }catch(err){
+      if(!current())return;
+      taskReportSourceMore.disabled=false;
+      taskReportSourceMore.removeAttribute('aria-busy');
+      taskReportSourceMore.textContent='读取失败，点击重试：'+err.message;
+    }
+    return;
+  }
+  const taskReportMore=e.target.closest('[data-task-report-more]');
+  if(taskReportMore&&selected?.kind==='task-report'){
+    const target={...selected},offset=Number(taskReportMore.dataset.taskReportMore);
+    taskReportMore.disabled=true;
+    try{
+      const page=await api(base()+'/final-report?version='+encodeURIComponent(target.id)+
+        '&section='+encodeURIComponent(target.anchor||'')+'&offset='+offset);
+      if(selected?.kind!=='task-report'||selected.id!==target.id||selected.anchor!==target.anchor)return;
+      if(page.source_index)taskReportSources.set(target.id,page.source_index);
+      reader.querySelector('[data-doc-content]')?.insertAdjacentHTML('beforeend',mdHtml(page.content,page.id));
+      if(page.next_offset===null||page.next_offset===undefined)taskReportMore.remove();
+      else{taskReportMore.dataset.taskReportMore=String(page.next_offset);taskReportMore.disabled=false}
+    }catch(err){taskReportMore.disabled=false;taskReportMore.textContent='读取失败，点击重试：'+err.message}
+    return;
+  }
   const cycle=e.target.closest('[data-discuss-cycle]');
   if(cycle){discussReading({kind:'report',id:cycle.dataset.discussCycle,section:'',quote:''});return;}
   if(e.target.closest('[data-discuss-selection]')){
@@ -2021,6 +2192,10 @@ reader.addEventListener('click',async e=>{
   const v=el.dataset.ref,split=v.indexOf(':'),hash=v.indexOf('#');
   if(split>0)navigate(v.slice(0,split),v.slice(split+1,hash<0?undefined:hash),hash<0?'':v.slice(hash+1));
 });
+reader.addEventListener('change',event=>{
+  const selector=event.target.closest('[data-task-report-version]');
+  if(selector)navigate('task-report',selector.value);
+});
 function decodeHash(value=location.hash){
   let hash;try{hash=decodeURIComponent(value.slice(1))}catch{return null}
   const i=hash.indexOf(':');if(i<1)return null;
@@ -2031,7 +2206,7 @@ let pendingChatTarget=null;
 window.addEventListener('sciver-explorer-navigate',event=>{
   let url;try{url=new URL(event.detail.href)}catch{return}
   const target=decodeHash(url.hash);
-  if(!target||!['node','edge','doc','report'].includes(target.kind))return;
+  if(!target||!['node','edge','doc','report','task-report','task-report-source'].includes(target.kind))return;
   event.preventDefault();
   if(!index){pendingChatTarget=target;return}
   navigate(target.kind,target.id,target.anchor,{focus:true,animateFocus:true,highlight:true})
@@ -2047,15 +2222,21 @@ async function load({fresh=false}={}){
   try{
     const newIndex=await api(base()+'/index'),previous=index;
     index=newIndex;
+    ensureTaskReportButton();
     overviewRender();
     ++tipWorkerRequest;$('ex-tip-panel').hidden=true;
     $('ex-stats').textContent=index.stats.node_count+' 节点 · '+
-      index.stats.edge_count+' 科研连线 · '+index.stats.doc_count+' 文档';
+      (index.stats.edge_count-index.edges.filter(isDiscussionContext).length)+' 图谱连线 · '+
+      (index.edges.some(isDiscussionContext)?index.edges.filter(isDiscussionContext).length+' 讨论关联 · ':'')+
+      index.stats.doc_count+' 文档';
     $('ex-index-warning').hidden=!index.stats.partial;
-    const hash=pendingChatTarget||decodeHash();pendingChatTarget=null;
+    const hash=pendingChatTarget||decodeHash()||
+      (Object.hasOwn(index,'final_report')&&index.final_report?.task_complete!==false&&new URLSearchParams(location.search).get('final_report')==='1'?
+        {kind:'task-report',id:String(index.final_report?.version||'current'),anchor:''}:null);
+    pendingChatTarget=null;
     const hashValid=hash&&((hash.kind==='node'&&index.nodes.some(n=>n.id===hash.id))||
       (hash.kind==='edge'&&index.edges.some(e=>ID(e.id||e.fromNode+'->'+e.toNode)===hash.id))||
-      ['doc','report'].includes(hash.kind));
+      (['doc','report'].includes(hash.kind)||(['task-report','task-report-source'].includes(hash.kind)&&index.final_report?.task_complete!==false)));
     const saved=history.state?.tmExplorerView;
     if(fresh&&!hashValid){
       // A new direct visit or a task switch has no explicit document target.
@@ -2069,7 +2250,7 @@ async function load({fresh=false}={}){
     }else if(saved?.taskId===taskId&&(!saved.selected||
       (saved.selected.kind==='node'&&index.nodes.some(n=>n.id===saved.selected.id))||
       (saved.selected.kind==='edge'&&index.edges.some(e=>ID(e.id||e.fromNode+'->'+e.toNode)===saved.selected.id))||
-      ['doc','report'].includes(saved.selected.kind))){
+      (['doc','report'].includes(saved.selected.kind)||(['task-report','task-report-source'].includes(saved.selected.kind)&&index.final_report?.task_complete!==false)))){
       await restoreSnapshot(saved,history.state?.tmExplorerIndex);
     }else if(hashValid){
       await navigate(hash.kind,hash.id,hash.anchor,{record:false,focus:false});
@@ -2339,7 +2520,7 @@ $('ex-query').addEventListener('input',()=>{
     }
   },250);
 });
-window.addEventListener('DOMContentLoaded',()=>{initPaneControls();load({fresh:true})});
+window.addEventListener('DOMContentLoaded',()=>{ensureTaskReportButton();initPaneControls();load({fresh:true})});
 if(typeof MutationObserver!=='undefined'&&document.documentElement){
   new MutationObserver(()=>{
     if(graphReady)updateSelectionWithoutLayout().catch(err=>showError(err.message));

@@ -35,7 +35,7 @@ KNOWN = {"H-0007", "H-0008", "H-0009"}
 
 def test_new_contract_requires_exact_contributions_but_saved_candidates_remain_readable():
     contract = role_contract("research_lead", phase="frontier_proposal")
-    assert contract.version == 14
+    assert contract.version == 18
     context = {"_known_hypothesis_ids": list(KNOWN), "_require_explicit_lineage": True}
     contract.validate(proposal(), context)
     old = proposal()

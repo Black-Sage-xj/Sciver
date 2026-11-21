@@ -50,6 +50,33 @@ def test_generic_fallback_removes_task_scaffolding_and_preserves_native_language
     assert _query_variants('landscape', 'gap', '高分子的拓扑和力学', '') == ['高分子的拓扑和力学']
 
 
+@pytest.mark.parametrize('target', [
+    '研究 UCI 数据中的时间变化及独立评价材料',
+    '日本語の材料データ ABC の時間変化',
+    'Données de matériaux ABC et évaluation indépendante',
+])
+def test_mixed_language_fallback_keeps_subject_with_latin_identifiers(target):
+    assert _query_variants('landscape', 'gap', target, '') == [target]
+
+
+def test_multilingual_query_reaches_provider_and_frozen_request_intact(tmp_path):
+    target = '研究 UCI 数据中的时间变化及独立评价材料'
+    calls = []
+    result = retrieve_scholarly({'task_type': 'landscape', 'search_target': target},
+        tmp_path, runner=receipt_runner([[]], calls))
+    assert len(calls) == 1
+    assert calls[0][calls[0].index('--query') + 1] == target
+    assert result['request_identity']['request']['search_queries'] == [target]
+
+
+def test_multilingual_fallback_keeps_existing_bound_and_explicit_plan():
+    target = '非英语主题 ABC ' * 50
+    assert _query_variants('landscape', 'gap', target, '') == [target[:300].strip()]
+    planned = [{'query': 'explicit domain query', 'purpose': 'source identity'}]
+    assert _query_variants('landscape', 'gap', target, '', search_queries=planned) == [
+        'explicit domain query']
+
+
 @pytest.mark.parametrize('row,issue', [
     ({'title': 'Fetched page contents ' * 4000}, 'title_exceeds_article_bound'),
     ({'title': 'Just a moment...'}, 'webpage_title_instead_of_article'),

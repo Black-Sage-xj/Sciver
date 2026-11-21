@@ -77,7 +77,7 @@ def test_scheduler_skill_preflight_rejects_missing_configured_skill(monkeypatch,
     with pytest.raises(FileNotFoundError, match="canvas-maintenance"):
         worker_runtime._validate_scheduler_skills(spec)
     assert calls == ["semantic_annotator", "budget_reviewer", "attention_reviewer",
-                     "runtime_supervisor", "incident_supervisor", "research_chat",
+                     "runtime_supervisor", "incident_supervisor", "system_assistant", "research_chat",
                      "research_lead"]
 
 

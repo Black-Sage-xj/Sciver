@@ -32,12 +32,34 @@ def _wake_fingerprint_for(spec: Any, result: dict[str, Any]) -> dict[str, Any] |
     offered = result.get("wake_fingerprint")
     if worker_direction._direction_values(offered) is not None:
         return {"schema": worker_state.DIRECTION_FINGERPRINT_SCHEMA,
-                **{key: offered[key] for key in worker_state.DIRECTION_FINGERPRINT_FIELDS}}
+                **{key: offered[key] for key in worker_state.DIRECTION_FINGERPRINT_FIELDS},
+                **{key: offered[key] for key in ("research_inputs_sha256", "verified_research_input_ids")
+                   if key in offered}}
     try:
         return worker_direction.research_direction_fingerprint(spec)
     except (OSError, ValueError):
         return None  # Unknown signal: only an explicit retry_direction wakes this Worker.
 
+
+
+def _verify_input_support_admission(spec: Any, root: Path, worker_id: str, admission: dict) -> bool:
+    from .public_submission import read_bounded_regular_file, strict_json
+    from .supervisor_input_support import input_support_recovery
+
+    cycle_id = admission.get("cycle_id")
+    if not isinstance(cycle_id, str) or not cycle_id.isascii() or not cycle_id.isdecimal():
+        return False
+    cycle = root / cycle_id
+    try:
+        state = strict_json(read_bounded_regular_file(cycle / "research_state.json", 1_048_576))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(state, dict):
+        return False
+    plan = input_support_recovery(cycle, state, spec=spec, worker_id=worker_id)
+    return bool(plan and plan["route"] == "input_support"
+                and all(admission.get(key) and admission[key] == plan[key]
+                        for key in ("dependency_identity", "wake_identity")))
 
 def run_once(spec: Any, worker_id: str, claim_id: str, epoch: int, *,
              resume_cycle: str | None = None) -> int:
@@ -51,6 +73,20 @@ def run_once(spec: Any, worker_id: str, claim_id: str, epoch: int, *,
     claims = multi_worker.CycleClaims(root, graph_path)
     claim = claims.attach_owner(worker_id, claim_id, epoch, owner_pid=os.getpid(),
                                 owner_start_ticks=runtime_manager.process_start_ticks(os.getpid()))
+    admission = worker_store.read_worker(root, worker_id).get("input_support_admission")
+    if admission is not None and (not isinstance(admission, dict) or admission.get("claim_id") != claim_id
+                                  or admission.get("epoch") != epoch or not admission.get("cycle_id")):
+        claims.update(worker_id, claim_id, epoch, action="pause")
+        worker_store.save_worker(root, worker_id, status="NEEDS_ATTENTION", error_kind="input_support_admission_unverified")
+        return 2
+    if admission is not None and not _verify_input_support_admission(spec, root, worker_id, admission):
+        claims.update(worker_id, claim_id, epoch, action="wait_direction")
+        worker_store.save_worker(root, worker_id, status=worker_state.WAITING_RESEARCH_DIRECTION,
+                                 claim_id=None, epoch=None, pid=None, pid_start_ticks=None,
+                                 current_cycle=admission["cycle_id"], input_support_wait_cycle=admission["cycle_id"],
+                                 waiting_since=admission["waiting_since"], wake_fingerprint=admission["wake_fingerprint"],
+                                 input_support_admission=None)
+        return 0
     stop = threading.Event()
     workflow = None
     import hashlib
@@ -130,7 +166,7 @@ def run_once(spec: Any, worker_id: str, claim_id: str, epoch: int, *,
         workflow.worker_proposal_gate = multi_worker.ProposalGate(root, graph_path)
         backend.preflight_runtime()
         worker_store.save_worker(root, worker_id, status="RUNNING", error_kind=None, pid=os.getpid(),
-                    pid_start_ticks=runtime_manager.process_start_ticks(os.getpid()))
+                    pid_start_ticks=runtime_manager.process_start_ticks(os.getpid()), input_support_admission=None)
         if resume_cycle:
             target = root / resume_cycle
             if not target.is_dir() or target.parent != root or not resume_cycle.isdigit():
@@ -148,8 +184,16 @@ def run_once(spec: Any, worker_id: str, claim_id: str, epoch: int, *,
             # Worker and single-controller Resume share the same recovery and
             # guidance preparation. Only worker_action consumed the old pause;
             # the child must preserve any control written after that request.
-            from .resume_preparation import prepare_resume_recovery
+            from .resume_preparation import consume_resume_repairs, prepare_resume_recovery
+            from .workflow import precheckpoint_recovery_allowed, prequalification_restart_allowed
+            precheckpoint_restart = precheckpoint_recovery_allowed(state)
+            prequalification_restart = prequalification_restart_allowed(state)
+            consume_resume_repairs(target, state)
             state = prepare_resume_recovery(state, target)
+            if precheckpoint_restart:
+                state["recovery"]["precheckpoint_restart"] = True
+            if prequalification_restart:
+                state["recovery"]["prequalification_restart"] = True
             result = workflow._run_cycle(resume_state=state)
         else:
             result = workflow._run_cycle()
@@ -160,9 +204,13 @@ def run_once(spec: Any, worker_id: str, claim_id: str, epoch: int, *,
         cycle_name = workflow.cycle_dir.name if workflow.cycle_dir else None
         if status == worker_state.STOPPED_GOAL_COMPLETED:
             return stop_for_goal(str(result.get("reason") or result.get("detail") or ""))
-        from .task_progression import local_replan_reason
+        from .supervisor_input_support import input_support_recovery
+        from .task_progression import input_support_replan_allowed, local_replan_reason, qualification_replan_allowed
         replan_reason = local_replan_reason(result)
-        if replan_reason is not None:
+        input_support = (input_support_recovery(workflow.cycle_dir, result, spec=spec, worker_id=worker_id)
+                         if replan_reason == "input_support_unavailable" else None)
+        if ((replan_reason == "no_qualified_candidate" and qualification_replan_allowed(spec, result))
+                or (input_support and input_support_replan_allowed(spec, result))):
             # This process owns exactly one Cycle allocation. Archive that
             # attempt before the daemon uses its ordinary remaining quota to
             # claim another Cycle; never resume this Cycle or retain its H.
@@ -171,11 +219,11 @@ def run_once(spec: Any, worker_id: str, claim_id: str, epoch: int, *,
             worker_store.save_worker(root, worker_id, status="OVER", error_kind=None,
                         claim_id=None, epoch=None, last_claim_id=claim_id, last_claim_epoch=epoch,
                         target_h_id=None, entry_node_id=None, current_cycle=cycle_name,
-                        wake_fingerprint=None, waiting_since=None,
+                        wake_fingerprint=None, waiting_since=None, input_support_wait_cycle=None,
                         last_local_replan={"reason": replan_reason, "cycle_id": cycle_name,
                                            "at": multi_worker.utcnow().isoformat()})
             return 0
-        if status in {"OVER", "COMPLETED"} and result.get("operational_only_closure"):
+        if status in {"OVER", "COMPLETED"} and result.get("operational_only_closure") and not input_support:
             # A terminal-looking execution record does not waive a pause,
             # resource guard or unknown operational failure for the next claim.
             claims.update(worker_id, claim_id, epoch, action="pause")
@@ -183,13 +231,14 @@ def run_once(spec: Any, worker_id: str, claim_id: str, epoch: int, *,
                         local_replan_blocked={"cycle_id": cycle_name,
                                               "at": multi_worker.utcnow().isoformat()})
             return 2
-        if status == "NO_QUALIFIED_CANDIDATE":
+        if status == "NO_QUALIFIED_CANDIDATE" or input_support:
             fingerprint = _wake_fingerprint_for(spec, result)
             claims.update(worker_id, claim_id, epoch, action="wait_direction")
             worker_store.save_worker(root, worker_id, status=worker_state.WAITING_RESEARCH_DIRECTION, error_kind=None,
                         claim_id=None, epoch=None, last_claim_id=claim_id, last_claim_epoch=epoch,
                         wake_fingerprint=fingerprint, waiting_since=multi_worker.utcnow().isoformat(),
                         workflow_wake_fingerprint=result.get("wake_fingerprint"),
+                        input_support_wait_cycle=cycle_name if input_support else None,
                         current_cycle=cycle_name)
             return 0
         worker_store.save_worker(root, worker_id, status=status,

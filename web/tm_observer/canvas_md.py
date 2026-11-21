@@ -286,6 +286,7 @@ def _sqlite_graph_projection(root: Path) -> dict[str, Any]:
     from theory_master.science_graph_store import (
         ScienceGraphStore, compact_external_summary, external_detail_ref,
     )
+    from .external_graph_context import external_graph_context
 
     from theory_master.notebook import graph_database_path, notebook_config
     graph_file = graph_database_path(root)
@@ -294,6 +295,7 @@ def _sqlite_graph_projection(root: Path) -> dict[str, Any]:
     try:
         with ScienceGraphStore(graph_file, readonly=True) as store:
             source = store.graph_view()
+            external_contexts, discussion_edges = external_graph_context(store, source)
             indexed_cycles = _indexed_hypothesis_cycles(store)
             # Original timestamps live in retained Canvas raw headers. Imported
             # SQLite created_at/recorded_at are migration timestamps, not proof
@@ -382,10 +384,17 @@ def _sqlite_graph_projection(root: Path) -> dict[str, Any]:
                 text += "\n\n**分支状态：** " + status + "；" + (reason or "原因未记录。")
         else:
             detail_ref = _readable_markdown_ref(root, external_detail_ref(h.get("id")))
+            external = external_contexts[h["id"]]
+            # Render a short, real title followed by ordinary prose. The source
+            # content often starts with ##; concatenating that into a compact
+            # one-line preview accidentally turns the entire preview into H2.
+            preview = external["summary"] or compact_external_summary(h.get("content"), 220)
             text = (
                 f"type: External\nid: {h['id']}\ncontent_type: {h['content_type']}\n"
-                f"source: {str(h['source'] or '')[:100]}\n\n# {h['title'] or h['id']}\n\n"
-                f"{compact_external_summary(h.get('content'), 220) or 'No concise preview available.'}"
+                f"source: {str(h['source'] or '')[:100]}\n"
+                + (f"timestamp: {external['created_at']}\n" if external.get("created_at") else "")
+                + f"\n# {external['title']}\n\n"
+                + (preview or "No concise preview available.")
             )
             if detail_ref:
                 text += f"\n\n[[{detail_ref}|详细内容]]"
@@ -407,6 +416,7 @@ def _sqlite_graph_projection(root: Path) -> dict[str, Any]:
                                         if kind == "Hypothesis" else None),
             "legacy_identity_review": (h.get("legacy_identity_review")
                                        if kind == "Hypothesis" else None),
+            "external": external_contexts.get(h["id"]) if kind == "External" else None,
         })
     edges = [
         {"id": e["id"], "fromNode": e["source_hypothesis"],
@@ -429,6 +439,9 @@ def _sqlite_graph_projection(root: Path) -> dict[str, Any]:
         "id": e["id"], "fromNode": e["source_external"], "toNode": e["target_external"],
         "edge_type": e["edge_type"]
     } for e in source.get("external_relations", []))
+    # Context links are a read-only Explorer overlay; canonical graph edges and
+    # scientific inheritance stay exactly as recorded in SQLite.
+    edges.extend(discussion_edges)
     return {"nodes": nodes, "edges": edges}
 
 
@@ -657,7 +670,8 @@ def _build_index_uncached(root: Path) -> dict[str, Any]:
     root = Path(root).resolve()
     canvas = load_canvas(root)
     docs = document_paths(root)
-    # Preserve original geometry/edge semantics; never derive edge records from references.
+    # Preserve scientific edges and geometry. Discussion overlays carry their
+    # own explicit provenance and never replace the canonical edge records.
     nodes: list[dict[str, Any]] = []
     for raw in canvas["nodes"]:
         if not isinstance(raw, dict) or not isinstance(raw.get("id"), str):
@@ -685,6 +699,7 @@ def _build_index_uncached(root: Path) -> dict[str, Any]:
                 "frontiers": list(raw.get("frontiers") or []),
                 "latest_cycle_evaluation": raw.get("latest_cycle_evaluation"),
                 "legacy_identity_review": raw.get("legacy_identity_review"),
+                "external": raw.get("external"),
             },
         })
     aliases = _aliases(nodes, docs)

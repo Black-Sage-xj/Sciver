@@ -5,6 +5,7 @@ All samples are synthetic; no Provider, model or live research is called.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -20,6 +21,7 @@ from theory_master.investigator_budget import (
 from theory_master.supervisor_budget_review import review_supervisor_extension
 from theory_master.budget_auto_preservation import (
     budget_preservation_notice, dispatch_auto_budget_preservation,
+    run_single_budget_preservation, single_budget_preservation_preflight,
 )
 from theory_master.research_preservation import preservation_blockage, PreservationGuard
 
@@ -238,6 +240,276 @@ def test_preservation_reminder_durable_and_idempotent(tmp_path):
     assert first["severity"] == "important"
     assert first["persistent_reminder"] is True
     assert len((root / "1/important_events.jsonl").read_text().splitlines()) == 1
+
+
+@pytest.fixture
+def single_budget_stop(tmp_path):
+    from theory_master.backends import FakeBackend
+    from theory_master.science_graph_store import ScienceGraphStore
+    from theory_master.specification import TaskSpec
+    from theory_master.supervisor_intervention import write_supervisor_setting
+    from theory_master.task import bootstrap
+    from theory_master.workflow import Workflow
+
+    plan = tmp_path / "research_plan.md"
+    plan.write_text("# Goal\ng\n\n# Research Contract\nc\n\n# Final Gate\nf\n\n# Required Context\n- r\n")
+    spec = TaskSpec.from_config(bootstrap(plan).config_path)
+    workflow = Workflow(spec, FakeBackend())
+    workflow._ensure_cycle()
+    cycle = workflow.cycle_dir
+    (cycle / "workspace/README.md").write_text("Recorded incomplete synthetic investigation.")
+    state = {
+        "cycle_id": cycle.name, "research_root": str(spec.research_root), "branch_canvas": str(spec.branch_canvas),
+        "status": "needs_attention", "resumable": True, "execution_active": False,
+        "phase": "investigator:budget_review", "attention": {"code": BUDGET_ATTENTION_CODE},
+        "investigator_budget_policy": BUDGET_POLICY_3_PLUS_3,
+        "hypothesis_lock": {"id": "H-0001", "status": "locked", "hypothesis": "fixed method",
+                            "scope": "authorized inputs", "decisive_test": "compare the two local models"},
+        "agents": {"investigator": {"tokens_total_live": BASE}},
+    }
+    (cycle / "evidence").mkdir(exist_ok=True)
+    _save(cycle, state)
+    _approve_first_three(cycle, state)
+    apply_supervisor_budget_decision(cycle, authorize=False,
+        reason="The frozen comparison cannot be completed under the remaining resource contract.",
+        next_step="Retain the checked observations for archival preservation.")
+    code = "investigator_budget_supervisor_declined"
+    state.update(phase="investigator:budget_denied", attention={"code": code}, next_executor="investigator",
+                 investigator_budget=budget_status(cycle, spec.research_root, state),
+                 budget_auto_preserve={"policy": BUDGET_POLICY_3_PLUS_3, "code": code,
+                                       "source": "sdk_authorized_budget_terminal", "cycle": cycle.name})
+    _save(cycle, state)
+    with ScienceGraphStore(spec.graph_database) as store:
+        store.add_hypothesis("H-0001", title="Fixed method", summary="Fixed method")
+        store.register_cycle_hypothesis(cycle_id=cycle.name, hypothesis_id="H-0001")
+        store.set_frontier(branch_id="frontier:H-0001", hypothesis_id="H-0001",
+                           status="active", reason="Budget preservation fixture")
+    write_supervisor_setting(spec.research_root, True)
+    return workflow, cycle, state
+
+
+def _own_single_budget_stop(cycle):
+    from theory_master.runtime_manager import process_start_ticks, update_registry
+
+    update_registry(cycle.parent, state="RECOVERING", requested_operation="takeover", launch_id="budget-takeover",
+                    takeover_cycle=cycle.name, current_cycle=cycle.name, supervisor_pid=os.getppid(),
+                    supervisor_start_ticks=process_start_ticks(os.getppid()), runner_pid=os.getpid(),
+                    runner_start_ticks=process_start_ticks(os.getpid()))
+
+
+def test_single_budget_stop_archives_with_exact_owner_once_and_no_verdict(single_budget_stop):
+    from test_research_preservation_cycle86 import _stage_output
+    from theory_master.science_graph_store import ScienceGraphStore
+
+    workflow, cycle, state = single_budget_stop
+    assert single_budget_preservation_preflight(cycle, state, spec=workflow.spec)["status"] == "ready"
+    assert not (cycle / "preservation").exists()
+    with pytest.raises(ValueError, match="runtime owns"):
+        run_single_budget_preservation(workflow, cycle, launch_id="budget-takeover")
+    assert not (cycle / "preservation").exists()
+
+    _own_single_budget_stop(cycle)
+    workout = (cycle / "workspace/README.md").read_bytes()
+
+    def archive(*_args):
+        assert workflow.backend._preservation_read_only is True
+        return "archiver", json.dumps(_stage_output())
+
+    with patch.object(workflow.backend, "invoke", side_effect=archive) as invoke, \
+            patch.object(workflow.backend, "ensure_thread", wraps=workflow.backend.ensure_thread) as ensure:
+        result = run_single_budget_preservation(workflow, cycle, launch_id="budget-takeover")
+        with pytest.raises(PreservationGuard):
+            run_single_budget_preservation(workflow, cycle, launch_id="budget-takeover")
+    invoke.assert_called_once()
+    ensure.assert_called_once()
+    assert invoke.call_args.args[0] == "investigator" and ensure.call_args.args[1] is None
+    assert result["closure"]["authority"] == "sdk_budget_terminal"
+    assert result["closure"]["scientific_verdict"] is None
+    assert not result["closure"]["next_cycle_created"]
+    assert workout == (cycle / "workspace/README.md").read_bytes()
+    assert json.loads((cycle / "preservation/sdk_budget_terminal.json").read_text())["status"] == "completed"
+    with ScienceGraphStore(workflow.spec.graph_database, readonly=True) as store:
+        assert store.db.execute("SELECT COUNT(*) FROM cycle_evaluations").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("guard", ["operator_control", "active_goal", "worker", "missing_ledger",
+                                   "foreign_ledger", "wrong_terminal_code", "prior_paid_output"])
+def test_single_budget_preflight_fails_closed(single_budget_stop, guard):
+    workflow, cycle, state = single_budget_stop
+    if guard == "operator_control":
+        (cycle / "recovery_control.json").write_text('{"action":"pause"}')
+    elif guard == "active_goal":
+        state["native_goal"] = {"status": "active", "thread_id": "native"}
+    elif guard == "worker":
+        state["worker_id"] = "worker-1"
+    elif guard == "missing_ledger":
+        (cycle / "budget/investigator_reviews.jsonl").unlink()
+    elif guard == "foreign_ledger":
+        ledger = cycle / "budget/investigator_reviews.jsonl"
+        rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+        ledger.write_text("\n".join(json.dumps({**row, "cycle_id": "999"}) for row in rows) + "\n")
+    elif guard == "wrong_terminal_code":
+        code = "investigator_budget_review_rejected"
+        state["attention"]["code"] = code
+        state["budget_auto_preserve"]["code"] = code
+    else:
+        (cycle / "preservation").mkdir()
+        (cycle / "preservation/last_model_output.txt").write_text("partial output from another attempt")
+    _save(cycle, state)
+    decision = single_budget_preservation_preflight(cycle, state, spec=workflow.spec)
+    assert decision is None or decision["status"] == "hold"
+    assert not (cycle / "preservation/sdk_budget_terminal.json").exists()
+
+
+def test_single_budget_unknown_model_delivery_never_repeats(single_budget_stop):
+    workflow, cycle, _ = single_budget_stop
+    _own_single_budget_stop(cycle)
+    with patch.object(workflow.backend, "invoke", side_effect=RuntimeError("transport interrupted")) as invoke:
+        with pytest.raises(RuntimeError, match="transport interrupted"):
+            run_single_budget_preservation(workflow, cycle, launch_id="budget-takeover")
+        with pytest.raises(PreservationGuard, match="not ready"):
+            run_single_budget_preservation(workflow, cycle, launch_id="budget-takeover")
+    invoke.assert_called_once()
+    receipt = json.loads((cycle / "preservation/sdk_budget_terminal.json").read_text())
+    assert receipt["status"] == "requires_reconciliation"
+    assert not (cycle / "preservation/closure.json").exists()
+
+
+@pytest.mark.parametrize("corruption", [None, "scientific_field", "cache_after_claim"])
+def test_single_budget_display_replay_uses_existing_paid_output_only(single_budget_stop, corruption):
+    from test_research_preservation_cycle86 import _stage_output
+    from theory_master.budget_auto_preservation import _single_budget_proof
+    from theory_master.research_preservation import preserve_blocked_cycle
+
+    workflow, cycle, state = single_budget_stop
+    folder = cycle / "preservation"
+    folder.mkdir()
+    paid = folder / "sdk_budget_terminal.json"
+    paid.write_text(json.dumps({
+        "schema": "theory-master/single-budget-preservation/v1",
+        "status": "requires_reconciliation", "error_type": "ValueError",
+        "launch_id": "prior-launch", "runner_pid": 99_999_999, "runner_start_ticks": 1,
+        "proof": _single_budget_proof(cycle, state, spec=workflow.spec),
+    }))
+    output = _stage_output()
+    output["canvas_summary"] = "Overlong display only " + "x" * 170
+    if corruption == "scientific_field":
+        output["remaining_gap"] = ""
+    raw = folder / "last_model_output.txt"
+    raw.write_text(json.dumps(output))
+    paid_before, raw_before = paid.read_bytes(), raw.read_bytes()
+    decision = single_budget_preservation_preflight(cycle, state, spec=workflow.spec)
+    if corruption == "scientific_field":
+        assert decision["status"] == "hold"
+        assert not (folder / "sdk_budget_cached_replay.json").exists()
+        return
+    assert decision["status"] == "ready" and decision["cached_only"]
+
+    def try_archive(**kwargs):
+        if corruption == "cache_after_claim":
+            raw.write_bytes(raw_before + b"\n")
+        return preserve_blocked_cycle(**kwargs)
+
+    _own_single_budget_stop(cycle)
+    with patch("theory_master.research_preservation.preserve_blocked_cycle", side_effect=try_archive), \
+            patch.object(workflow.backend, "invoke") as invoke, \
+            patch.object(workflow.backend, "ensure_thread") as ensure:
+        if corruption:
+            with pytest.raises(PreservationGuard):
+                run_single_budget_preservation(workflow, cycle, launch_id="budget-takeover")
+            assert not (folder / "closure.json").exists()
+        else:
+            result = run_single_budget_preservation(workflow, cycle, launch_id="budget-takeover")
+            assert result["closure"]["scientific_verdict"] is None
+            stage = json.loads((folder / "stage_output.json").read_text())
+            assert stage == {**output, "canvas_summary": stage["canvas_summary"]}
+            assert len(stage["canvas_summary"]) <= 160
+            assert raw.read_bytes() == raw_before
+            assert json.loads((folder / "sdk_budget_cached_replay.json").read_text())["status"] == "completed"
+        with pytest.raises(PreservationGuard, match="not ready"):
+            run_single_budget_preservation(workflow, cycle, launch_id="budget-takeover")
+    assert paid.read_bytes() == paid_before
+    invoke.assert_not_called()
+    ensure.assert_not_called()
+
+
+def test_single_budget_own_supervisor_can_admit_after_its_runner_exits(single_budget_stop):
+    from theory_master.runtime_manager import process_start_ticks, update_registry
+
+    workflow, cycle, state = single_budget_stop
+    update_registry(cycle.parent, state="RUNNING", requested_operation="run", launch_id="existing-run",
+                    current_cycle=cycle.name, supervisor_pid=os.getpid(),
+                    supervisor_start_ticks=process_start_ticks(os.getpid()), runner_pid=None)
+    assert single_budget_preservation_preflight(cycle, state, spec=workflow.spec)["status"] == "ready"
+    update_registry(cycle.parent, supervisor_pid=os.getppid(),
+                    supervisor_start_ticks=process_start_ticks(os.getppid()))
+    assert single_budget_preservation_preflight(cycle, state, spec=workflow.spec)["status"] == "hold"
+
+
+@pytest.mark.parametrize(("recorded", "observations", "thread_status", "ready"), [
+    ("paused", ("paused", "paused"), "idle", True),
+    ("paused", ("paused", "active"), "idle", False),
+    ("paused", (None, None), "idle", False),
+    (None, (None, None), "idle", True),
+    ("paused", ("paused", "paused"), "notLoaded", True),
+    ("paused", ("paused", "active"), "notLoaded", False),
+    ("paused", (None, None), "notLoaded", False),
+])
+def test_retained_goal_must_still_be_in_the_verified_stop_state(tmp_path, monkeypatch, recorded, observations,
+                                                                thread_status, ready):
+    from theory_master.budget_auto_preservation import _require_idle_budget_goal
+    from theory_master.native_goal_recovery import goal_identity
+
+    def goal(status):
+        return SimpleNamespace(thread_id="native", created_at=1, objective="frozen test", status=status,
+                               tokens_used=5, time_used_seconds=7, token_budget=None)
+
+    home = tmp_path / "codex"
+    home.mkdir()
+    (home / "config.toml").write_text("")
+    monkeypatch.setattr("theory_master.codex_accounts.runtime_home", lambda: home)
+    idle = SimpleNamespace(id="native", status=SimpleNamespace(root=SimpleNamespace(type=thread_status)),
+                           turns=[SimpleNamespace(status="completed"), SimpleNamespace(status="interrupted")])
+    stop = {"thread_id": "native", "goal_identity": goal_identity(goal("paused")), "goal_status": recorded}
+    with patch("openai_codex.Codex"), patch("theory_master.codex_sdk_compat.read_thread",
+                                               return_value=SimpleNamespace(thread=idle)), \
+            patch("theory_master.codex_sdk_compat.read_goal", side_effect=[
+                goal(status) if status is not None else None for status in observations]) as reads, \
+            patch("theory_master.codex_sdk_compat.server_pid", return_value=111) as pid, \
+            patch("theory_master.native_goal_recovery.ensure_no_foreign_goal_owner") as owner:
+        if ready:
+            _require_idle_budget_goal(tmp_path, stop)
+        else:
+            with pytest.raises(ValueError):
+                _require_idle_budget_goal(tmp_path, stop)
+    assert reads.call_count == 2
+    pid.assert_called_once()
+    owner.assert_called_once_with({"workspace_path": str(tmp_path / "workspace"), "thread_id": "native"},
+                                  current_server_pid=111)
+
+
+@pytest.mark.parametrize("foreign_owner", [False, True])
+def test_unloaded_goal_rejects_live_turn_or_foreign_owner(tmp_path, monkeypatch, foreign_owner):
+    from theory_master.budget_auto_preservation import _require_idle_budget_goal
+    from theory_master.native_goal_recovery import NativeGoalRecoveryConflict, goal_identity
+
+    goal = SimpleNamespace(thread_id="native", created_at=1, objective="frozen test", status="paused",
+                           tokens_used=5, time_used_seconds=7, token_budget=None)
+    home = tmp_path / "codex"
+    home.mkdir()
+    (home / "config.toml").write_text("")
+    monkeypatch.setattr("theory_master.codex_accounts.runtime_home", lambda: home)
+    thread = SimpleNamespace(id="native", status=SimpleNamespace(root=SimpleNamespace(type="notLoaded")),
+                             turns=[SimpleNamespace(status="interrupted" if foreign_owner else "inProgress")])
+    stop = {"thread_id": "native", "goal_identity": goal_identity(goal), "goal_status": "paused"}
+    with patch("openai_codex.Codex"), patch("theory_master.codex_sdk_compat.read_thread",
+                                               return_value=SimpleNamespace(thread=thread)), \
+            patch("theory_master.codex_sdk_compat.read_goal", return_value=goal), \
+            patch("theory_master.codex_sdk_compat.server_pid", return_value=111), \
+            patch("theory_master.native_goal_recovery.ensure_no_foreign_goal_owner",
+                  side_effect=NativeGoalRecoveryConflict("foreign owner")):
+        with pytest.raises(NativeGoalRecoveryConflict if foreign_owner else ValueError):
+            _require_idle_budget_goal(tmp_path, stop)
 
 
 def test_preserve_failure_keeps_one_shot_receipt_and_notifies(tmp_path):

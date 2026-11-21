@@ -5,6 +5,7 @@ scientific results, rank evidence, or change its admissibility.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -14,6 +15,7 @@ from urllib.parse import quote, unquote, urlsplit
 from .evidence import adjudicable_manifest_records
 from .delivery_materials import material_rows
 
+REPORT_PROMPT_MATERIAL_LIMIT = 64 * 1024
 _ANCHORS = ("cycle_workspace", "cycle_dir", "task_home", "research_root",
             "legacy_research_root", "benchmark_root", "notes_vault_root", "repo_root")
 _CODE = re.compile(r"(^ {0,3}(?P<fence>`{3,}|~{3,})[^\n]*\n.*?(?:^ {0,3}(?P=fence)[ \t]*$|\Z)|(?P<tick>`+)[^\n]*?(?P=tick))", re.M | re.S)
@@ -40,6 +42,81 @@ def report_materials(context: Mapping[str, Any]) -> list[dict[str, Any]]:
         adjudicable_manifest_records(context.get("evidence_manifest")), roots=_roots(context),
         cycle_dir=Path(str(context["cycle_dir"])) if context.get("cycle_dir") else None,
     )
+
+
+def _json_size(value: Any) -> int:
+    return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
+
+
+def _representative_assets(assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Offer navigable figures, summaries, and scripts before bulk results."""
+    groups: dict[str, list[tuple[Path, dict[str, Any]]]] = {
+        "figure": [], "summary": [], "script": [], "other": [],
+    }
+    for asset in assets:
+        if asset.get("status") not in {"available", "external"}:
+            continue
+        path = Path(asset.get("relative_path") or asset["reference"])
+        stem = path.stem.lower()
+        kind = asset.get("kind")
+        if kind in {"figure", "script"}:
+            group = kind
+        elif path.suffix.lower() in {".md", ".rst"} or re.search(
+            r"readme|summary|conclusion|protocol|metrics|overview|index", stem
+        ):
+            group = "summary"
+        else:
+            group = "other"
+        if _json_size(asset) <= 2048:
+            groups[group].append((path, asset))
+    result = []
+    for kind, limit in (("figure", 6), ("summary", 6), ("script", 4), ("other", 2)):
+        ranked = sorted(groups[kind], key=lambda item: (len(item[0].parts), item[0].as_posix()))
+        result.extend(asset for _, asset in ranked[:limit])
+    return result
+
+
+def compact_report_materials(materials: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Bound only Reporter prompt navigation, retaining admitted source identities."""
+    if _json_size(materials) <= REPORT_PROMPT_MATERIAL_LIMIT:
+        return materials
+    projected = []
+    # Reserve room for the enclosing list and a summary of any omitted rows.
+    available = REPORT_PROMPT_MATERIAL_LIMIT - 512
+    omitted_rows = 0
+    omitted_assets = 0
+    # An exact manifest offers a way to inspect everything in an abbreviated
+    # batch. Keep those sources before individual ungrouped references.
+    for row in sorted(materials, key=lambda item: not (item.get("manifest_path") and item.get("manifest_sha256"))):
+        assets = row["assets"]
+        representative = _representative_assets(assets)
+        compact = {key: row[key] for key in ("evidence_id", "evidence_batch_id", "relation",
+                   "manifest_path", "manifest_sha256") if key in row}
+        evidence_ids = row.get("evidence_ids") or []
+        if evidence_ids:
+            compact.update(evidence_ids=evidence_ids[:12], evidence_count=len(evidence_ids))
+        producer = row.get("producer_invocation") or {}
+        if producer:
+            compact["producer_invocation"] = {key: producer[key] for key in ("invocation_id", "role", "stage")
+                                                   if key in producer}
+        integrity = row.get("integrity")
+        if integrity is not None:
+            compact["integrity"] = {"status": integrity.get("status"),
+                                    **{f"{key}_count": len(integrity.get(key) or [])
+                                       for key in ("checked_hashes", "missing_paths", "changed_paths", "errors")}}
+        compact.update(assets=representative, asset_count=len(assets),
+                       omitted_asset_count=len(assets) - len(representative))
+        size = _json_size(compact) + 2
+        if size > available:
+            omitted_rows += 1
+            omitted_assets += len(assets)
+            continue
+        projected.append(compact)
+        available -= size
+    if omitted_rows:
+        projected.append({"omitted_material_row_count": omitted_rows,
+                          "omitted_asset_count": omitted_assets, "assets": []})
+    return projected
 
 
 def normalize_report_images(body: str, materials: list[dict[str, Any]],

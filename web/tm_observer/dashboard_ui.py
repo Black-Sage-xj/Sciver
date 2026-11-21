@@ -274,6 +274,7 @@ body.stage-height-focus .tm-sidebar-edge { display:none!important; }
 .tm-tui-title-main { min-width:0; flex:1; display:flex; flex-direction:column; gap:5px; }
 .tm-tui-eyebrow { color:var(--tm-muted); font-weight:650; font-size:10px; letter-spacing:.11em; }
 .tm-tui-title-main > strong { font-size:23px; font-weight:680; line-height:1.3; letter-spacing:-.025em; overflow-wrap:anywhere; }
+.tm-tui-title-main > strong, .tm-tui-title-main > strong > button { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .tm-tui-text { display:block; margin:0; padding:0; min-width:0; color:var(--tm-text); background:transparent; font:inherit; white-space:pre-wrap; overflow-wrap:anywhere; }
 .tm-tui-title-main .tm-tui-identity { color:var(--tm-muted); font-size:12px; line-height:1.6; }
 .tm-tui-state-badge { padding:5px 11px; font-size:11px; flex-shrink:0; }
@@ -377,6 +378,7 @@ a.tm-explore-map:focus-visible { outline:2px solid #93c5fd; outline-offset:3px; 
   border:1px solid #38475b; border-radius:9px; background:#171e2b; min-width:0; }
 .tm-quota-auto-toolbar { display:grid; grid-template-columns:minmax(158px,1fr) minmax(0,2fr);
   align-items:stretch; gap:7px; }
+.tm-quota-auto-toolbar-single { grid-template-columns:minmax(0,1fr); }
 .tm-quota-auto-overview { display:flex; align-items:center; justify-content:space-between; gap:7px; min-width:0; }
 .tm-quota-auto-head { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
 .tm-quota-auto-dot { align-self:center; display:block; width:7px; height:7px; border-radius:50%;

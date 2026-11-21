@@ -27,6 +27,7 @@ OPERATIONAL_ATTENTION = frozenset({
     # Bounded output-contract delivery failed. The protocol guard remains in
     # force; ownership grants engineering diagnosis, never a scientific verdict.
     'contract_repair_failed',
+    'supervisor_qualification_review_failed',
 })
 RETRY_WINDOW = 3
 BASE_DELAY = 300
@@ -97,8 +98,16 @@ def inputs(root: Path, state: dict) -> str:
                                  if not path.is_symlink() else 'symlink')
         except OSError:
             hashes[str(path)] = 'missing'
-    return digest([hashes, state.get('protocol_health'), state.get('investigator_budget'),
-                   state.get('resumable'), state.get('recovery'), state.get('attention')])
+    from .operator_technical_recovery import dependency_fingerprint
+    technical = dependency_fingerprint(root / str(state.get('cycle_id') or ''), state)
+    fingerprint = [hashes, state.get('protocol_health'), state.get('investigator_budget'),
+                   state.get('resumable'), state.get('recovery'), state.get('attention'), technical]
+    from .supervisor_qualification_reentry import VALIDATOR, is_reply_failure
+    if is_reply_failure(state):
+        # A prior process could hash updated files while still executing old
+        # reviewer code. Wake this dependency once the validator is loaded.
+        fingerprint.append(VALIDATOR)
+    return digest(fingerprint)
 
 
 def path_for(cycle: Path) -> Path:
@@ -117,11 +126,28 @@ def read_job(cycle: Path) -> dict:
     return job
 
 
+def maintenance_stop(cycle: Path, state: dict, *, job: dict | None = None) -> dict | None:
+    """Return the terminal recovery receipt for this exact incident, if present."""
+    if str(state.get('cycle_id') or '') != cycle.name or not operational_incident(state):
+        return None
+    if job is None:
+        job = read_job(cycle)
+    owner = ('sdk:worker_supervisor:' + str(state['worker_id']) if state.get('worker_id')
+             else 'sdk:runtime_supervisor')
+    if (job.get('cycle') == cycle.name and job.get('recovery_owner') == owner
+            and job.get('status') == 'stopped' and job.get('current_action') == 'maintenance_stop'
+            and job.get('owner_pid') is None and job.get('next_wakeup_epoch') is None
+            and job.get('resume_session_id') is None and job.get('incident_key') == incident_key(state)
+            and job.get('failure') == failure_details(state)):
+        return job
+    return None
+
+
 def save_job(cycle: Path, job: dict) -> dict:
     if cycle.is_symlink() or (cycle / 'supervisor').is_symlink() or path_for(cycle).is_symlink():
         raise ValueError('Unsafe Supervisor recovery directory')
     job['updated_at'] = now()
-    write_json(path_for(cycle), job)
+    write_json(path_for(cycle), job, sync_directory=True)
     return job
 
 
@@ -164,6 +190,8 @@ def due(cycle: Path, state: dict, *, at: float | None = None) -> bool:
     job = read_job(cycle)
     if not job or job.get('incident_key') != incident_key(state):
         return True
+    if maintenance_stop(cycle, state, job=job):
+        return False
     if job.get('status') == 'working':
         from .runtime_manager import process_identity_alive
         return not process_identity_alive(job.get('owner_pid'), job.get('owner_start_ticks'))
@@ -196,17 +224,21 @@ def finish_action(cycle: Path, state: dict, result: dict) -> dict:
     phase = 'resume_authorized' if result.get('action') == 'resume' else 'waiting'
     revision = int(job.get('plan_revision') or 0)
     validation = (result.get('engineering_skill') or {}).get('validation') or {}
-    dependency_wait = phase != 'resume_authorized' and validation.get('disposition') in {
-        'needs_dependency', 'needs_rule_revision', 'needs_configuration'}
+    technical_dependency = str(result.get('blocking_dependency') or '') if (
+        result.get('repair_route') == 'technical_computation') else ''
+    dependency_wait = phase != 'resume_authorized' and (
+        technical_dependency or validation.get('disposition') in {
+            'needs_dependency', 'needs_rule_revision', 'needs_configuration'})
     if phase == 'resume_authorized':
         action, dependency, delay = 'verify_runtime_activity', 'official_runner_launch', BASE_DELAY
     else:
         action = 'prepare_validation' if validation.get('validator') is None and 'validator' in reason.lower() else 'replan'
         if dependency_wait:
-            action = str(validation['disposition'])
+            action = 'needs_dependency' if technical_dependency else str(validation['disposition'])
         dependency = reason
         if dependency_wait:
-            dependency += '\nRequired dependency: ' + str(validation.get('dependency') or '')[:4000]
+            dependency += '\nRequired dependency: ' + (
+                technical_dependency or str(validation.get('dependency') or ''))[:4000]
         delay = min(MAX_DELAY, BASE_DELAY * 2 ** min(revision // RETRY_WINDOW, 6))
         revision += 1
     history = list(job.get('history') or [])
@@ -219,14 +251,36 @@ def finish_action(cycle: Path, state: dict, result: dict) -> dict:
                plan_revision=revision, blocking_dependency=dependency,
                next_wakeup_epoch=time.time() + delay, input_digest=inputs(cycle.parent, state),
                history=history[-12:], last_result=reason, resume_session_id=result.get('session_id') if phase == 'resume_authorized' else None)
-    job['dependency_wait'] = dependency_wait
+    job['dependency_wait'] = bool(dependency_wait)
     return save_job(cycle, job)
 
 
 def record_activity(cycle: Path, *, verified: bool, detail: str, session_id: str) -> None:
     job = read_job(cycle)
-    if not job or job.get('resume_session_id') != session_id:
+    if not job:
         return
+    if job.get('resume_session_id') != session_id:
+        # The review can stop after authorizing Resume and before finalizing its job.
+        # At this point the exact Runner has already durably claimed the authorization.
+        from .supervisor_runtime_resume import AUTHORIZATION
+
+        if job.get('status') != 'working':
+            return
+        state_path = cycle / 'research_state.json'
+        if state_path.is_symlink() or not state_path.is_file():
+            return
+        state = json.loads(state_path.read_text())
+        auth = state.get(AUTHORIZATION) if isinstance(state, dict) else None
+        if (not isinstance(auth, dict) or not isinstance(auth.get('claimed_by'), dict)
+                or auth.get('session_id') != session_id or auth.get('cycle') != cycle.name
+                or auth.get('incident_key') != job.get('incident_key') or auth.get('action_id') != job.get('action_id')
+                or job.get('recovery_owner') != 'sdk:runtime_supervisor'):
+            return
+        job['resume_session_id'] = session_id
+        history = list(job.get('history') or [])
+        history.append({'at': now(), 'action_id': job['action_id'], 'action': job.get('current_action'),
+                        'result': 'Recovered authorized dispatch after Supervisor interruption', 'session_id': session_id})
+        job['history'] = history[-12:]
     job.update(status='activity_verified' if verified else 'waiting', owner_pid=None,
                current_action='monitor_runtime' if verified else 'replan',
                next_wakeup_epoch=time.time() + BASE_DELAY,

@@ -59,7 +59,7 @@ def test_reconcile_multiple_legacy_frontiers_preserves_judge_and_repairs_lead(tm
         with pytest.raises(ValueError,match="no verified frontier state"):
             db.assert_eligible_hypothesis("H-0010",same_h=True)
         db.set_frontiers_batch([{"hypothesis_id":"H-0089","status":"parked",
-                                "reason":"test pause"}])
+                                "reason":"test pause", "remaining_question":"Does the counterexample apply to this scope?", "dependency":"Source design details are unavailable", "reopen_basis":"The source now supplies an unresolved counterexample"}])
         assert len(db.frontier_view()["H-0089"]["branches"])==1
         with pytest.raises(sqlite3.IntegrityError):
             db.db.execute("INSERT INTO frontier_branches(id,hypothesis_id,status,changed_at) VALUES ('another','H-0089','active','now')")

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from . import __version__
+from .task_names import task_name as short_task_name
 
 SCHEMA = "tm-observer/state/v1"
 IGNORED_DIRS = {
@@ -326,6 +328,32 @@ def _last_event_facts(events: list[dict[str, Any]], source: str) -> tuple[Any, A
     return active_agent, token_total, last_ts
 
 
+def _sealed_goal_cycle(location: TaskLocation) -> str | None:
+    from theory_master.goal_terminal import goal_sealed
+
+    config = location.config
+    goal_id = config.get("goal_id")
+    if not goal_id:
+        return None
+    graph = config.get("graph_database")
+    canvas = config.get("branch_canvas")
+    if isinstance(graph, str) and graph:
+        database = Path(graph)
+    elif not graph and isinstance(canvas, str) and canvas:
+        database = Path(canvas).parent / "science_graph.sqlite3"
+    else:
+        return None
+    if not database.is_absolute():
+        return None
+    try:
+        seal = goal_sealed(location.research_root, database)
+    except (OSError, sqlite3.Error):
+        return None
+    if seal and seal.get("goal_id") == goal_id and seal.get("verdict") == "passed":
+        return seal["source_cycle"]
+    return None
+
+
 def collect_run(task: TaskLocation | Path) -> dict[str, Any]:
     if isinstance(task, TaskLocation):
         location = task
@@ -381,7 +409,7 @@ def collect_run(task: TaskLocation | Path) -> dict[str, Any]:
             (config, "task_id", str(location.config_path) if location.config_path else binding_source, "config_fallback"),
         ],
     )
-    task_name = _task_display_name(location)
+    task_name = short_task_name(_task_display_name(location), task_id=config.get("task_id"))
     task_name_source = str(location.config_path) if location.config_path else binding_source
     observer_id = hashlib.sha256(str(research_root).encode("utf-8")).hexdigest()[:16]
     provenance["observer_id"] = Fact(observer_id, str(research_root), "canonical research_root", "derived_hash").provenance()
@@ -617,6 +645,7 @@ def collect_run(task: TaskLocation | Path) -> dict[str, Any]:
         "cycle": cycle,
         "cycle_dir": str(cycle_dir) if cycle_dir else None,
         "state": state,
+        "sealed_goal_cycle": _sealed_goal_cycle(location),
         "raw_status": raw_status_upper,
         "phase": phase,
         "active_agent": active_agent,

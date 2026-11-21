@@ -135,6 +135,9 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
         # `branch_parent_id` also chains Cycles created in this Workflow instance.
         self.branch_parent_id: str | None = None
         self.invocation_cycle_index = 0
+        self._boot_resume_active = False
+        self._runtime_repair_resume_active = False
+        self._submission_goal_only_resume = False
         self.events_path = spec.research_root / "events.jsonl"
         self.collector = collector
         self.stop_before = str(stop_before or "").strip().lower().replace("-", "_") or None
@@ -194,17 +197,22 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
 
 
     @staticmethod
-    def _can_continue_cycle_budget(state: dict[str, Any], *, require_next_frontier: bool = False) -> bool:
+    def _can_continue_cycle_budget(state: dict[str, Any], *, require_next_frontier: bool = False,
+                                   spec: Any = None) -> bool:
         """Return whether the same invocation may create another Cycle."""
         goal_completion = state.get("goal_completion") if isinstance(state.get("goal_completion"), dict) else {}
         if str(goal_completion.get("verdict") or "") == "passed":
             return False
-        from .task_progression import local_replan_reason
-        if local_replan_reason(state):
-            # The old attempt stays terminal. A new Lead can change a proposal
-            # before Lock, using source-grounded failure feedback and the same
-            # remaining invocation budget; it cannot rewrite the previous H.
-            return not require_next_frontier
+        from .task_progression import (
+            input_support_replan_allowed, local_replan_reason, qualification_replan_allowed,
+        )
+        reason = local_replan_reason(state)
+        if reason == "input_support_unavailable":
+            return not require_next_frontier and input_support_replan_allowed(spec, state)
+        if reason == "no_qualified_candidate":
+            # The old attempt stays terminal. The next Lead receives its
+            # feedback within the same remaining invocation budget.
+            return not require_next_frontier and spec is not None and qualification_replan_allowed(spec, state)
         # Read-only compatibility: historical Cycle artifacts may still spell
         # the already-closed Cycle as `completed`; current writes use only `over`.
         if str(state.get("status") or "").lower() not in {"over", "completed"}:
@@ -234,7 +242,7 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
         while self.invocation_cycle_index < self.current_max_cycles():
             state = self._run_cycle()
             check_preferred_research_focus(self, state)
-            if not self._can_continue_cycle_budget(state):
+            if not self._can_continue_cycle_budget(state, spec=self.spec):
                 break
         if state is not None:
             if self.collector is not None:
@@ -500,7 +508,8 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
             from .account_model_routing import routes_for_account
             from .backend_config import ACCOUNT_PROVIDERS
             original_account = state.get("runtime_codex_account")
-            selected = pinned_worker_account or selected_account()
+            retained = getattr(self.backend, "retained_goal_home", None) if quota_resume else None
+            selected = pinned_worker_account or (retained.account if retained else selected_account())
             if (any(route.provider in ACCOUNT_PROVIDERS for route in frozen.values())
                     and original_account in {"1", "2"} and selected in {"1", "2"}
                     and selected != original_account):
@@ -726,7 +735,9 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
         return finalize_preserved_cycle(cycle_dir=cycle, authorization=authorization)
 
 
-    def resume(self, identifier: str | int) -> dict[str, Any]:
+    def resume(self, identifier: str | int, *, supervisor_takeover: bool = False,
+               boot_resume_launch: str | None = None,
+               runtime_repair_resume_launch: str | None = None) -> dict[str, Any]:
         """Continue an existing Cycle, then finish its remaining cycle budget.
 
         The resumed Cycle consumes the first slot of this invocation's
@@ -736,8 +747,42 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
         Cycle; an explicitly selected exhausted qualification Cycle stays bounded.
         """
         task_selector = str(identifier).strip()
-        task_resume = self.spec.task_mode and task_selector in {str(self.spec.master_id), "0"}
-        if task_resume:
+        boot_ticket = None
+        repair_ticket = None
+        boot_runtime_repair = False
+        if runtime_repair_resume_launch is not None:
+            from .supervisor_runtime_resume import child_resume_lock, verify_child
+
+            if boot_resume_launch is not None:
+                raise ValueError("Technical repair Resume requires its own exact authorization")
+            with child_resume_lock(self.spec.research_root):
+                repair_ticket = verify_child(self.spec.research_root, runtime_repair_resume_launch, task_selector)
+            if repair_ticket is None:
+                raise ValueError("The technical repair authorization changed before Resume")
+            supervisor_takeover = True
+        if boot_resume_launch is not None:
+            from .supervisor_boot_recovery import RUNTIME_REPAIR_ACTIVE_RESUME, verify_boot_resume
+
+            boot_ticket = verify_boot_resume(self.spec.research_root, boot_resume_launch, managed_child=True)
+            if (boot_ticket is None or boot_ticket.get("kind") not in {None, RUNTIME_REPAIR_ACTIVE_RESUME}
+                    or boot_ticket["cycle"] != task_selector):
+                raise ValueError("The interrupted Cycle changed before boot Resume")
+            boot_runtime_repair = boot_ticket.get("kind") == RUNTIME_REPAIR_ACTIVE_RESUME
+            supervisor_takeover = True  # A recovery control must survive automatic reentry.
+        retained_goal_home = getattr(self.backend, "retained_goal_home", None)
+        if boot_ticket is not None:
+            native_pin = boot_ticket["origin"].get("native_goal")
+            if (native_pin != getattr(self.backend, "boot_native_goal", None)
+                    or (native_pin is not None and (retained_goal_home is None
+                        or retained_goal_home.binding != native_pin["account_binding"]))):
+                raise ValueError("Boot Resume has no matching original Native Goal credential")
+        task_resume = (boot_ticket is None and repair_ticket is None and retained_goal_home is None and self.spec.task_mode
+                       and task_selector in {str(self.spec.master_id), "0"})
+        if boot_ticket is not None:
+            cycle = self.spec.research_root / boot_ticket["cycle"]
+        elif repair_ticket is not None:
+            cycle = self.spec.research_root / repair_ticket["cycle"]
+        elif task_resume:
             cycle = latest_cycle_dir(self.spec.research_root, task_mode=self.spec.task_mode)
             if cycle is None:
                 return self.run()
@@ -766,13 +811,25 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
         path = self._state_path()
         if not path.is_file():
             raise ValueError("Cycle has no research_state.json")
-        state = json.loads(path.read_text(encoding="utf-8"))
+        state_data = path.read_bytes()
+        if boot_ticket is not None:
+            if hashlib.sha256(state_data).hexdigest() != boot_ticket["origin"]["state_sha256"]:
+                raise ValueError("The saved Cycle state changed before boot Resume")
+        if repair_ticket is not None and hashlib.sha256(state_data).hexdigest() != repair_ticket["state_sha256"]:
+            raise ValueError("The saved Cycle state changed before technical repair Resume")
+        state = json.loads(state_data)
+        if retained_goal_home is not None and boot_ticket is None:
+            from .quota_auto_adjust import quota_auto_adjust_enabled
+            from .retained_goal_quota import retained_goal_binding
+            if (not quota_auto_adjust_enabled(self.spec.research_root)
+                    or retained_goal_binding(cycle, state) != retained_goal_home.binding):
+                raise ValueError("The retained quota Cycle changed before Resume")
         self._restore_resumed_cycle_routes(state)
         status = str(state.get("status") or "").lower()
         if status in {"over", "completed", "cancelled"}:
             raise ValueError(f"Cycle is not resumable: {status}")
         owner_pid = state.get("owner_pid")
-        if state.get("execution_active") and owner_pid:
+        if not boot_runtime_repair and state.get("execution_active") and owner_pid:
             try:
                 os.kill(int(owner_pid), 0)
             except (OSError, ValueError):
@@ -785,19 +842,37 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
         prequalification_restart = prequalification_restart_allowed(state)
         if not state.get("resumable") and not state.get("last_safe_checkpoint") and not state.get("role_outputs") and not precheckpoint_restart and not prequalification_restart:
             raise ValueError("Cycle has no recoverable checkpoint")
-        from .supervisor_lineage_recovery import consume_lineage_reentry
-        lineage_reentry = consume_lineage_reentry(cycle, state)
         control = self.cycle_dir / "recovery_control.json"
+        if supervisor_takeover and (control.exists() or control.is_symlink()):
+            raise ValueError("Pending operator control forbids Supervisor takeover")
+        submission_takeover = None
+        if supervisor_takeover and state.get("goal_submission_gap"):
+            from .submission_rework import submission_takeover_preflight
+
+            if self.supervisor_enabled():
+                submission_takeover = submission_takeover_preflight(cycle, state, spec=self.spec)
+            if not submission_takeover or submission_takeover["status"] not in {"ready", "ready_for_goal"}:
+                raise ValueError("Public submission is not ready for Supervisor takeover")
+        repair_reentry = None
+        if boot_ticket is None:
+            from .resume_preparation import consume_resume_repairs
+            repair_reentry = consume_resume_repairs(cycle, state)
         if control.is_file():
             try:
                 pending_action = json.loads(control.read_text(encoding="utf-8")).get("action")
             except (OSError, ValueError, AttributeError):
                 pending_action = None
+            if supervisor_takeover:
+                raise ValueError("Pending operator control forbids Supervisor takeover")
             if pending_action == "abandon_cycle":
                 raise ValueError("Cycle abandonment is pending; Resume is forbidden")
             control.unlink()
-        from .resume_preparation import prepare_resume_recovery
-        prepare_resume_recovery(state, cycle)
+        if boot_ticket is not None:
+            state["recovery"] = {**(state.get("recovery") or {}), "action": "resume",
+                                 "resumed_at": now(), "allow_thread_fallback": False}
+        else:
+            from .resume_preparation import prepare_resume_recovery
+            prepare_resume_recovery(state, cycle)
         recovery = state["recovery"]
         if precheckpoint_restart:
             recovery.update({
@@ -809,7 +884,8 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
                 "prequalification_restart": True,
                 "prequalification_restart_reason": (
                     "Verified SDK lineage repair authorized a new Agent proposal; no scientific output was committed"
-                    if lineage_reentry else "Attention explicitly authorized replay after pure runtime/code repair; no scientific output was committed"
+                    if repair_reentry == "lineage" else "Verified SDK JSON normalization repair authorized a fresh Lead delivery; no scientific output was committed"
+                    if repair_reentry == "json_array" else "Attention explicitly authorized replay after pure runtime/code repair; no scientific output was committed"
                 ),
             })
         attention = state.get("attention") if isinstance(state.get("attention"), dict) else {}
@@ -827,11 +903,57 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
                       "cycle_id": cycle.name, "master_id": self._master_id_for_cycle(cycle.name),
                       "cycle_number": cycle_number(cycle.name),
                       "owner_pid": os.getpid(), "execution_active": True})
-        self._persist(state)
-        state = self._run_cycle(state)
+        if boot_ticket is not None:
+            if (not boot_runtime_repair
+                    and verify_boot_resume(self.spec.research_root, boot_resume_launch, managed_child=True) != boot_ticket):
+                raise ValueError("The interrupted Cycle changed while preparing boot Resume")
+            self.invocation_cycle_index = boot_ticket["origin"]["invocation_cycle_index"]
+        if repair_ticket is not None or boot_runtime_repair:
+            from .runtime_manager import process_start_ticks
+            from .supervisor_runtime_resume import AUTHORIZATION, child_resume_lock
+
+            with child_resume_lock(self.spec.research_root):
+                if boot_runtime_repair:
+                    if verify_boot_resume(self.spec.research_root, boot_resume_launch, managed_child=True) != boot_ticket:
+                        raise ValueError("The interrupted Cycle changed while preparing technical repair continuation")
+                    authorization = {**state[AUTHORIZATION], "active_resume_attempt": boot_ticket["attempt"]}
+                    repair_launch = boot_resume_launch
+                else:
+                    if verify_child(self.spec.research_root, runtime_repair_resume_launch, task_selector) != repair_ticket:
+                        raise ValueError("The technical repair authorization changed while preparing Resume")
+                    authorization = repair_ticket["authorization"]
+                    repair_launch = runtime_repair_resume_launch
+                    # An interruption before CycleStartup must retain the slot about to be claimed.
+                    state["invocation_cycle_index"] = self.invocation_cycle_index + 1
+                pid = os.getpid()
+                start_ticks = process_start_ticks(pid)
+                if not start_ticks:
+                    raise ValueError("Technical repair Resume requires an identifiable Runner process")
+                if "owner_start_ticks" in state:
+                    state["owner_start_ticks"] = start_ticks
+                state[AUTHORIZATION] = {
+                    **authorization,
+                    "claimed_by": {"launch_id": repair_launch, "pid": pid, "start_ticks": start_ticks},
+                }
+                self._persist(state, sync_directory=True)
+        else:
+            self._persist(state)
+        self._submission_goal_only_resume = bool(
+            submission_takeover and submission_takeover["status"] == "ready_for_goal")
+        try:
+            self._boot_resume_active = boot_ticket is not None
+            self._runtime_repair_resume_active = repair_ticket is not None
+            if self._boot_resume_active:
+                state = self._run_cycle(state, same_cycle_continuation=True)
+            else:
+                state = self._run_cycle(state)
+        finally:
+            self._boot_resume_active = False
+            self._runtime_repair_resume_active = False
+            self._submission_goal_only_resume = False
         from .task_progression import local_replan_reason
         explicit_exhausted_cycle = not task_resume and local_replan_reason(state) == "no_qualified_candidate"
-        if explicit_exhausted_cycle or not self._can_continue_cycle_budget(state):
+        if submission_takeover or explicit_exhausted_cycle or not self._can_continue_cycle_budget(state, spec=self.spec):
             # Resume can terminate on the old Cycle (e.g. NEEDS_ATTENTION)
             # before entering the multi-Cycle loop. Collector must still close
             # its final projection, including the terminal alert decision.
@@ -844,7 +966,7 @@ class Workflow(WorkflowStateMixin, WorkflowScienceMixin, GoalCompletionMixin, In
             # A completed Decision plus continuation context is sufficient to
             # start the next Cycle.  It must not require a pre-created future
             # Hypothesis node.
-            if not self._can_continue_cycle_budget(state):
+            if not self._can_continue_cycle_budget(state, spec=self.spec):
                 break
             state = self._run_cycle()
         if self.collector is not None:

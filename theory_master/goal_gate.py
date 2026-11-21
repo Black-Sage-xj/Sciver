@@ -12,6 +12,7 @@ from .delivery_repair import (
     _canonical,
     _write_immutable,
     current_delivery_payload,
+    explicit_repair_payload,
     freeze_delivery_revision,
 )
 from .goal_snapshot import (
@@ -29,6 +30,31 @@ class GoalGate:
     owner: Any
     state: dict[str, Any]
     delivery_repair: bool = False
+    reassessment: dict[str, Any] | None = None
+    allow_submission_rework: bool = True
+    recovery_pin: dict[str, Any] | None = None
+
+    repair_assessment: dict[str, Any] | None = None
+
+    @property
+    def trigger(self) -> str:
+        return "supervisor_reassessment" if self.reassessment else "judge_terminal"
+
+    def _reassessment_matches(self) -> bool:
+        if not self.reassessment:
+            return True
+        from .supervisor_goal_reassessment import goal_reassessment_plan
+
+        return (self.owner.supervisor_enabled()
+                and self.owner.cycle_dir.name == self.reassessment["anchor_cycle"]
+                and goal_reassessment_plan(self.owner) == self.reassessment)
+    def _delivery_payload(self, graph: Path) -> dict[str, Any]:
+        if self.repair_assessment is not None:
+            if not self.delivery_repair:
+                raise ValueError("Assessment-bound identity requires explicit delivery repair")
+            return explicit_repair_payload(self.owner.spec, graph, self.owner.cycle_dir,
+                                            self.repair_assessment)
+        return current_delivery_payload(self.owner.spec, graph, self.owner.cycle_dir)
 
     def _stale(
         self,
@@ -82,6 +108,7 @@ class GoalGate:
             verdict,
             str(result.get("rationale") or "").strip(),
             seal,
+            trigger=self.trigger,
         )
         self.state.pop("goal_delivery_pending", None)
         self.state.pop("goal_submission_gap", None)
@@ -102,9 +129,12 @@ class GoalGate:
             if result.get("assessment_status") != "submission_required":
                 return result
             correct_submission_delivery(self.owner, self.state, result["snapshot"],
-                                        allow_rework=not self.delivery_repair)
+                                        allow_rework=not self.delivery_repair and self.allow_submission_rework)
 
     def _run_once(self) -> dict[str, Any]:
+        from .goal_reassessment_recovery import goal_reassessment_output_key, goal_reassessment_recovery_pin
+        from .workflow_support import RecoveryStop
+
         owner, state = self.owner, self.state
         plan, root, graph = (
             Path(owner.spec.document),
@@ -115,6 +145,9 @@ class GoalGate:
             raise ValueError(
                 "goal_completion requires the authoritative research_plan.md"
             )
+        if self.recovery_pin is not None and (not self.reassessment or
+                goal_reassessment_recovery_pin(owner.spec, self.reassessment) != self.recovery_pin):
+            raise RecoveryStop("The retained Goal Judge evidence changed before recovery")
         # Capture identities and compact authorities only. File duplication and
         # all model work happen after releasing this task-wide writer barrier.
         with science_commit_barrier(root, "exclusive"):
@@ -130,11 +163,17 @@ class GoalGate:
             closed_status = str(state.get("status") or "over").lower()
             if closed_status not in {"over", "completed"}:
                 raise ValueError("goal_completion requires a closed Cycle")
+            if not self._reassessment_matches():
+                return {"assessment_status": "stale", "reason": "Supervisor Goal inputs changed before capture"}
+            reassessment = self.reassessment or {}
             access = freeze_delivery_revision(
                 owner.spec,
                 graph,
                 owner.cycle_dir,
                 require_unchanged_science=self.delivery_repair,
+                reassessment_of=reassessment.get("reassessment_of", ""),
+                expected_revision=reassessment.get("delivery_revision", ""),
+                repair_assessment=self.repair_assessment,
             )
             revision = access["delivery_revision"]
             with ScienceGraphStore(graph, readonly=True) as store:
@@ -158,10 +197,13 @@ class GoalGate:
                     {
                         "verdict": existing["verdict"],
                         "rationale": existing["rationale"],
+                        **({"gaps": existing["gaps"]} if "gaps" in existing else {}),
                     },
                     metadata,
                 )
-            payload = current_delivery_payload(owner.spec, graph, owner.cycle_dir)
+            payload = _canonical(json.loads(Path(access["revision_path"]).read_bytes()))
+            if hashlib.sha256(payload).hexdigest() != revision:
+                raise ValueError("Frozen Goal delivery revision changed before snapshot capture")
             from .scientific_model import load_from_paths
 
             model = load_from_paths(root, plan, goal_id=owner.spec.goal_id)
@@ -169,7 +211,7 @@ class GoalGate:
                 plan.read_bytes(),
                 _canonical(graph_view),
                 _canonical(agent_view),
-                _canonical(payload),
+                payload,
                 _canonical(access),
                 _canonical(model),
             )
@@ -183,7 +225,15 @@ class GoalGate:
                 Path(pending["snapshot_manifest"]), pending["snapshot_manifest_sha256"]
             )
         else:
+            if self.recovery_pin is not None:
+                raise RecoveryStop("The retained Goal Judge lost its verified snapshot")
             snapshot = materialize_goal_snapshot(owner.spec, owner.cycle_dir, seed)
+        if self.recovery_pin is not None and (
+            self.recovery_pin["delivery_revision"] != revision
+            or self.recovery_pin["snapshot_manifest"] != str(snapshot.manifest_path)
+            or self.recovery_pin["snapshot_manifest_sha256"] != snapshot.manifest_sha256
+        ):
+            raise RecoveryStop("The retained Goal Judge reached a different snapshot")
         owner._check_recovery_control(state)
         from .public_submission import check_frozen_submission
         frozen_delivery = json.loads((snapshot.root / "delivery_revision.json").read_text())
@@ -197,8 +247,10 @@ class GoalGate:
             state,
             "goal_gate.triggered",
             {
-                "trigger": "judge_supported",
+                "trigger": self.trigger,
+                "source_verdict": state.get("goal_source_verdict", state.get("scientific_verdict")),
                 "source_cycle": owner.cycle_dir.name,
+                **({"supervisor_reassessment": self.reassessment} if self.reassessment else {}),
                 "snapshot_manifest": str(snapshot.manifest_path),
                 "snapshot_manifest_sha256": snapshot.manifest_sha256,
             },
@@ -221,7 +273,8 @@ class GoalGate:
                 "goal_authority_snapshot": snapshot,
             },
             fresh_thread=True,
-            output_key=f"goal_completion_{revision}_{snapshot.manifest_sha256}",
+            output_key=goal_reassessment_output_key(revision, snapshot.manifest_sha256),
+            **({"delivery_recovery_pin": self.recovery_pin} if self.recovery_pin is not None else {}),
         )
         owner._check_recovery_control(state)
         with science_commit_barrier(root, "exclusive"):
@@ -234,6 +287,8 @@ class GoalGate:
                     result, snapshot, access, "another assessment sealed the Goal"
                 )
             try:
+                if not self._reassessment_matches():
+                    raise ValueError("Supervisor Goal inputs changed during assessment")
                 snapshot.validate()
                 model_now = load_from_paths(root, plan, goal_id=owner.spec.goal_id)
                 frozen_model = (snapshot.root / "scientific_model.json").read_bytes()
@@ -241,7 +296,7 @@ class GoalGate:
                     raise ValueError(
                         "Scientific Model authority changed during Goal assessment"
                     )
-                current = current_delivery_payload(owner.spec, graph, owner.cycle_dir)
+                current = self._delivery_payload(graph)
                 if current["science_digest"] != access["science_digest"]:
                     raise ValueError(
                         "scientific authority changed during Goal assessment"
@@ -268,6 +323,9 @@ class GoalGate:
             return self._commit(result, access, snapshot, plan, graph)
 
     def _submission_required(self, check, snapshot, access, closed_status):
+        if self.reassessment:
+            self.state.pop("goal_delivery_pending", None)
+            return {"assessment_status": "submission_blocked", "submission_validation": check}
         from .submission_rework import persist_submission_gap
         self.state["goal_delivery_pending"] = {
             "cycle_id": self.owner.cycle_dir.name, "delivery_revision": access["delivery_revision"],
@@ -300,10 +358,12 @@ class GoalGate:
         payload = {
             "verdict": result.get("verdict"),
             "rationale": result.get("rationale"),
+            **({"gaps": result["gaps"]} if "gaps" in result else {}),
             "assessment_id": assessment_id,
             **access,
             "snapshot_manifest": str(snapshot.manifest_path),
             "snapshot_manifest_sha256": snapshot.manifest_sha256,
+            **({"supervisor_reassessment": self.reassessment} if self.reassessment else {}),
             **({"submission_validation": self.state["goal_submission_validation"]}
                if self.state.get("goal_submission_validation") is not None else {}),
         }
@@ -317,14 +377,17 @@ class GoalGate:
         }
         rationale = str(result.get("rationale") or "").strip()
         seal = None
+        commit_metadata = dict(metadata)
+        if self.reassessment:
+            commit_metadata["reassessment_of"] = self.reassessment["reassessment_of"]
         if result.get("verdict") == "passed":
             seal = owner._seal_goal_in_sqlite(
-                plan, graph, frozen_receipt, rationale, assessment_metadata=metadata
+                plan, graph, frozen_receipt, rationale, assessment_metadata=commit_metadata
             )
         elif result.get("verdict") == "not_passed":
             with ScienceGraphStore(graph) as store:
                 store.record_goal_gate_not_passed(
-                    cycle_id=owner.cycle_dir.name, rationale=rationale, **metadata
+                    cycle_id=owner.cycle_dir.name, rationale=rationale, gaps=result.get("gaps"), **commit_metadata
                 )
         else:
             raise ValueError("Goal Judge result has no valid terminal verdict")

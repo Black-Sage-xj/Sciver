@@ -8,7 +8,7 @@ from theory_master.prompt_stages import stage_context, STAGE_CONTEXT_FIELDS
 from theory_master.stage_registry import stage_for
 from theory_master.research_preservation import (
     PreservationGuard, blocked_checkpoint, preserve_blocked_cycle,
-    run_preservation_stage, finalize_preserved_cycle,
+    run_preservation_stage, finalize_preserved_cycle, normalize_preservation_display,
 )
 from theory_master.science_graph_store import ScienceGraphStore
 
@@ -187,6 +187,61 @@ def test_preservation_B_presentation_must_stay_compact_and_only_summarize_A():
     invalid = dict(data, judge_verdict="supported")
     with pytest.raises(ValueError, match="exactly"):
         contract.structural_validator(invalid, {})
+
+
+@pytest.mark.parametrize(("title_length", "summary_length"), [(32, 166), (41, 189), (49, 160)])
+def test_preservation_normalizes_only_overlong_display_and_preserves_raw_reply(synthetic_checkpoint,
+                                                                              title_length, summary_length):
+    from unittest.mock import Mock
+
+    cycle, canvas = synthetic_checkpoint
+    output = _stage_output()
+    output["canvas_title"] = "T" * title_length
+    output["canvas_summary"] = "S" * (summary_length - 10) + " uncertain"
+    raw = json.dumps(output, indent=2, ensure_ascii=False) + "\n"
+    backend = Mock()
+    backend.ensure_thread.return_value = "archival-thread"
+    backend.invoke.return_value = ("archival-thread", raw)
+
+    result = run_preservation_stage(cycle_dir=cycle, canvas_path=canvas, backend=backend,
+                                    model="test", provider="test", authorization="operator_approved")
+
+    assert result["scientific_verdict"] is None
+    stage = json.loads((cycle / "preservation/stage_output.json").read_text())
+    display_limits = {"canvas_title": 48, "canvas_summary": 160}
+    for field, original in output.items():
+        if field in display_limits and len(original) > display_limits[field]:
+            assert len(stage[field]) <= display_limits[field] and stage[field] not in original
+        else:
+            assert stage[field] == original
+    assert (cycle / "preservation/last_model_output.txt").read_bytes() == raw.encode()
+    backend.invoke.assert_called_once()
+
+
+@pytest.mark.parametrize("bad", ["schema", "source", "display_type"])
+def test_preservation_display_normalization_keeps_other_validators(synthetic_checkpoint, bad):
+    from unittest.mock import Mock
+
+    cycle, canvas = synthetic_checkpoint
+    output = _stage_output()
+    output["canvas_summary"] = "S" * 189
+    if bad == "schema":
+        output["scientific_verdict"] = "supported"
+    elif bad == "source":
+        output["observations"][0]["evidence_paths"] = ["workspace/missing.md"]
+    else:
+        output["canvas_title"] = []
+    normalized = normalize_preservation_display(output)
+    assert normalized["observations"] == output["observations"]
+    backend = Mock()
+    backend.ensure_thread.return_value = "archival-thread"
+    backend.invoke.return_value = ("archival-thread", json.dumps(output))
+
+    with pytest.raises(ValueError):
+        run_preservation_stage(cycle_dir=cycle, canvas_path=canvas, backend=backend,
+                               model="test", provider="test", authorization="operator_approved")
+
+    assert not (cycle / "preservation/stage_output.json").exists()
 
 
 def test_one_Investigator_A_B_response_then_sdk_C_reuses_archive_without_more_models(synthetic_checkpoint):

@@ -73,27 +73,37 @@ def _rate_window(window: object) -> dict[str, object] | None:
     }
 
 
-def account_rate_limits(number: str, *, timeout_s: float = 8.0) -> dict[str, object]:
+def account_rate_limits(number: str, *, timeout_s: float = 8.0,
+                        auth_path: Path | None = None) -> dict[str, object]:
     """Read one account's quota without creating a scientific/model turn.
 
-    The probe runs in a disposable CODEX_HOME containing only a symlink to the
-    chosen identity. This keeps account-1/account-2 identity-only even if Codex
-    app-server decides to create logs, state, or default config on startup.
+    The ordinary probe uses a disposable home. A retained Goal supplies its
+    private home so a Codex token refresh stays with the credential the Runner
+    will use. Probe SQLite state remains disposable in both cases.
     """
     if number not in ACCOUNT_NAMES:
         raise ValueError(f"unknown Codex account: {number}")
     layout = read_layout()
-    auth = layout[number] / "auth.json"
+    auth = auth_path if auth_path is not None else layout[number] / "auth.json"
     if not auth.is_file():
         return {"account": number, "ok": False, "error": "auth_missing", "queried_at": int(time.time())}
 
     with tempfile.TemporaryDirectory(prefix=f"tm-quota-probe-{number}-") as temp:
         probe_home = Path(temp)
-        (probe_home / "auth.json").symlink_to(auth.resolve())
         env = os.environ.copy()
-        env["CODEX_HOME"] = str(probe_home)
+        command = [str(_codex_binary()), "app-server", "--stdio"]
+        if auth_path is None:
+            (probe_home / "auth.json").symlink_to(auth.resolve())
+            env["CODEX_HOME"] = str(probe_home)
+        else:
+            if auth.name != "auth.json" or auth.is_symlink():
+                raise ValueError("Retained quota probe requires its private credential file")
+            env["CODEX_HOME"] = str(auth.parent)
+            env["CODEX_SQLITE_HOME"] = str(probe_home)
+            command.extend(["--config", "sqlite_home=" + json.dumps(str(probe_home)),
+                            "--config", 'cli_auth_credentials_store="file"'])
         proc = subprocess.Popen(
-            [str(_codex_binary()), "app-server", "--stdio"],
+            command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

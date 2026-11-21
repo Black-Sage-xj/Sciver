@@ -70,7 +70,7 @@ class JudgeLiteratureReporterPromptTest(unittest.TestCase):
         for token in ("delivery_material_access", "frozen delivery revision", "same-invocation provenance",
                       "not per-Finding support", "earlier not_passed rationale"):
             self.assertIn(token, procedure)
-        self.assertIn("Do not output requirement ledgers", card)
+        self.assertIn("Do not output exhaustive requirement ledgers", card)
 
     def test_reporter_identity_source_matches_actual_runtime_resource(self):
         packaged = identities_root() / "reporter.md"

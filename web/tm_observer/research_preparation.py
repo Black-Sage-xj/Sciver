@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .task_names import task_name, validate_task_name
+
 SCHEMA = "sciver/research-preparation/v1"
 _IDENT = re.compile(r"[0-9a-f]{32}\Z")
 _LIMIT = 1_048_576
@@ -197,6 +199,10 @@ def initialize(state_dir: Path, ident: str, entry: str, title: str = "") -> dict
             if value["entry"] != entry:
                 raise PreparationError("该筹备会话已选择其他入口", 409)
         else:
+            try:
+                title = validate_task_name(title, allow_empty=True)
+            except ValueError as exc:
+                raise PreparationError("项目" + str(exc)) from exc
             value = {"schema": SCHEMA, "id": ident, "session_id": ident,
                      "entry": entry, "title": title, "intent": "", "created_at": _now(),
                      "updated_at": _now(), "creation": None, "created_task": None}
@@ -234,6 +240,11 @@ def update(state_dir: Path, ident: str, payload: dict) -> dict:
         for field, limit in (("title", 800), ("intent", 20_000), ("draft", _LIMIT)):
             if field in payload:
                 text = _text(payload[field], field, limit)
+                if field == "title" and text != value["title"]:
+                    try:
+                        text = validate_task_name(text, allow_empty=True)
+                    except ValueError as exc:
+                        raise PreparationError("项目" + str(exc)) from exc
                 if field == "draft":
                     _atomic(root / "research_plan.md", text.encode())
                 else:
@@ -509,10 +520,7 @@ def create_project(state_dir: Path, search_root: Path, ident: str, payload: dict
             from theory_master.specification import scientific_sections
             goal = scientific_sections(draft, allow_missing_scientific_model=True)[0]
             frozen_preparation = json.loads(_read(target / "preparation_snapshot" / "preparation.json"))
-            title = " ".join(str(frozen_preparation.get("title") or "").split())
-            if not title:
-                title = next((line.strip(" #\t") for line in goal.splitlines() if line.strip()), "")
-            title = title[:120] or "项目 Task " + str(binding.config["task_id"])
+            title = task_name(frozen_preparation.get("title"), task_id=binding.config["task_id"], goal=goal)
             config = json.loads(_read(binding.config_path))
             config["task_name"] = title
             _atomic(binding.config_path, (json.dumps(config, ensure_ascii=False, indent=2) + "\n").encode())

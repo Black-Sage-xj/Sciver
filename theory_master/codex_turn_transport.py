@@ -229,7 +229,7 @@ class CodexTurnTransport:
                 delay = backend.OUTER_RETRY_DELAYS[min(attempt, len(backend.OUTER_RETRY_DELAYS) - 1)]
                 self._notify(role, identifier or "", {"event": "LLM_RECONNECTING",
                     "error": f"{message}; retry {attempt + 1}/{backend.OUTER_TURN_RETRIES}", "retry_index": attempt + 1})
-                if role == "research_chat":
+                if role in {"research_chat", "system_assistant"}:
                     _callback(backend, on_event, {"type": "reconnecting", "kind": "connection", "status": "running",
                         "label": "正在重连", "retry_index": attempt + 1, "retry_after": delay})
                 getattr(backend, "_logger", logging.getLogger(__name__)).warning("Codex turn unavailable for role=%s; retry %d/%d in %ss: %s",
@@ -270,7 +270,7 @@ class CodexTurnTransport:
         request_input = callbacks["request_user_input"]
         def override(original: Any):
             def request(method: str, params: Any):
-                if role == "research_chat" and method.endswith("/requestUserInput") and callable(request_input):
+                if role in {"research_chat", "system_assistant"} and method.endswith("/requestUserInput") and callable(request_input):
                     waiting.set()
                     try:
                         return request_input(params or {})
@@ -278,7 +278,7 @@ class CodexTurnTransport:
                         waiting.clear()
                 return original(method, params) if callable(original) else {}
             return request
-        scope = override if role == "research_chat" and callable(request_input) else None
+        scope = override if role in {"research_chat", "system_assistant"} and callable(request_input) else None
         delivery = TurnDelivery()
         with approval_handler_scope(getattr(backend, "client", None), scope):
             handle = thread.turn(payload)
@@ -322,7 +322,7 @@ class CodexTurnTransport:
                 self._notify(role, identifier, mapped)
             self._account_usage(delivery, mapped, callbacks.get("usage_guard"))
         self._guard_call(callbacks.get("control_check"))
-        if role == "research_chat":
+        if role in {"research_chat", "system_assistant"}:
             try:
                 visible = map_chat_notification(event)
             except Exception:

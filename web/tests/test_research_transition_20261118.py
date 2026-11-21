@@ -127,20 +127,17 @@ def test_reader_shows_frozen_transition_before_claim_and_source_clicks_navigate(
   assert.equal((sourceNav.match(/data-ref=/g)||[]).length,2,'each source gets one compact link');
   assert(sourceNav.indexOf('node:A')<sourceNav.indexOf('node:B'),'main source precedes references');
   assert(!sourceNav.includes('来源检验')&&!sourceNav.includes('整体猜想'));
-  assert(transitionSection.includes('This alternative explains the same observation &lt; differently'));
   assert(transitionSection.indexOf('Frozen supported model')<transitionSection.indexOf('Frozen unresolved comparison'));
-  assert(transitionSection.includes('前序研究问题 <small>当前来源记录</small>'));
-  assert(transitionSection.includes('data-discussion-node="A"')&&transitionSection.includes('data-discussion-node="B"'));
-  assert(transitionSection.includes('Current source A asks whether the bounded response identifies the mechanism'));
-  assert(transitionSection.includes('Current source B asks whether another explanation remains possible &lt; now.'));
-  assert(!transitionSection.includes('Independent trajectories'),'source problem uses the explicit claim rather than repeating its scope');
-  assert.equal((transitionSection.match(/<dt>本步承接<\/dt>/g)||[]).length,1,'only the recorded per-source contribution is rendered');
-  assert(transitionSection.includes('A 未记录逐来源的承接说明；本步的总体变化见下方。'));
+  assert(!transitionSection.includes('ex-source-note'),'source detail cards are omitted');
+  assert(!transitionSection.includes('前序研究问题')&&!transitionSection.includes('本步承接'));
+  assert(!transitionSection.includes('Current source A asks')&&!transitionSection.includes('Current source B asks'));
+  assert(!transitionSection.includes('This alternative explains the same observation'));
+  assert(!transitionSection.includes('未记录逐来源的承接说明'));
   assert(!transitionSection.includes('整体猜想：'),'the source list does not repeat whole-H status');
   assert(!transitionSection.includes('Edited source'),'snapshot titles and states do not follow later source edits');
   assert(!transitionSection.includes('失败')&&!transitionSection.includes('rejected'));
   assert(transitionSection.includes('data-ref="node:A"')&&transitionSection.includes('data-ref="node:B"'));
-  assert(transitionSection.includes('data-ref="report:1"')&&transitionSection.includes('Cycle 1 · 支持'));
+  assert(!transitionSection.includes('data-ref="report:1"')&&!transitionSection.includes('Cycle 1 · 支持'));
   assert(!transitionSection.includes('theory-master/research-transition')&&!transitionSection.includes('"sources"'));
   assert(!html.includes('Main（分支连线）')&&!html.includes('其它（仅追溯）'),'technical information does not duplicate lineage');
   assert(!html.includes('文档引用 (0)')&&!html.includes('反向引用 (0)')&&!html.includes('暂无引用'),'empty reference groups are omitted');
@@ -152,17 +149,12 @@ def test_reader_shows_frozen_transition_before_claim_and_source_clicks_navigate(
   latestGraph.events['edge:pointerover']({target:{id:'AC'}});await tick();
   assert(elements['ex-edge-menu-action'].title.includes('Vary observation interval < 2 seconds'));
   assert.equal(JSON.stringify(nodes),before,'rendering does not alter the frozen object or science');
-  const reportLink={dataset:{ref:'report:1'}};
-  elements['ex-reader'].listeners.click({target:{closest:selector=>selector==='[data-ref]'?reportLink:null}});
-  await tick();await tick();
-  assert.equal(history.state.tmExplorerView.selected.kind,'report');
-  assert.equal(history.state.tmExplorerView.selected.id,'1');
-  assert(elements['ex-reader'].innerHTML.includes('Frozen source report body.'));
-  // The same delegated node navigation handles the source links in the reader.
+  // The source link opens its original record for readers who want the details.
   const sourceLink={dataset:{ref:'node:A'}};
   elements['ex-reader'].listeners.click({target:{closest:selector=>selector==='[data-ref]'?sourceLink:null}});
   await tick();await tick();
   assert.equal(history.state.tmExplorerView.selected.id,'A');
+  assert(elements['ex-reader'].innerHTML.includes('Current source A asks whether the bounded response identifies the mechanism'));
   assert(!elements['ex-reader'].innerHTML.includes('class="ex-research-transition"'),
     'an explicit source-free record does not give the initial hypothesis a predecessor rationale');
   assert(!elements['ex-reader'].innerHTML.includes('Start from interval-dependent covariance'));
@@ -188,26 +180,26 @@ def test_reader_shows_frozen_transition_before_claim_and_source_clicks_navigate(
   const legacy=elements['ex-reader'].innerHTML;
   assert(legacy.includes('承接理由未记录。')&&legacy.includes('data-ref="node:A"'));
   assert(!legacy.includes('前序留下的问题')&&!legacy.includes('The last bounded comparison'));
-  // Unadjudicated is distinct from Open and from failure; why_now is a card fallback.
+  // Source outcomes stay out of the compact reader; why_now is a card fallback.
   nodes[2].semantic.research_transition=transition([
     {hypothesis_id:'A',role:'main',title:'Unadjudicated source',scientific_status:'none',
       outcome_refs:[{id:'partial',cycle_id:'7',verdict:'unadjudicated',report_ref:'notes/outcomes/7.md'}]}
   ],'');
   latestGraph.events['node:click']({target:{id:'C'}});await tick();await tick();
   const unfinished=elements['ex-reader'].innerHTML;
-  assert(unfinished.includes('Cycle 7 · 未裁决'));
+  assert(!unfinished.includes('Cycle 7 · 未裁决'));
   assert(!unfinished.includes('整体猜想：'),'whole-H source status stays out of the compact reader');
   assert(!unfinished.includes('整体猜想：尚无法判定')&&!unfinished.includes('失败'));
   const fallbackCard=elements['ex-outcome-cards'].children.find(c=>c.dataset.nodeId==='C');
   assert(fallbackCard.children[0].children.some(part=>part.className==='ex-outcome-transition'&&part.textContent.includes('last bounded comparison')));
-  // A historical normalization to Open is not an original Judge Open verdict.
+  // Historical source outcomes are also available through the source record.
   nodes[2].semantic.research_transition.sources[0].outcome_refs=[
     {id:'legacy-milestone',cycle_id:'8',verdict:'open',original_verdicts:['milestone_advanced'],report_ref:'notes/outcomes/8.md'}
   ];
   latestGraph.events['node:click']({target:{id:'C'}});await tick();await tick();
   const historical=elements['ex-reader'].innerHTML;
-  assert(historical.includes('Cycle 8 · 历史裁决：milestone_advanced'));
-  assert(!historical.includes('Cycle 8 · 尚无法判定'),'historical milestone must not become Judge Open');
+  assert(!historical.includes('Cycle 8 · 历史裁决：milestone_advanced'));
+  assert(!historical.includes('Cycle 8 · 尚无法判定'));
 })().catch(e=>{console.error(e);process.exitCode=1});
 """
     result = subprocess.run(["node", "-e", script, str(SCRIPT)], capture_output=True,

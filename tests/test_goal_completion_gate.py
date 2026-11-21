@@ -100,9 +100,40 @@ class CapturingNotPassedBackend(FakeBackend):
 
 
 class GoalCompletionGateTest(unittest.TestCase):
+    def test_rejected_and_terminal_open_can_complete_goal_without_changing_science(self):
+        from theory_master.science_graph_store import ScienceGraphStore
+
+        for verdict in ("rejected", "open"):
+            with self.subTest(verdict=verdict), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp) / "task"
+                root.mkdir()
+                spec = _make_task(root, max_cycles=1)
+
+                class TerminalBackend(PassingGoalGateBackend):
+                    def invoke(self, role, prompt, thread_id, model, provider):
+                        if role == "judge" and _stage(prompt) == "terminal_assessment":
+                            return str(thread_id), json.dumps({"verdict": verdict, "rationale": "The frozen test excludes the claim or remains scientifically inconclusive."})
+                        return super().invoke(role, prompt, thread_id, model, provider)
+
+                backend = TerminalBackend()
+                state = Workflow(spec, backend).run()
+                self.assertEqual(state["goal_status"], "passed")
+                self.assertEqual(state["goal_completion"]["source_verdict"], verdict)
+                self.assertEqual(state["goal_completion"]["trigger"], "judge_terminal")
+                with ScienceGraphStore(spec.graph_database, readonly=True) as store:
+                    self.assertEqual(store.db.execute("SELECT verdict FROM cycle_evaluations").fetchone()[0], verdict)
+                    self.assertEqual(store.goal_gate_assessment("1")["verdict"], "passed")
+
+    def test_operational_preservation_cannot_trigger_goal(self):
+        from theory_master.workflow_goal import GoalCompletionMixin
+        owner = GoalCompletionMixin()
+        for verdict in ("unadjudicated", "milestone_advanced", "failed", ""):
+            self.assertIsNone(owner._run_goal_completion({}, {"verdict": verdict}))
+        self.assertIsNone(owner._run_goal_completion({"operational_only_closure": True}, {"verdict": "open"}))
+
     def test_contract_is_minimal_and_conditional(self):
         contract = role_contract("judge", phase="goal_completion")
-        self.assertEqual(contract.version, 2)
+        self.assertEqual(contract.version, 3)
         contract.validate({
             "verdict": "passed",
             "rationale": "all completion-critical Goal Contract requirements are satisfied",
@@ -110,6 +141,7 @@ class GoalCompletionGateTest(unittest.TestCase):
         contract.validate({
             "verdict": "not_passed",
             "rationale": "the requested final prediction has not been produced",
+            "gaps": [{"kind": "delivery", "requirement": "Produce the final prediction", "basis": "The current delivery omits it"}],
         }, {})
         with self.assertRaisesRegex(ValueError, "rationale"):
             contract.validate({"verdict": "passed"}, {})
@@ -167,7 +199,7 @@ class GoalCompletionGateTest(unittest.TestCase):
             self.assertIn("Goal, Research Contract, Final Gate and Required Context", backend.goal_prompt)
             self.assertIn("A supported H or Cycle does not by itself establish Goal completion", backend.goal_prompt)
             self.assertIn("concrete deliverable against the Final Gate", backend.goal_prompt)
-            self.assertIn("Do not output requirement ledgers", backend.goal_prompt)
+            self.assertIn("Do not output exhaustive requirement ledgers", backend.goal_prompt)
             self.assertIn("optional robustness, external generalization", backend.goal_prompt)
             self.assertGreaterEqual(len(backend.judge_threads), 2)
             self.assertNotEqual(backend.judge_threads[-2], backend.judge_threads[-1])

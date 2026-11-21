@@ -147,3 +147,36 @@ def test_contract_delivery_attention_matches_sdk_failure_details(stopped_run):
     state['attention'].update(code='qualification_failed', reason=job['failure']['message'])
     (cycle / 'research_state.json').write_text(json.dumps(state))
     assert 'data-recovery-owner="true"' not in index_chip(run)
+
+
+def test_whole_task_qualification_wait_requires_a_bound_live_owner(stopped_run):
+    cycle, state, _, run = stopped_run
+    session = 'SUP-1111111111111111'
+    direction = {'research_plan_sha256': 'unchanged'}
+    state.update(status='no_qualified_candidate', attention={'code': 'no_qualified_candidate'},
+                 supervisor_qualification={'status': 'waiting', 'session_id': session,
+                                           'wake_condition': 'Supply a new independent observed series',
+                                           'direction_fingerprint': direction})
+    (cycle / 'research_state.json').write_text(json.dumps(state))
+    (cycle / 'supervisor/status.json').write_text(json.dumps({
+        'schema': 'theory-master/supervisor-status/v1', 'status': 'hold', 'code': 'no_qualified_candidate'}))
+    runtime_dir = cycle.parent / '.theory-master'
+    runtime_dir.mkdir()
+    path = runtime_dir / 'runtime.json'
+    runtime = {'launch_id': 'launch-1', 'state': 'RECOVERY_WAIT', 'current_cycle': '1',
+               'requested_operation': 'takeover', 'supervisor_pid': 123, 'supervisor_start_ticks': 456,
+               'qualification_wait': {'cycle': '1', 'launch_id': 'launch-1', 'session_id': session,
+                                      'direction_fingerprint': direction}}
+    path.write_text(json.dumps(runtime))
+    run.update(state='RECOVERY_WAIT', raw_status='NEEDS_ATTENTION')
+    with patch('tm_observer.collector._pid_alive', return_value=True) as alive:
+        assert 'Supervisor 等待研究条件' in index_chip(run)
+        assert 'Supply a new independent observed series' in banner_html(run, state)
+        alive.assert_called_with(123, 456)
+        runtime['qualification_wait']['session_id'] = 'SUP-2222222222222222'
+        path.write_text(json.dumps(runtime))
+        assert 'Supervisor 等待研究条件' not in index_chip(run)
+    runtime['qualification_wait']['session_id'] = session
+    path.write_text(json.dumps(runtime))
+    with patch('tm_observer.collector._pid_alive', return_value=False):
+        assert 'Supervisor 等待研究条件' not in banner_html(run, state)

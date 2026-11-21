@@ -286,7 +286,8 @@ function App({ sessionId, mode }: { sessionId: string; mode: string }) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const utilityRef = useRef<HTMLDivElement>(null);
   const filesTriggerRef = useRef<HTMLButtonElement>(null);
-  const projectLabel = document.querySelector<HTMLElement>('.tm-research-chat')?.dataset.projectLabel?.trim() || (taskId ? '当前科研项目' : '科研对话');
+  const isSystem = document.querySelector<HTMLElement>('.tm-research-chat')?.dataset.channel === 'system';
+  const projectLabel = document.querySelector<HTMLElement>('.tm-research-chat')?.dataset.projectLabel?.trim() || (isSystem ? '系统助手' : taskId ? '当前科研项目' : '科研对话');
   const [historyLimit, setHistoryLimit] = useState(100);
   const [historyEnd, setHistoryEnd] = useState<number | null>(null);
   const [anchorMessageId, setAnchorMessageId] = useState('');

@@ -64,8 +64,9 @@ def snapshot_documents(body: str, *, task_root: Path, note_path: Path,
                        materials: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Freeze explicitly embedded task documents / admitted document assets."""
     root = task_root.resolve()
-    registered = {Path(a["path"]).resolve() for row in materials for a in row["assets"]
-                  if a.get("path") and a.get("kind") == "document" and a.get("status") == "available"}
+    documents = [a for row in materials for a in row["assets"]
+                 if a.get("path") and a.get("kind") == "document" and a.get("status") == "available"]
+    registered = {Path(a["path"]).resolve() for a in documents}
     found = []
     outside_code(body, lambda text: found.extend(DOCUMENT_EMBED.finditer(text)) or text)
     result = []
@@ -78,6 +79,12 @@ def snapshot_documents(body: str, *, task_root: Path, note_path: Path,
         ref, _, anchor = target.partition("#")
         path = Path(unquote(ref))
         candidates = [path] if path.is_absolute() else [root / path, note_path.parent / path]
+        if not path.is_absolute():
+            # An admitted execution document can live outside the notes vault.
+            # Resolve only its recorded workspace-relative alias, not arbitrary
+            # files sharing a basename or an unregistered workspace path.
+            candidates.extend(Path(a["path"]) for a in documents
+                              if a.get("relative_path") == path.as_posix())
         hits = set()
         for candidate in candidates:
             resolved = candidate.resolve()

@@ -1,11 +1,12 @@
 """Stage routing and compact prompt construction for TheoryMaster roles."""
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Mapping
 
 from .evidence import adjudicable_manifest_records
-from .report_materials import report_materials
+from .report_material_tools import material_access
 from .cycle_criteria import criterion_rows
 from .scientific_objective import SCIENCE_FIELDS, frozen_science_view, locked_science_view
 
@@ -24,14 +25,15 @@ STAGE_CONTEXT_FIELDS: dict[tuple[str, str], tuple[str, ...]] = {
         "goal", "research_contract", "final_gate", "scientific_model_summary",
         "agent_graph", "agent_graph_reuse", "science_graph_tools", "running_hypotheses",
         "operator_guidance", "recent_execution_limits", "recent_qualification_stops",
-        "qualification_feedback", "lead_literature_result", "workspace_access",
+        "qualification_feedback", "lead_literature_result", "supplemental_research_inputs",
+        "registered_fixture_inputs", "prequalification_holdout", "workspace_access",
     ),
     ("research_lead", "hypothesis_display"): ("frozen_hypothesis", "frozen_reasoning"),
     ("research_lead", "candidate_selection"): (
         "qualified_candidates",
     ),
     ("research_lead", "selection_repair"): (
-        "repair_options",
+        "repair_options", "registered_fixture_inputs", "supplemental_research_inputs", "prequalification_holdout",
     ),
     ("research_lead", "cycle_synthesis"): (
         "active_hypothesis", "judge_decision", "previous_scientific_model", "scientific_access",
@@ -43,27 +45,29 @@ STAGE_CONTEXT_FIELDS: dict[tuple[str, str], tuple[str, ...]] = {
     ("challenger", "candidate_review"): (
         "goal", "research_contract", "final_gate", "candidate",
         "recent_execution_limits", "recent_qualification_stops",
-        "agent_graph", "agent_graph_reuse", "science_graph_tools", "workspace_access",
+        "agent_graph", "agent_graph_reuse", "science_graph_tools", "supplemental_research_inputs",
+        "registered_fixture_inputs", "prequalification_holdout", "workspace_access",
     ),
     ("challenger", "repair_verification"): (
         "goal", "research_contract", "final_gate", "original_candidate", "repaired_candidate",
         "recent_execution_limits", "recent_qualification_stops",
-        "original_blockers", "agent_graph", "agent_graph_reuse", "science_graph_tools", "workspace_access",
+        "original_blockers", "agent_graph", "agent_graph_reuse", "science_graph_tools",
+        "supplemental_research_inputs", "registered_fixture_inputs", "prequalification_holdout", "workspace_access",
     ),
     ("investigator", "preserve_research"): (
         "frozen_objective", "blocked_reason", "source_cycle", "workspace_access",
     ),
     ("investigator", "investigate"): (
         "frozen_objective", "qualification_handoff", "previous_scientific_delta", "workspace_access",
-        "public_submission", "submission_delivery",
+        "public_submission", "submission_delivery", "supplemental_research_inputs", "registered_fixture_inputs",
     ),
     ("investigator", "integrate_literature"): (
         "frozen_objective", "qualification_handoff", "previous_scientific_delta", "workspace_access",
-        "public_submission", "submission_delivery",
+        "public_submission", "submission_delivery", "supplemental_research_inputs", "registered_fixture_inputs",
     ),
     ("investigator", "judge_rework"): (
         "frozen_objective", "qualification_handoff", "previous_scientific_delta", "judge_objections", "workspace_access",
-        "public_submission", "submission_delivery",
+        "public_submission", "submission_delivery", "supplemental_research_inputs", "registered_fixture_inputs",
     ),
     ("literature", "landscape"): (
         "search_target", "scholarly_retrieval_root",
@@ -87,11 +91,37 @@ STAGE_CONTEXT_FIELDS: dict[tuple[str, str], tuple[str, ...]] = {
     ),
 }
 
-def _workspace_access(context: Mapping[str, Any]) -> dict[str, Any]:
+def _workspace_access(context: Mapping[str, Any], *, qualification_role: str | None = None) -> dict[str, Any]:
     """Expose stable roots, never an SDK-preselected reading list."""
+    plan = context.get("research_plan_path")
+    text = context.get("required_context")
+    revision = hashlib.sha256(text.encode()).hexdigest() if isinstance(text, str) else None
+    rule = "Re-read this operator-provided input and scope section when content_sha256 changes; consult it before reporting required material unavailable."
+    reuse = "Reuse only a matching revision already read and still available in this thread's context. Keep the current Stage and scientific authority boundaries."
+    if qualification_role == "research_lead":
+        rule = (
+            "Before proposing a candidate or reporting no admissible frontier, consult this current task-owned section, "
+            "including its technical corrections and input/comparison limits. Check whether a proposed decisive test "
+            "can distinguish its outcomes under the actual supplied inputs; preserve honest empty-frontier exits. "
+            + reuse
+        )
+    elif qualification_role == "challenger":
+        rule = (
+            "Before issuing candidate qualification, consult this current task-owned section, including its technical "
+            "corrections and input/comparison limits. Apply a recorded eligibility limit only when the comparator, "
+            "inputs and design actually match; changing a candidate alone does not remove an unchanged comparator's "
+            "limit. Retain admissible alternative designs and independent scientific review. "
+            + reuse
+        )
     return {key: value for key, value in {
         "task_home": context.get("task_home"),
         "note_area": context.get("note_area"),
+        "required_context_access": {
+            "path": plan,
+            "section": "Required Context",
+            **({"content_sha256": revision} if isinstance(revision, str) and revision else {}),
+            "rule": rule,
+        } if isinstance(plan, str) and plan else None,
         "research_root": context.get("research_root"),
         "cycle_dir": context.get("cycle_dir"),
         "cycle_workspace": context.get("cycle_workspace"),
@@ -210,7 +240,7 @@ def _scientific_synthesis_view(value: Any) -> dict[str, Any]:
 def _repair_candidate_view(value: Mapping[str, Any]) -> dict[str, Any]:
     # Preserve the bounded review's old inputs; history/motivation belong to
     # candidate_review and must not reopen qualification during verification.
-    science = {key: value[key] for key in ("id", *SCIENCE_FIELDS, "goal_advance") if key in value}
+    science = {key: value[key] for key in ("id", *SCIENCE_FIELDS, "evaluation_materials", "goal_advance") if key in value}
     return {**_candidate_digest([science])[0],
             **{key: value[key] for key in ("estimand", "parent_candidate_id", "repair_details", "blocker_closures")
                if key in value}}
@@ -584,9 +614,12 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
             "recent_execution_limits": context.get("recent_execution_limits"),
             "recent_qualification_stops": context.get("recent_qualification_stops"),
             "operator_guidance": context.get("operator_guidance"),
+            "supplemental_research_inputs": context.get("supplemental_research_inputs"),
+            "registered_fixture_inputs": context.get("registered_fixture_inputs"),
+            "prequalification_holdout": context.get("prequalification_holdout"),
             "qualification_feedback": feedback,
             "lead_literature_result": _literature_digest(context.get("lead_literature_result")),
-            "workspace_access": _workspace_access(context),
+            "workspace_access": _workspace_access(context, qualification_role="research_lead"),
         }.items() if value not in (None, "", [], {})}
     if role == "research_lead" and stage == "hypothesis_display":
         lock = context.get("frozen_hypothesis") if isinstance(context.get("frozen_hypothesis"), dict) else {}
@@ -601,14 +634,17 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
                 **({"frozen_reasoning": frozen_reasoning} if frozen_reasoning else {})}
     if role == "research_lead" and stage == "selection_repair":
         error = context.get("qualification_error") if isinstance(context.get("qualification_error"), dict) else {}
-        return {
+        return {key: value for key, value in {
             "repair_options": _repair_options(
                 context.get("candidates"),
                 context.get("candidate_reviews"),
                 continuation=continuation,
                 fallback_blockers=error.get("blocking_issues"),
-            )
-        }
+            ),
+            "registered_fixture_inputs": context.get("registered_fixture_inputs"),
+            "supplemental_research_inputs": context.get("supplemental_research_inputs"),
+            "prequalification_holdout": context.get("prequalification_holdout"),
+        }.items() if key == "repair_options" or value not in (None, "", [], {})}
     if role == "research_lead" and stage == "candidate_selection":
         # Qualification is already an SDK fact.  The continuing Lead thread
         # needs only stable candidate identities; a fresh recovery thread gets
@@ -655,7 +691,10 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
             "recent_qualification_stops": context.get("recent_qualification_stops"),
             **graph_access,
             "science_graph_tools": context.get("science_graph_tools"),
-            "workspace_access": _workspace_access(context),
+            "supplemental_research_inputs": context.get("supplemental_research_inputs"),
+            "registered_fixture_inputs": context.get("registered_fixture_inputs"),
+            "prequalification_holdout": context.get("prequalification_holdout"),
+            "workspace_access": _workspace_access(context, qualification_role="challenger"),
         }
         return {key: value for key, value in projected.items() if value not in (None, "", [], {})}
     if role == "challenger" and stage == "repair_verification":
@@ -674,6 +713,9 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
             "recent_qualification_stops": context.get("recent_qualification_stops"),
             **graph_access,
             "science_graph_tools": context.get("science_graph_tools"),
+            "supplemental_research_inputs": context.get("supplemental_research_inputs"),
+            "registered_fixture_inputs": context.get("registered_fixture_inputs"),
+            "prequalification_holdout": context.get("prequalification_holdout"),
             "workspace_access": _workspace_access(context),
         }
         return {key: value for key, value in projected.items() if value not in (None, "", [], {})}
@@ -706,6 +748,8 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
             "workspace_access": _workspace_access(context),
             "public_submission": context.get("public_submission"),
             "submission_delivery": context.get("submission_delivery"),
+            "supplemental_research_inputs": context.get("supplemental_research_inputs"),
+            "registered_fixture_inputs": context.get("registered_fixture_inputs"),
         }
         if stage == "judge_rework":
             base["judge_objections"] = context.get("judge_objections")
@@ -724,7 +768,7 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
             "scientific_synthesis": _scientific_synthesis_view(context.get("scientific_synthesis")),
             "scientific_model_summary": _model_summary(context.get("scientific_model")),
             "evidence_scope_digest": _evidence_scope_digest(context),
-            "report_materials": report_materials(context),
+            "report_materials": material_access(context),
         }.items() if value not in (None, "", [], {})}
     if role == "judge" and stage == "goal_completion":
         plan_path = str(context.get("research_plan_path") or "").strip()

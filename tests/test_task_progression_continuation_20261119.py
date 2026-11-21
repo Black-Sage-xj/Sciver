@@ -6,8 +6,10 @@ Only Agent replies and the Native Goal execution transport are deterministic.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -175,6 +177,84 @@ def test_run_replans_after_formal_input_limit_and_reaches_independent_goal_gate(
     _assert_old_archive_unchanged(backend, cycles[0])
 
 
+@pytest.mark.parametrize("legacy", [False, True])
+def test_closed_input_limit_waits_for_new_verified_bytes_without_reopening_cycle(tmp_path, monkeypatch, legacy):
+    from theory_master.supervisor_input_support import input_support_recovery
+
+    spec = _task(tmp_path, monkeypatch, max_cycles=1)
+    manifest = spec.task_home / "input_manifest.json"
+    sources = {"schema": "theorymaster/public-research-input-manifest/v1",
+               "data_files": [], "derived_context_files": []}
+
+    def add_input(name, data, *, kind="data_files", verified_bytes=None):
+        (spec.task_home / name).write_bytes(data)
+        trusted = data if verified_bytes is None else verified_bytes
+        sha = hashlib.sha256(trusted).hexdigest()
+        sources[kind].append({"path": name, "bytes": len(trusted), "sha256": sha})
+        manifest.write_text(json.dumps(sources))
+        return sha
+
+    initial_id = add_input("original.csv", b"x\n1\n")
+    backend = ProgressionBackend()
+    state = Workflow(spec, backend).run()
+    assert state["input_support_baseline"]["verified_research_input_ids"] == [initial_id]
+    assert local_replan_reason(state) == "input_support_unavailable"
+    assert _rows(backend, cycle=1, role="judge", stage="terminal_assessment") == []
+    cycle, = _cycles(spec)
+    state_path = cycle / "research_state.json"
+    if legacy:
+        state.pop("input_support_baseline")
+        state_path.write_text(json.dumps(state))
+    archived_state = state_path.read_bytes()
+    closure_path = cycle / "operational_closure.json"
+    archived_closure = closure_path.read_bytes()
+    assert input_support_recovery(cycle, state, establish_baseline=True)["route"] == "input_support_wait"
+
+    add_input("alias.csv", b"x\n1\n")
+    add_input("method-note.md", b"Context returned by the original source", kind="derived_context_files")
+    new_id = add_input("restored.csv", b"x\n0\n", verified_bytes=b"x\n2\n")
+    spec.document.write_text(spec.document.read_text() + "\n")
+    assert input_support_recovery(cycle, state)["route"] == "input_support_wait"
+
+    (spec.task_home / "restored.csv").write_bytes(b"x\n2\n")
+    recovery = input_support_recovery(cycle, state)
+    assert recovery["route"] == "input_support"
+    assert recovery["added_input_ids"] == [new_id] and recovery["wake_identity"]
+    assert recovery["invocation_id"] == state["execution_limit_handoff"]["invocation_id"]
+    assert input_support_recovery(cycle, {**state, "worker_id": "another-owner"}) is None
+    assert state_path.read_bytes() == archived_state and closure_path.read_bytes() == archived_closure
+    closure_path.write_text("{}")
+    assert input_support_recovery(cycle, state) is None
+
+
+@pytest.mark.parametrize("invalid", [None, "owner", "cycle_control", "new_input_digest"])
+def test_input_support_runner_rechecks_live_owner_and_unchanged_recovery_target(tmp_path, monkeypatch, invalid):
+    from theory_master.runner import _require_input_support_takeover
+
+    cycle = tmp_path / "4"
+    spec = SimpleNamespace(research_root=tmp_path)
+    plan = {"route": "input_support", "dependency_identity": "a" * 64, "wake_identity": "b" * 64}
+    registry = {"requested_operation": "takeover", "takeover_cycle": "4", "current_cycle": "4",
+                "launch_id": "specific-run", "supervisor_pid": 41, "supervisor_start_ticks": 4,
+                "input_support_attempt": {"launch_id": "specific-run", "stopped_cycle": "4",
+                                          "dependency_identity": "a" * 64, "wake_identity": "b" * 64,
+                                          "status": "launching"}}
+    if invalid == "new_input_digest":
+        plan["wake_identity"] = "c" * 64
+    monkeypatch.setattr("theory_master.runner.os.getppid", lambda: 42 if invalid == "owner" else 41)
+    monkeypatch.setattr("theory_master.runtime_manager.load_registry", lambda _: registry)
+    monkeypatch.setattr("theory_master.runtime_manager.process_identity_alive", lambda pid, ticks: (pid, ticks) == (41, 4))
+    monkeypatch.setattr("theory_master.supervisor_intervention.supervisor_enabled", lambda _: True)
+    monkeypatch.setattr("theory_master.supervisor_activation.latest_recovery",
+                        lambda _: None if invalid == "cycle_control" else (cycle, {}, "input_support"))
+    monkeypatch.setattr("theory_master.supervisor_activation.input_support_target", lambda *args, **kwargs: plan)
+    if invalid:
+        with pytest.raises(ValueError, match="Input-support recovery|Verified input support"):
+            _require_input_support_takeover(spec, "4")
+    else:
+        _require_input_support_takeover(spec, "4")
+
+
 def test_run_replans_after_qualification_exhaustion_without_reopening_old_retry(tmp_path, monkeypatch):
     spec = _task(tmp_path, monkeypatch, max_cycles=3)
     backend = ProgressionBackend("qualification")
@@ -241,6 +321,17 @@ def test_each_local_replan_consumes_remaining_batch_budget_without_reset(tmp_pat
     assert local_replan_reason(state) is not None
     assert not _rows(backend, cycle=3, role="research_lead", stage="frontier_proposal")
 
+
+
+def test_repeated_input_limits_stop_after_one_alternate_despite_spare_budget(tmp_path, monkeypatch):
+    spec = _task(tmp_path, monkeypatch, max_cycles=4)
+    backend = ProgressionBackend("input_limit", fail_every_cycle=True)
+    workflow = Workflow(spec, backend)
+    state = workflow.run()
+    assert [p.name for p in _cycles(spec)] == ["1", "2"]
+    assert state["cycle_id"] == "2" and workflow.invocation_cycle_index == 2
+    assert local_replan_reason(state) == "input_support_unavailable"
+    assert not _rows(backend, cycle=3, role="research_lead", stage="frontier_proposal")
 
 @pytest.mark.parametrize("mode", ["provider_failure", "runtime_failure", "usageLimited", "budgetLimited", "paused"])
 def test_runtime_provider_and_resource_stops_never_open_another_cycle(tmp_path, monkeypatch, mode):

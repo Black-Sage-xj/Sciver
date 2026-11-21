@@ -12,7 +12,7 @@ from typing import Any
 
 def engineering_skill_eligible(state: dict[str, Any], review: dict[str, Any]) -> bool:
     """Do not invoke an edit-capable model for science, quota, or unsafe recovery."""
-    if review.get("action") != "hold":
+    if review.get("action") != "hold" or review.get("repair_route") == "technical_computation":
         return False
     if state.get("abandoned_cycle") or state.get("phase") == "abandon_requested":
         return False

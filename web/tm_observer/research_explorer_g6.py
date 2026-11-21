@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from graph_research.web.markdown_reader import markdown_script
+
 from .research_reader_ui import READER_CSS
 from .vault_ui import VAULT_CSS, VAULT_HTML, VAULT_SCRIPT
 
@@ -365,4 +367,4 @@ def graph_content() -> str:
     script = Path(__file__).with_name("research_explorer_g6.js").read_text(encoding="utf-8")
     tree_script = Path(__file__).with_name("research_explorer_layout_c.js").read_text(encoding="utf-8")
     return (GRAPH_CSS + READER_CSS + VAULT_CSS + VAULT_HTML
-            + GRAPH_HTML.replace("TM_GRAPH_JS", VAULT_SCRIPT + "\n" + tree_script + "\n" + script))
+            + GRAPH_HTML.replace("TM_GRAPH_JS", markdown_script() + "\n" + VAULT_SCRIPT + "\n" + tree_script + "\n" + script))

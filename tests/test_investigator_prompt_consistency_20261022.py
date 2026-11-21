@@ -113,7 +113,7 @@ class InvestigatorPromptConsistencyTests(unittest.TestCase):
 
             def invoke_goal(self, role, *, goal_objective, context_prompt, handoff_path,
                             thread_id, model, provider, token_allowance=None,
-                            tokens_before_goal=0):
+                            tokens_before_goal=0, control_check=None, **_runtime_callbacks):
                 self.goals.append(goal_objective)
                 self.setups.append(context_prompt)
                 raise NativeGoalIncomplete("usageLimited", thread_id or "thread")

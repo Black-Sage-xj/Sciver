@@ -63,7 +63,8 @@ def _parse(raw: str) -> dict[str, str]:
 def resume_blocker(state: dict[str, Any], *, for_repair: bool = False,
                    budget_revalidated: bool = False,
                    runtime_revalidated: bool = False,
-                   contract_projection_repair: dict | None = None) -> str | None:
+                   contract_projection_repair: dict | None = None,
+                   repair_cycle: Path | None = None) -> str | None:
     """Deterministic gate; None means a managed resume is structurally allowed."""
     if state.get("abandoned_cycle") or str(state.get("phase") or "") == "abandon_requested":
         return "Cycle was abandoned; resume is forbidden."
@@ -73,13 +74,53 @@ def resume_blocker(state: dict[str, Any], *, for_repair: bool = False,
     recovery = failure_details(state)
     if recovery.get("action") in {"pause", "interrupt"}:
         return "Operator pause or interruption remains in force; repair does not authorize resume."
+    from .supervisor_qualification_reentry import (
+        VALIDATOR as qualification_reply_validator, is_reply_failure, is_untouched_envelope_failure,
+    )
+    verified_envelope = False
+    if is_reply_failure(state) and not for_repair:
+        from .supervisor_repair_receipts import inspect_repair_receipt, unused_repair_credit
+        receipt = contract_projection_repair or {}
+        try:
+            ready = (receipt.get("validator") == qualification_reply_validator
+                     and unused_repair_credit(state)
+                     and inspect_repair_receipt(Path(receipt["cycle"]), state) == receipt)
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+            ready = False
+        if not ready:
+            return "Supervisor qualification response needs its verified repair receipt."
+        verified_envelope = is_untouched_envelope_failure(Path(receipt["cycle"]), state)
+    from .supervisor_reporter_input_recovery import VALIDATOR as reporter_input_validator, is_reporter_input_overflow
+    if is_reporter_input_overflow(state) and not for_repair:
+        from .supervisor_repair_receipts import inspect_repair_receipt, unused_repair_credit
+        receipt = contract_projection_repair or {}
+        try:
+            ready = (receipt.get("validator") == reporter_input_validator
+                     and unused_repair_credit(state)
+                     and inspect_repair_receipt(Path(receipt["cycle"]), state) == receipt)
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+            ready = False
+        if not ready:
+            return "Reporter input overflow requires a verified compact-prompt repair before retry."
+    from .supervisor_fixture_conflict_recovery import VALIDATOR as fixture_conflict_validator, is_fixture_conflict
+    if is_fixture_conflict(state) and not for_repair:
+        from .supervisor_repair_receipts import inspect_repair_receipt, unused_repair_credit
+        receipt = contract_projection_repair or {}
+        try:
+            ready = (receipt.get("validator") == fixture_conflict_validator
+                     and unused_repair_credit(state)
+                     and inspect_repair_receipt(Path(receipt["cycle"]), state) == receipt)
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+            ready = False
+        if not ready:
+            return "The fixture availability contradiction requires a verified one-use recovery receipt."
     if state.get("protocol_health") == "violation":
         # Ordinary engine receipts and runtime_revalidated=True do not waive
         # protocol authority. Re-read the narrow delivery-preparation receipt.
-        from .supervisor_repair_receipts import CONTRACT_PROJECTION_VALIDATOR, LINEAGE_STRUCTURE_VALIDATOR, inspect_repair_receipt
+        from .supervisor_repair_receipts import CONTRACT_PROJECTION_VALIDATOR, LINEAGE_STRUCTURE_VALIDATOR, JSON_ARRAY_VALIDATOR, FRONTIER_EMPTY_VALIDATOR, inspect_repair_receipt
         try:
             projection_valid = bool(isinstance(contract_projection_repair, dict)
-                and contract_projection_repair.get('validator') in {CONTRACT_PROJECTION_VALIDATOR, LINEAGE_STRUCTURE_VALIDATOR}
+                and contract_projection_repair.get('validator') in {CONTRACT_PROJECTION_VALIDATOR, LINEAGE_STRUCTURE_VALIDATOR, JSON_ARRAY_VALIDATOR, FRONTIER_EMPTY_VALIDATOR}
                 and inspect_repair_receipt(Path(contract_projection_repair['cycle']), state)
                     == contract_projection_repair)
         except (OSError, ValueError, TypeError, KeyError):
@@ -117,7 +158,10 @@ def resume_blocker(state: dict[str, Any], *, for_repair: bool = False,
         if not native_valid:
             return "An existing native Goal requires a verified original-Goal reattachment receipt; a plain restart is forbidden."
     if native.get("runtime_failure_kind") == "native_goal_dependency_blocked":
+        from .operator_technical_recovery import technical_reentry_key
         from .supervisor_repair_receipts import execution_limit_protocol_reentry_key
+        if technical_reentry_key(state) in (state.get("supervisor_technical_operations") or []):
+            return "The original blocked computation recovery opportunity was already used."
         if execution_limit_protocol_reentry_key(state) in (state.get("supervisor_execution_limit_protocol_reentries") or []):
             return "The retained-thread execution-limit protocol delivery opportunity was already used; another reentry requires review."
     if (native.get("runtime_failure_kind") in {
@@ -129,14 +173,18 @@ def resume_blocker(state: dict[str, Any], *, for_repair: bool = False,
     valid_checkpoint = bool(checkpoint and Path(str(checkpoint)).is_file()
                             and not Path(str(checkpoint)).is_symlink())
     from .supervisor_lineage_recovery import has_verified_lineage_reentry
-    if not (valid_checkpoint or state.get("role_outputs") or has_verified_lineage_reentry(state)):
+    from .supervisor_json_array_recovery import has_verified_json_array_reentry
+    if not (valid_checkpoint or state.get("role_outputs") or has_verified_lineage_reentry(state)
+            or has_verified_json_array_reentry(state) or verified_envelope
+            or (for_repair and repair_cycle is not None and is_untouched_envelope_failure(repair_cycle, state))):
         return "No existing safe checkpoint or committed role boundary exists for managed resume."
     from .supervisor_repair_receipts import unused_repair_credit
     # A blocked native Goal's delivery migration uses the ordinary resume
     # allowance. It is not another engineering-repair spending credit.
     if (int(state.get(_COUNT_KEY) or 0) >= MAX_RUNTIME_RESUMES and not for_repair
             and not (runtime_revalidated and unused_repair_credit(state)
-                     and native.get('runtime_failure_kind') != 'native_goal_dependency_blocked')):
+                     and native.get('runtime_failure_kind') != 'native_goal_dependency_blocked'
+                     and not is_fixture_conflict(state))):
         return (f"The {MAX_RUNTIME_RESUMES} authorized Supervisor runtime resumes "
                 "for this Cycle were used; repeated failure requires review.")
     return None
@@ -200,6 +248,7 @@ def review_runtime_failure(
     readonly_provider_probe_only: bool = False,
     scheduler_locked: bool = False,
     existing_receipt_only: bool = False,
+    dispatch_owner: dict | None = None,
 ) -> dict[str, str]:
     from .budget_reconciliation import LEGACY_ERROR, reconcile_legacy_failure
     reconciliation_error = None
@@ -229,7 +278,13 @@ def review_runtime_failure(
         except (OSError, ValueError, TypeError, KeyError):
             pass
         if validated_repair is None:
-            for validator in (validate_existing_native_goal_reattachment, validate_existing_lineage_structure):
+            from .supervisor_json_array_recovery import validate_json_array_reentry
+            from .supervisor_frontier_recovery import validate_empty_frontier_reentry
+            from .supervisor_report_document_recovery import validate_report_document_reentry
+            from .supervisor_reporter_input_recovery import validate_reporter_input_reentry
+            from .supervisor_fixture_conflict_recovery import validate_fixture_conflict
+            from .supervisor_qualification_reentry import validate_qualification_reply_reentry
+            for validator in (validate_qualification_reply_reentry, validate_existing_native_goal_reattachment, validate_existing_lineage_structure, validate_json_array_reentry, validate_empty_frontier_reentry, validate_report_document_reentry, validate_reporter_input_reentry, validate_fixture_conflict):
                 try:
                     validated_repair = validator(cycle_dir, state, engine=Path(__file__).resolve().parent)
                     if validated_repair:
@@ -366,11 +421,21 @@ def review_runtime_failure(
         elif blocker.startswith("Runtime/budget validation"):
             suggestion = ("Repair the attributable runtime or budget validation failure; run its "
                           "objective validator and return evidence to the SDK before requesting resume.")
+        elif blocker.startswith("Native Goal requires dependency or contract diagnosis"):
+            suggestion = (
+                "Check whether computation jobs still own the task's dispatcher locks. After they terminate, "
+                "obtain operator authorization binding the frozen checkpoint to verified artifact hashes or a "
+                "bounded computation continuation. Resume requires verification of the original blocked Goal."
+            )
         elif blocker.startswith("The ") and "authorized Supervisor runtime resumes" in blocker:
             suggestion = ("Investigate recurring failure after bounded resumes; repair the cause and "
                           "verify its change instead of forcing another plain resume or resetting guards.")
         result = {"action": "hold", "reason": blocker, "diagnosis": "",
                   "repair_suggestion": suggestion}
+        if blocker.startswith("Native Goal requires dependency or contract diagnosis") and (
+            state.get("native_goal") or {}
+        ).get("runtime_failure_kind") == "native_goal_dependency_blocked":
+            result.update(repair_route="technical_computation", blocking_dependency=suggestion)
         session.append("system", "确定性 hold，未调用模型。" + blocker)
     elif _recovered_capacity_thread_is_idle(research_root, cycle_dir, state):
         result = {"action": "resume",
@@ -477,10 +542,12 @@ def review_runtime_failure(
             result = {"action": "hold", "reason": final_blocker,
                       "diagnosis": result.get("diagnosis", ""), "repair_suggestion": ""}
     if result["action"] == "resume":
+        repair_credit = None
         if validated_repair:
             from .supervisor_repair_receipts import (repair_credit_key, EXECUTION_LIMIT_PROTOCOL_VALIDATOR,
                 execution_limit_protocol_reentry_key)
-            state.setdefault('supervisor_consumed_repairs', []).append(repair_credit_key(state))
+            repair_credit = repair_credit_key(state)
+            state.setdefault('supervisor_consumed_repairs', []).append(repair_credit)
             if validated_repair.get('validator') == EXECUTION_LIMIT_PROTOCOL_VALIDATOR:
                 state.setdefault('supervisor_execution_limit_protocol_reentries', []).append(
                     execution_limit_protocol_reentry_key(state))
@@ -493,7 +560,14 @@ def review_runtime_failure(
         session.append("repair_binding", "Repair evidence authorized for this managed resume.",
                        repair_receipt=state.get("supervisor_repair_receipt") if validated_repair else None,
                        budget_reconciliation=state.get("budget_failure_reconciliation") if reconciled else None)
-        write_json(state_path, state)
+        authorization = None
+        if dispatch_owner is not None:
+            from .supervisor_runtime_resume import AUTHORIZATION, authorize_dispatch
+
+            authorization = authorize_dispatch(cycle_dir, state, dispatch_owner, repair_credit=repair_credit)
+            if authorization is not None:
+                state[AUTHORIZATION] = authorization
+        write_json(state_path, state, sync_directory=authorization is not None)
     reason = result["reason"]
     if result.get("diagnosis"):
         reason += "\n\n诊断：" + result["diagnosis"]

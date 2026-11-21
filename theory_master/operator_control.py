@@ -7,13 +7,16 @@ same canonical Workflow methods used by `tm tui`.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
 from .core import FakeBackend, TaskSpec, Workflow
-from .task import TaskBinding
+from .operator_host_binding import SDK_ROOT, HostSdkBinding, load_host_sdk_binding, protected_launch_binding
+from .task import TASK_CONFIG_NAME, TASK_DIR_NAME, TASK_SCHEMA, TaskBinding
 
 
 class ControlRejected(ValueError):
@@ -23,12 +26,95 @@ class ControlRejected(ValueError):
 from .worker_runtime import PreservationPreflightRejected
 
 
+def _supervisor_switch(command: dict[str, Any]) -> bool:
+    return command.get("action") in ("supervisor", "attention_takeover") and type(command.get("value")) is bool
+
+
+def _can_queue_worker(command: dict[str, Any]) -> bool:
+    action, value = command.get("action"), command.get("value")
+    return (action in ("add_worker", "start_worker_scheduler")
+            or (action == "worker_control" and isinstance(value, dict)
+                and value.get("operation") in ("retry_direction", "preserve_release"))
+            or (_supervisor_switch(command) and value is True))
+
+
+def _can_launch(command: dict[str, Any]) -> bool:
+    action, value = command.get("action"), command.get("value")
+    return (_can_queue_worker(command) or action in ("run", "resume")
+            or (action == "worker_control" and isinstance(value, dict) and value.get("operation") == "resume"))
+
+
+def _requested_config_path(command: dict[str, Any]) -> Path | None:
+    """Resolve launch routing from the registered task pointer without migrating it."""
+    task_root = command.get("task_root")
+    if not isinstance(task_root, str) or not task_root:
+        return None
+    pointer = Path(task_root).resolve() / TASK_DIR_NAME / TASK_CONFIG_NAME
+    try:
+        payload = json.loads(pointer.read_bytes())
+    except FileNotFoundError:
+        return None
+    if not isinstance(payload, dict) or payload.get("schema") != TASK_SCHEMA:
+        raise ControlRejected("invalid task discovery pointer")
+    config_path = payload.get("config_path")
+    if not isinstance(config_path, str) or not Path(config_path).is_absolute():
+        raise ControlRejected("invalid task configuration path")
+    return Path(config_path).resolve(strict=True)
+
+
+def _bound_supervisor_sdk(command: dict[str, Any]) -> tuple[HostSdkBinding, bool] | None:
+    """Resolve explicit switches and task-scoped protected launch actions."""
+    config_path = _requested_config_path(command) if _can_launch(command) else None
+    protected = protected_launch_binding(config_path) if config_path is not None else None
+    binding = protected or (load_host_sdk_binding() if _supervisor_switch(command) else None)
+    if binding is not None and binding.sdk_root != SDK_ROOT:
+        return binding, protected is not None
+    return None
+
+
+def _exec_bound_supervisor_sdk(binding: HostSdkBinding, request: str, *, protected: bool) -> None:
+    # Keep the original worker PID and timeout while replaying the bounded stdin request.
+    env = binding.environment(protected=protected)
+    executable = sys.executable
+    with tempfile.TemporaryFile() as stream:
+        stream.write(request.encode(sys.stdin.encoding or "utf-8"))
+        stream.seek(0)
+        os.dup2(stream.fileno(), 0)
+        os.chdir(binding.sdk_root)
+        os.execve(executable, [executable, "-P", "-m", "theory_master.operator_control"], env)
+
+
 def dispatch(specified: dict[str, Any]) -> dict[str, Any]:
     action = specified.get("action")
     if action not in {"set_worker_mode", "add_worker", "cancel_pending_worker", "start_worker_scheduler", "stop_worker_scheduler", "set_worker_route", "set_task_profile", "set_worker_profile", "set_worker_account", "save_model_tier_template", "inspect_codex_models", "worker_control", "pause", "kill", "abandon_cycle", "max_cycles", "attention_guidance", "attention_takeover", "supervisor", "quota_auto_adjust", "run", "resume", "set_role_route", "set_operator_preference"}:
         raise ControlRejected("unknown operator action")
     root = Path(str(specified["task_root"])).resolve(strict=True)
     binding = TaskBinding.load(root)
+    protected = protected_launch_binding(binding.config_path) if _can_launch(specified) else None
+    if protected is None:
+        return _dispatch_task(specified, binding)
+    if protected.sdk_root != SDK_ROOT:
+        raise ControlRejected("Protected control must run from the bound SDK checkout")
+    if _can_queue_worker(specified):
+        from .operator_host_binding import verify_protected_scheduler
+
+        verify_protected_scheduler(binding.research_root, protected)
+    environment = protected.environment(protected=True)
+    launch_env = {key: environment[key] for key in ("PATH", "PYTHONSAFEPATH") if key in environment}
+    previous = {key: os.environ.get(key) for key in launch_env}
+    os.environ.update(launch_env)
+    try:
+        return _dispatch_task(specified, binding)
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def _dispatch_task(specified: dict[str, Any], binding: TaskBinding) -> dict[str, Any]:
+    action = specified["action"]
     try:
         spec = TaskSpec.from_config(binding.config_path)
     except FileNotFoundError as error:
@@ -195,8 +281,11 @@ def dispatch(specified: dict[str, Any]) -> dict[str, Any]:
                 "applies_to_current_turn": False}
     if action in {"run", "resume", "set_role_route", "set_operator_preference"}:
         from .runtime_manager import runtime_health, launch_managed_runtime
-        if runtime_health(spec.research_root).get("active"):
-            raise ControlRejected("task already has an active runner")
+        health = runtime_health(spec.research_root)
+        if health.get("active"):
+            from .supervisor_activation import qualification_wait_owned
+            if action != "run" or not qualification_wait_owned(health):
+                raise ControlRejected("task already has an active runner")
         from .operator_preferences import read as operator_prefs
         prefs = operator_prefs(spec.research_root)["flags"]
         options = value or {}
@@ -218,16 +307,24 @@ def dispatch(specified: dict[str, Any]) -> dict[str, Any]:
         return {"guidance_status": "saved", "source": payload.get("source"), "effective_at": "next_resume"}
     if action in {"attention_takeover", "supervisor"}:
         result = workflow.set_supervisor(value)
-        return {"enabled": bool(result.get("enabled")), "effective_at": result.get("handoff") or "sdk"}
+        response = {"enabled": bool(result.get("enabled")), "effective_at": result.get("handoff") or "sdk"}
+        if "takeover" in result:
+            response["takeover"] = result["takeover"]
+        return response
     result = workflow.set_quota_auto_adjust(value)
     return {"enabled": bool(result.get("enabled")), "effective_at": "supervisor_controller"}
 
 
 def main() -> int:
     try:
-        command = json.loads(sys.stdin.read(8192))
+        request = sys.stdin.read(8192)
+        command = json.loads(request)
         if not isinstance(command, dict):
             raise ControlRejected("invalid request")
+        launch = _bound_supervisor_sdk(command)
+        if launch is not None:
+            binding, protected = launch
+            _exec_bound_supervisor_sdk(binding, request, protected=protected)
         outcome = dispatch(command)
         print(json.dumps({"ok": True, "outcome": outcome}, ensure_ascii=False))
         return 0

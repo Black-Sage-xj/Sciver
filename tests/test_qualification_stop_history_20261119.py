@@ -52,6 +52,78 @@ def archive(root: Path, number=1, *, verdict="revise"):
     return cycle
 
 
+
+def archive_supervisor(root: Path, number=1, *, verdict="reject"):
+    cycle = archive(root, number, verdict=verdict)
+    state_path = cycle / "research_state.json"
+    state = json.loads(state_path.read_text())
+    candidate = {"id": "old-candidate", **SCIENCE}
+    state["supervisor_qualification"] = {
+        "status": "review_exhausted", "session_id": "SUP-0123456789abcdef",
+        "thread_id": "supervisor-thread", "frontier": {"candidates": [candidate]},
+    }
+    state["frontier_review"] = {
+        "status": "unqualified", "selected_candidate_id": None, "generated_candidates": [candidate],
+    }
+    write_json(state_path, state)
+
+    ledger = cycle / "invocations.jsonl"
+    rows = [json.loads(line) for line in ledger.read_text().splitlines()]
+    lead, challenger = rows[:2]
+    closure_path = cycle / "semantic_closure" / (lead["invocation_id"] + ".json")
+    closure = json.loads(closure_path.read_text())
+    closure["closed_output"] = {"candidates": [], "blocking_reason": "Lead had no distinct test."}
+    write_json(closure_path, closure)
+    lead["closure_hash"] = stable_hash(closure)
+    ledger.write_text("\n".join(json.dumps(row) for row in (lead, challenger)) + "\n")
+    return cycle
+
+
+def test_rejected_supervisor_candidate_is_bound_and_precedes_earlier_empty_lead(tmp_path):
+    cycle = archive_supervisor(tmp_path)
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file()}
+    row, empty = recent_qualification_stops(tmp_path, current_cycle="2")
+    assert row["frozen_objective"] == SCIENCE
+    assert row["candidate_id"] == "old-candidate"
+    assert row["review"]["verdict"] == "reject"
+    assert row["frozen_objective_sha256"] == frozen_science_digest(SCIENCE)
+    assert row["source_paths"] == [
+        str(cycle / "research_state.json"),
+        str(cycle / "semantic_closure" / "inv-1-challenger-candidate_review.json"),
+    ]
+    assert empty["blocking_reason"] == "Lead had no distinct test."
+    assert recent_qualification_stops(tmp_path, current_cycle="2", limit=1) == [row]
+    assert {p: p.read_bytes() for p in before} == before
+
+
+@pytest.mark.parametrize("defect", ["working", "mirror", "science_hash", "different_id", "uncommitted", "revise"])
+def test_supervisor_mirrors_never_replace_a_committed_rejection(tmp_path, defect):
+    cycle = archive_supervisor(tmp_path, verdict="revise" if defect == "revise" else "reject")
+    state_path = cycle / "research_state.json"
+    state = json.loads(state_path.read_text())
+    receipt = state["supervisor_qualification"]
+    selected = receipt["frontier"]["candidates"][0]
+    generated = state["frontier_review"]["generated_candidates"][0]
+    if defect == "working":
+        receipt["status"] = "proposed"
+    elif defect == "mirror":
+        generated["scope"] = "A different source"
+    elif defect == "science_hash":
+        selected["scope"] = generated["scope"] = "A different source"
+    elif defect == "different_id":
+        selected["id"] = generated["id"] = "a-different-candidate"
+        state["qualification_attempts"][0]["candidate_ids"] = [selected["id"]]
+    elif defect == "uncommitted":
+        ledger = cycle / "invocations.jsonl"
+        lines = [json.loads(line) for line in ledger.read_text().splitlines()]
+        lines[1]["commit_state"] = "uncommitted"
+        ledger.write_text("\n".join(json.dumps(row) for row in lines) + "\n")
+    write_json(state_path, state)
+    [row] = recent_qualification_stops(tmp_path, current_cycle="2")
+    assert row["blocking_reason"] == "Lead had no distinct test."
+    assert "candidate_id" not in row
+
+
 def test_recovers_exact_science_and_bound_reviews_from_append_only_closures(tmp_path):
     archive(tmp_path, 1)
     newest = archive(tmp_path, 2, verdict="reject")
@@ -127,19 +199,21 @@ class CaptureBackend(FakeBackend):
         return thread, json.dumps(value)
 
 
-def make_workflow(tmp_path, backend):
+def make_workflow(tmp_path, backend, *, supervisor_history=False):
     plan = tmp_path / "research_plan.md"
     plan.write_text("# Goal\nFind the transfer relation\n\n# Research Contract\nAuthorized sources only\n\n"
                     "# Final Gate\nA bounded independent test\n\n# Required Context\nLocal inputs\n")
     spec = TaskSpec.from_config(bootstrap(plan).config_path)
-    archive(spec.research_root)
+    make_archive = archive_supervisor if supervisor_history else archive
+    make_archive(spec.research_root)
     return Workflow(spec, backend, stop_before="investigator")
 
 
 @pytest.mark.parametrize("alias", ["old-candidate", "different-candidate-id"])
-def test_unchanged_science_never_gets_a_new_challenger_verdict_or_investigator(tmp_path, alias):
+@pytest.mark.parametrize("supervisor_history", [False, True])
+def test_unchanged_science_never_gets_a_new_challenger_verdict_or_investigator(tmp_path, alias, supervisor_history):
     backend = CaptureBackend()
-    wf = make_workflow(tmp_path, backend)
+    wf = make_workflow(tmp_path, backend, supervisor_history=supervisor_history)
     history = recent_qualification_stops(wf.spec.research_root, current_cycle="2")
     assert previous_qualification_stop({"id": alias, **SCIENCE}, history) is not None
     with patch.dict("os.environ", {"THEORY_MASTER_SUPERVISOR": "0"}):

@@ -19,6 +19,7 @@ ROLE_SKILLS: dict[str, tuple[str, ...]] = {
     "attention_reviewer": (),
     "runtime_supervisor": (),
     "incident_supervisor": (),
+    "system_assistant": (),
     "research_chat": (
         "research-progress", "research-discussion", "research-intervention",
         "research-evidence", "research-next-steps", "research-preparation",
@@ -215,6 +216,8 @@ def skill_prompt_block(
     *,
     task_config_path: Path | None = None,
 ) -> str:
+    if role == "system_assistant":
+        return "Use the live shared Codex skill catalog supplied with each turn; read applicable original SKILL.md files on demand."
     refs = role_skills(role, root, task_config_path=task_config_path)
     if not refs:
         return (

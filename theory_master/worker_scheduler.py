@@ -22,7 +22,8 @@ def _recover_proposal_gate(root: Path) -> dict[str, Any] | None:
 
 def schedule_once(spec: Any, *, resource_slots: int,
                   preferred_hypothesis: str | None = None,
-                  eligible_worker_ids: frozenset[str] | None = None) -> dict[str, Any]:
+                  eligible_worker_ids: frozenset[str] | None = None,
+                  supervisor_recovery_only: bool = False) -> dict[str, Any]:
     """One bounded allocation transaction; each Worker independently owns 1 Cycle.
 
     Workers claim Cycles, not historical H: capacity never depends on active
@@ -54,6 +55,30 @@ def schedule_once(spec: Any, *, resource_slots: int,
         sharing = worker_routes._share_enabled(root)
         active = worker_store._living_workers(root)
         woken, dormant, direction = worker_direction._partition_waiting_workers(spec, worker_store.list_workers(root))
+        recovery_quota = None
+        if supervisor_recovery_only:
+            from .supervisor_activation import worker_recovery_ready
+            from .supervisor_intervention import supervisor_enabled
+            from .worker_mode import read_mode
+            mode = read_mode(root)
+            targets = frozenset(worker["worker_id"] for worker in woken
+                                if worker_recovery_ready(root, worker))
+            if not supervisor_enabled(root) or (mode["configured"] and not mode["enabled"]) or not targets:
+                return {"started": [], "reason": "supervisor_recovery_target_changed", **notes}
+            eligible_worker_ids = (targets if eligible_worker_ids is None
+                                   else eligible_worker_ids & targets)
+            quota_path = root / ".theory-master" / "worker_scheduler.json"
+            quota = multi_worker._read_json(quota_path)
+            if quota.get("quota_mode") == "per_worker":
+                counts = quota.get("cycles_started_by_worker")
+                if (not isinstance(counts, dict)
+                        or any(type(count) is not int or count < 0 for count in counts.values())):
+                    return {"started": [], "reason": "worker_recovery_quota_unavailable", **notes}
+                eligible_worker_ids = frozenset(worker for worker in eligible_worker_ids
+                                                if worker in counts and counts[worker] < spec.max_cycles)
+                if not eligible_worker_ids:
+                    return {"started": [], "reason": "cycle_budget_exhausted", **notes}
+                recovery_quota = (quota_path, quota, counts)
         preferences = worker_routes.worker_account_preferences(root)
         occupied_accounts = {w.get("account") for w in [*active, *dormant] if w.get("account")}
         account_required = any(a is not None for a in accounts)
@@ -98,6 +123,8 @@ def schedule_once(spec: Any, *, resource_slots: int,
                 available_accounts.remove(account)
             chosen_ids.add(worker)
             claim = None
+            launch_attempted = False
+            launch_accepted = False
             try:
                 try:
                     claim = registry.claim_cycle(worker)
@@ -113,6 +140,7 @@ def schedule_once(spec: Any, *, resource_slots: int,
                     env["THEORYMASTER_WORKER_CODEX_HOME"] = str(home)
                     env["THEORYMASTER_WORKER_PINNED_ACCOUNT"] = account
                 wake = woken_by_id.get(worker)
+                input_wake = (wake or {}).get("input_support_wake")
                 if wake is not None:
                     retry_path = worker_direction._retry_direction_path(root, worker)
                     retry = worker_direction._pending_retry_direction(root, worker)
@@ -124,20 +152,31 @@ def schedule_once(spec: Any, *, resource_slots: int,
                             target_h_id=None, entry_node_id=None,
                             claim_id=claim["claim_id"], epoch=claim["fencing_epoch"],
                             account=account, current_cycle=None,
+                            pid=None, pid_start_ticks=None,
                             resource_slots_configured=resource_slots,
                             error_kind=None, critical_knowledge_notice=None, heartbeat_at=None,
                             wake_fingerprint=None, waiting_since=None,
+                            input_support_admission=({**input_wake, "claim_id": claim["claim_id"],
+                                "epoch": claim["fencing_epoch"]} if input_wake else None),
                             last_wake_reason=(wake or {}).get("wake_reason"))
                 output = open(directory / "runner.log", "a", encoding="utf-8")
                 try:
                     args = [sys.executable, "-m", "theory_master.worker_runtime", "run-one",
                             "--research-root", str(root), "--worker", worker,
                             "--claim-id", claim["claim_id"], "--epoch", str(claim["fencing_epoch"])]
+                    launch_attempted = True
                     worker_launch._launch_detached_service(args, root=root, env=env, output=output, kind=worker)
+                    launch_accepted = True
                 finally:
                     output.close()
                 # The scope runner registers its own real PID. Never overwrite
                 # that with the short-lived systemd-run launcher PID.
+                if recovery_quota is not None:
+                    quota_path, quota, counts = recovery_quota
+                    counts[worker] += 1
+                    multi_worker._save_json(quota_path, {**quota, "cycles_started_by_worker": counts,
+                        "cycles_started": sum(counts.values()),
+                        "resume_batch": any(count < spec.max_cycles for count in counts.values())})
                 current = worker_store.read_worker(root, worker)
                 if current.get("status") == "RESERVED":
                     worker_store.save_worker(root, worker, status="STARTING", pid=None, pid_start_ticks=None)
@@ -149,10 +188,13 @@ def schedule_once(spec: Any, *, resource_slots: int,
                 # If no child was created, safely undo the reservation. Once
                 # Popen succeeded the OS child may be doing science and must
                 # retain the claim even if our registry update fails.
-                if worker_store.read_worker(root, worker).get("pid") is None and claim is not None:
+                current = worker_store.read_worker(root, worker)
+                if claim is not None and not launch_accepted and (not launch_attempted or current.get("pid") is None):
                     try:
                         registry.update(worker, claim["claim_id"], claim["fencing_epoch"], action="release")
-                        worker_store.save_worker(root, worker, status="FAILED_START", claim_id=None, epoch=None)
+                        if current.get("claim_id") == claim["claim_id"]:
+                            worker_store.save_worker(root, worker, status="FAILED_START", claim_id=None,
+                                                     epoch=None, pid=None, pid_start_ticks=None)
                     except (OSError, ValueError):
                         pass
                 raise
@@ -268,6 +310,23 @@ def scheduler_worker_ids(root: Path, desired: int) -> tuple[str, ...]:
     return tuple(names)
 
 
+def _acquire_scheduler_owner(root: Path, lock: Any) -> bool:
+    """Give an explicitly started Scheduler time to outwait a Worker SPV tick."""
+    from . import multi_worker, runtime_manager
+    deadline = time.monotonic() + 5
+    while True:
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            owner = multi_worker._read_json(root / ".theory-master" / "worker_supervisor.json")
+            if (not runtime_manager.process_identity_alive(owner.get("pid"), owner.get("start_ticks"))
+                    or time.monotonic() >= deadline):
+                return False
+            time.sleep(0.05)
+        else:
+            return True
+
+
 def scheduler_daemon(spec: Any, slots: int, preferred: str | None = None) -> int:
     """Poll Canvas at Cycle boundaries, assigning new independent Worker processes."""
     from . import multi_worker, runtime_manager, worker_preservation, worker_quota, worker_state, worker_store
@@ -275,9 +334,7 @@ def scheduler_daemon(spec: Any, slots: int, preferred: str | None = None) -> int
     lock_file = root / ".theory-master" / "scheduler_owner.lock"
     lock_file.parent.mkdir(parents=True, exist_ok=True)
     with open(lock_file, "a+", encoding="utf-8") as lock:
-        try:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+        if not _acquire_scheduler_owner(root, lock):
             return 0  # Another daemon already owns the pool
         metadata_path = root / ".theory-master" / "worker_scheduler.json"
         source_provenance = runtime_manager.runtime_source_provenance()

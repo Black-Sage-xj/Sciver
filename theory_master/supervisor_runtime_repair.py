@@ -98,6 +98,10 @@ def _snapshot(package: Path) -> dict[str, str]:
 def _invoke_codex(sandbox: Path, model: str, prompt: str) -> tuple[bool, str]:
     binary = shutil.which("codex")
     if not binary:
+        preferred = Path.home() / "bin" / "codex.real"
+        if preferred.is_file() and os.access(preferred, os.X_OK):
+            binary = str(preferred)
+    if not binary:
         return False, "Codex executable unavailable."
     cmd = [
         binary, "exec", "--sandbox", "workspace-write", "--skip-git-repo-check",

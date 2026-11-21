@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import unittest
@@ -11,6 +12,43 @@ import theory_master.__main__ as cli
 
 
 class ForegroundCliTest(unittest.TestCase):
+    def test_protected_resume_enters_bound_sdk_before_any_local_execution(self):
+        root = Path("/fixture/current-task")
+        config = root / "theory-master.config.json"
+        spec = SimpleNamespace(task_mode=True, research_root=root, config_path=config, master_id=47)
+        target = Path("/fixture/reviewed-sdk")
+        env = {"PATH": "/fixture/helper:/usr/bin", "PYTHONPATH": str(target)}
+        binding = SimpleNamespace(sdk_root=target, environment=lambda *, protected: env)
+        argv = ["sciver", "resume", "47", "--foreground", "--no-error-repair"]
+
+        with (patch.object(sys, "argv", argv),
+              patch.object(cli, "spec_from_task", return_value=spec),
+              patch("theory_master.operator_host_binding.protected_launch_binding", return_value=binding) as bind,
+              patch.object(cli, "create_load_snapshot") as snapshot,
+              patch.object(os, "execve", side_effect=SystemExit(19)) as execute):
+            with self.assertRaises(SystemExit) as switched:
+                cli.main()
+
+        self.assertEqual(switched.exception.code, 19)
+        bind.assert_called_once_with(config)
+        snapshot.assert_not_called()
+        execute.assert_called_once_with(sys.executable,
+                                        [sys.executable, "-P", "-m", "theory_master", *argv[1:]], env)
+
+    def test_local_protected_cli_preserves_working_directory_and_provides_helper(self):
+        working_directory = Path.cwd()
+        source = Path(cli.__file__).resolve().parents[1]
+        env = {"PATH": "/fixture/helper:/usr/bin", "PYTHONSAFEPATH": "1"}
+        binding = SimpleNamespace(sdk_root=source, environment=lambda *, protected: env)
+        with (patch("theory_master.operator_host_binding.protected_launch_binding", return_value=binding),
+              patch.object(os, "execve") as execute,
+              patch.dict(os.environ, {"PATH": "/usr/bin"})):
+            cli._prepare_protected_cli(SimpleNamespace(config_path=Path("config.json")))
+            self.assertEqual(os.environ["PATH"], "/fixture/helper:/usr/bin")
+            self.assertEqual(os.environ["PYTHONSAFEPATH"], "1")
+            self.assertEqual(Path.cwd(), working_directory)
+        execute.assert_not_called()
+
     def test_task_mode_foreground_uses_headless_runner_in_current_process(self):
         with tempfile.TemporaryDirectory() as temp:
             research_root = Path(temp) / "research"

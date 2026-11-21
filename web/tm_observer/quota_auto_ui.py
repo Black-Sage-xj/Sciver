@@ -121,19 +121,26 @@ def quota_auto_card(raw: Any, *, settings_html: str = "", quota_switch_html: str
     poll = raw.get("next_check_in_s")
     interval = ('<span>自动检查间隔 <strong>约 ' + str(poll) + ' 秒</strong></span>'
                 if status == "waiting_refresh" and type(poll) is int and 1 <= poll <= 86400 else '')
+    title = (
+        '<button type="button" class="tm-setting-title-action" data-setting-open="quota_auto_adjust" '
+        'aria-controls="tm-setting-detail-box" aria-expanded="false">额度自调</button>'
+        if settings_html else '<span class="tm-quota-auto-name">额度自调</span>'
+    )
+    card_attr = ' data-setting-card="quota_auto_adjust"' if settings_html else ''
+    toolbar_class = ('tm-quota-auto-toolbar' if settings_html else
+                     'tm-quota-auto-toolbar tm-quota-auto-toolbar-single')
     return (
         '<section class="tm-quota-auto ' + tone + '" data-tui-pane="quota-settings" '
         'aria-label="任务运行开关与额度状态">'
-        '<div class="tm-quota-auto-toolbar">'
-        '<div class="tm-quota-auto-overview tm-setting-card-surface" data-setting-card="quota_auto_adjust">'
+        '<div class="' + toolbar_class + '">'
+        '<div class="tm-quota-auto-overview tm-setting-card-surface"' + card_attr + '>'
         '<div class="tm-setting-compact-copy">'
         '<div class="tm-quota-auto-head"><span class="tm-quota-auto-dot" aria-hidden="true"></span>'
-        '<button type="button" class="tm-setting-title-action" data-setting-open="quota_auto_adjust" '
-        'aria-controls="tm-setting-detail-box" aria-expanded="false">额度自调</button>'
+        + title
         + _help_tooltip("quota-status",
                         "Supervisor 优先使用有额度的 Codex 账号；两个账号均耗尽时进入额度等待，额度恢复后自动续跑。只有拨动开关才能启停 Codex 额度管理，不会消费额度重置卡。")
         + '</div>'
-        '<strong class="tm-quota-auto-state">' + _escape(name) + '</strong>'
+        '<strong class="tm-quota-auto-state" data-setting-status="quota_auto_adjust">' + _escape(name) + '</strong>'
         '<div class="tm-quota-auto-facts">' + "".join(chips) + interval + '</div>'
         '</div>' + quota_switch_html + '</div>'
         + settings_html + '</div></section>'

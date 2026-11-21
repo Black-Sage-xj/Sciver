@@ -19,7 +19,7 @@ class ScientificQualification20261022(unittest.TestCase):
     def test_lead_compares_scientific_value_not_gate_bookkeeping(self):
         # Stage owns scientific criteria; Contract owns the two named output fields.
         for phrase in (
-            "consequential unmet Goal", "Final Gate", "linked supported Outcomes",
+            "consequential unmet Goal", "Final Gate", "linked terminal Outcomes",
             "closest live alternative", "inconclusive results",
             "Scientific Model", "Indispensable premises need a credible in-scope route",
         ):
@@ -66,7 +66,7 @@ class ScientificQualification20261022(unittest.TestCase):
     def test_contract_and_prompt_assembly_unchanged(self):
         lead_contract = role_contract("research_lead", phase="frontier_proposal")
         challenger_contract = role_contract("challenger", phase="candidate_review")
-        self.assertEqual(challenger_contract.version, 5)
+        self.assertEqual(challenger_contract.version, 6)
         self.assertEqual(
             set(lead_contract.prompt_schema["candidates"][0]) & {
                 "hypothesis", "scope", "why_now", "goal_advance", "decisive_test"
@@ -103,10 +103,10 @@ class ScientificQualification20261022(unittest.TestCase):
                 self.assertIn("closest prior claim and relevant simpler explanations or existing methods", prompt)
         self.assertIn("Do not reopen qualification", stage_card_text("research_lead", "candidate_selection"))
         self.assertIn("all original blockers are closed", stage_card_text("challenger", "repair_verification"))
-        # Delivery budgets include the current source/Goal review and input
-        # boundary rules; they do not test a model's scientific judgment.
-        self.assertLess(len(self.lead), 10000)
-        self.assertLess(len(self.challenger), 8000)
+        # The method-stage and source/model guards enlarged these definitions;
+        # keep a bounded budget without freezing the older smaller prompt size.
+        self.assertLess(len(self.lead), 12500)
+        self.assertLess(len(self.challenger), 10500)
 
     def test_synthetic_candidate_science_is_preserved_in_review_context(self):
         examples = (

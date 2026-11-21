@@ -204,6 +204,8 @@ class CanvasProjectionMixin:
                         "AND (title IS NOT ? OR summary IS NOT ?)",
                         (display_title, display_summary, h_id, display_title, display_summary),
                     )
+                from .evaluation_history import freeze_materials
+                freeze_materials(store, h_id, selected)
                 lock = state.setdefault("hypothesis_lock", {})
                 reasoning = store.record_research_transition(h_id, selected, frozen=lock.get("research_transition"))
                 if reasoning is not None and "research_transition" not in lock:
@@ -340,8 +342,9 @@ class CanvasProjectionMixin:
                 if isinstance(updates, list):
                     mapped = []
                     for index, item in enumerate(updates):
-                        if not isinstance(item, dict) or set(item) - {"hypothesis_id", "status", "reason"}:
-                            raise ValueError("Frontier maintenance may change only SQLite H status/reason")
+                        from .frontier_opportunity import OPPORTUNITY_FIELDS
+                        if not isinstance(item, dict) or set(item) - {"hypothesis_id", "status", "reason"} - OPPORTUNITY_FIELDS:
+                            raise ValueError("Frontier maintenance may change only SQLite H status/reason and opportunity details")
                         h_id = str(item.get("hypothesis_id") or "").strip()
                         status = str(item.get("status") or "").strip()
                         if not h_id or status not in {"active", "parked", "closed"}:
@@ -350,6 +353,7 @@ class CanvasProjectionMixin:
                             "hypothesis_id": h_id,
                             "status": status,
                             "reason": str(item.get("reason") or ""),
+                            **{key: item[key] for key in OPPORTUNITY_FIELDS if key in item},
                         })
                     store.set_frontiers_batch(mapped)
 

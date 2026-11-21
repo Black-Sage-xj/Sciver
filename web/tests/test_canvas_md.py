@@ -68,7 +68,7 @@ class CanvasMDTests(unittest.TestCase):
         self.research.mkdir(parents=True)
         self.ident = hashlib.sha256(str(self.research).encode()).hexdigest()[:16]
         self.run = {"observer_id": self.ident, "run_id": 1, "task_root": str(self.notebook),
-                    "research_root": str(self.research), "task_name": "research test"}
+                    "research_root": str(self.research), "task_name": "research test", "state": "COMPLETED"}
         self.state = {"runs": [self.run]}
         (self.notebook / "theory-master.config.json").write_text(
             json.dumps({"research_root": str(self.research),
@@ -568,6 +568,277 @@ console.log('trackpad pan/pinch assertions passed');
             self.assertTrue(payload['partial'])
             self.assertLessEqual(payload['scanned_bytes'], 65536)
             self.assertTrue(any(row['id'] == 'notes/large.md' for row in payload['results']))
+
+    def _final_report_fixture(self, name="report-import"):
+        folder = self.repo / name
+        frozen = folder / "sources/files"
+        frozen.mkdir(parents=True)
+        body = "# Completed toy comparison\n\n## Answer\nA bounded result. [[file:toy-data]]\n"
+        png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j2ioAAAAASUVORK5CYII=")
+        note = b"# Frozen supplement\n\n![Measured curve](../figures/measured.png)\n"
+        data = b'{"estimate": 1.5, "scope": "toy"}'
+        files = [("file:toy-data", data, ".json", "document", self.research / "1/workspace/result.json"),
+                 ("file:toy-note", note, ".md", "document", self.research / "1/workspace/docs/supplement.md"),
+                 ("file:toy-curve", png, ".png", "figure", self.research / "1/workspace/figures/measured.png"),
+                 ("file:toy-cycle-report", b"# Recorded Cycle report\n\nThe recorded toy comparison is bounded.\n", ".md", "document", self.notebook / "notes/outcomes/1.md")]
+        documents, figures, source_index = [], [], {}
+        for ref, raw, suffix, kind, original in files:
+            digest = hashlib.sha256(raw).hexdigest()
+            relative = "files/" + digest + suffix
+            (folder / "sources" / relative).write_bytes(raw)
+            row = {"id": ref, "source_ref": ref, "reference": str(original), "source_path": str(original),
+                   "frozen_path": relative, "sha256": digest, "frozen_sha256": digest,
+                   "size": len(raw), "status": "available", "kind": kind}
+            (figures if kind == "figure" else documents).append(row)
+            source_index[ref] = {"kind": kind, "id": ref}
+        source_index["H-0042"] = {"kind": "hypothesis", "id": "H-0042"}
+        source_index["notes/outcomes/1.md"] = {"kind": "document", "id": "file:toy-cycle-report"}
+        source_index["O-toy-1"] = {"kind": "outcome", "id": "O-toy-1"}
+        snapshot = {"fingerprint": "frozen-toy", "sources": {"research_root": str(self.research)},
+                    "goal_terminal": {"verdict": "passed"}, "documents": documents, "figures": figures,
+                    "source_index": source_index, "hypotheses": [{"id": "H-0042", "title": "Toy comparison"}],
+                    "outcomes": [{"id": "O-toy-1", "source_ref": "O-toy-1", "cycle_id": "1", "hypothesis_id": "H-0042",
+                                  "report_ref": "notes/outcomes/1.md", "title": "Toy comparison", "verdict": "supported"}]}
+        result = {"state": "ready", "snapshot_fingerprint": "frozen-toy",
+                  "report_sha256": hashlib.sha256(body.encode()).hexdigest()}
+        (folder / "report.md").write_text(body)
+        (folder / "report.json").write_text(json.dumps({"schema_version": "1", "title": "Toy final report", "markdown": body,
+            "selected_hypothesis_ids": ["H-0042"], "research_path": [{"hypothesis_id": "H-0042", "role": "main",
+                "explanation": "Compare the recorded toy measurements to answer the question.",
+                "outcome_ids": [], "source_refs": ["H-0042"]}]}))
+        (folder / "result.json").write_text(json.dumps(result))
+        (folder / "source-snapshot.json").write_text(json.dumps(snapshot))
+        (folder / "review.json").write_text('{"verdict":"pass","issues":[]}')
+        (folder / "trajectory.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"><text>H-0042</text></svg>')
+        (folder / "agent-runs").mkdir()
+        (folder / "agent-runs/private-input.json").write_text('"must not publish"')
+        return folder, png
+
+    def test_unfinished_task_has_no_report_metadata_or_document_access(self):
+        from unittest.mock import patch
+        route = f"/api/canvas-md/tasks/{self.ident}"
+        self.run["state"] = "LIVE"
+        with patch("tm_observer.final_report_routes.report_metadata") as metadata:
+            payload, _ = canvas_md_get(route + "/index", "", self.repo, self.state)
+            self.assertFalse(json.loads(payload)["final_report"]["task_complete"])
+            metadata.assert_not_called()
+        for action in ("final-report", "final-report-source"):
+            with self.subTest(action=action), self.assertRaises(ExplorerError) as error:
+                canvas_md_get(route + "/" + action, "", self.repo, self.state)
+            self.assertEqual(error.exception.status, 404)
+        with self.assertRaises(ExplorerError):
+            canvas_md_image_get(route + "/image", urlencode({"source": "final-reports/" + "a" * 64 + "/report.md", "path": "research-story.svg"}), self.repo, self.state)
+
+    def test_final_report_is_bound_to_task_and_reuses_document_api_shape(self):
+        from theory_master.final_report_publication import publish_report
+        route = f"/api/canvas-md/tasks/{self.ident}"
+        missing, _ = canvas_md_get(route + "/final-report", "", self.repo, self.state)
+        self.assertFalse(json.loads(missing)["available"])
+        self.assertFalse((self.research / ".theory-master/final-reports").exists())
+        folder, _ = self._final_report_fixture()
+        before = (folder / "report.md").read_bytes(), (self.notebook / "exploration.canvas").read_bytes()
+        published = publish_report(self.research, folder)
+        self.assertFalse((Path(published["directory"]) / "agent-runs").exists())
+        index, _ = canvas_md_get(route + "/index", "", self.repo, self.state)
+        self.assertEqual(json.loads(index)["final_report"]["version"], published["version"])
+        payload, status = canvas_md_get(route + "/final-report", "", self.repo, self.state)
+        report = json.loads(payload)
+        self.assertEqual(status, 200)
+        self.assertEqual(report["id"], f"final-reports/{published['version']}/report.md")
+        self.assertIn('class="research-lineage-image research-story-image"', report["content"])
+        self.assertIn('<img src="research-story.svg" width="420"', report["content"])
+        self.assertIn("研究主线概览", report["content"])
+        self.assertNotIn("实线为主前序", report["content"])
+        self.assertEqual(list(report["source_index"]), ["cycle:1"])
+        self.assertIn("[[cycle:1|Cycle 1]]", report["content"])
+        self.assertNotIn("[[file:toy-data]]", report["content"])
+        cycle, _ = canvas_md_get(route + "/final-report-source", urlencode({"version": published["version"], "ref": "cycle:1"}), self.repo, self.state)
+        self.assertEqual(json.loads(cycle)["title"], "Cycle 1")
+        self.assertIn("The recorded toy comparison is bounded", json.loads(cycle)["content"])
+        self.assertEqual(report["body_source_sha256"], hashlib.sha256(before[0]).hexdigest())
+        self.assertNotEqual(report["source_sha256"], report["body_source_sha256"])
+        source, _ = canvas_md_get(route + "/final-report-source", urlencode({"version": published["version"], "ref": "file:toy-data"}), self.repo, self.state)
+        self.assertIn("```json", json.loads(source)["content"])
+        self.assertIn('"estimate": 1.5', json.loads(source)["content"])
+        self.assertEqual(before, ((folder / "report.md").read_bytes(), (self.notebook / "exploration.canvas").read_bytes()))
+
+    def test_final_report_images_use_frozen_report_and_original_reference_aliases(self):
+        from theory_master.final_report_publication import publish_report
+        folder, png = self._final_report_fixture()
+        published = publish_report(self.research, folder)
+        route = f"/api/canvas-md/tasks/{self.ident}"
+        source, _ = canvas_md_get(route + "/final-report-source", urlencode({"version": published["version"], "ref": "file:toy-note"}), self.repo, self.state)
+        document = json.loads(source)
+        self.assertTrue(document["id"].startswith(f"final-reports/{published['version']}/sources/files/"))
+        image, mime = canvas_md_image_get(route + "/image", urlencode({"source": document["id"], "path": "../figures/measured.png"}), self.repo, self.state)
+        self.assertEqual((image, mime), (png, "image/png"))
+        graph, mime = canvas_md_image_get(route + "/image", urlencode({"source": f"final-reports/{published['version']}/report.md", "path": "trajectory.svg"}), self.repo, self.state)
+        self.assertEqual(mime, "image/svg+xml")
+        self.assertIn(b"H-0042", graph)
+        self.assertFalse((self.research / "1/workspace/figures/measured.png").exists(), "live files were not needed")
+
+    def test_final_report_projects_linear_story_without_changing_frozen_report_or_diagram(self):
+        from theory_master.final_report_publication import _lineage_width, final_report_image, publish_report, read_final_report
+        folder, _ = self._final_report_fixture()
+        drawing = folder / "trajectory.svg"
+        drawing.write_text('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 214"><text>H-0042</text></svg>')
+        original = (folder / "report.md").read_bytes(), drawing.read_bytes()
+        publication = publish_report(self.research, folder)
+        report = read_final_report(self.research, version=publication["version"])
+        self.assertIn('<img src="research-story.svg" width="420"', report["content"])
+        self.assertIn('aria-label="研究主线图"', report["content"])
+        self.assertFalse((Path(publication["directory"]) / "research-story.svg").exists())
+        image, mime = final_report_image(self.research, report["id"], "research-story.svg")
+        self.assertEqual(mime, "image/svg+xml")
+        self.assertIn(b"Compare the recorded toy measurements", image)
+        self.assertNotEqual(image, original[1])
+        self.assertEqual(report["body_source_sha256"], hashlib.sha256(original[0]).hexdigest())
+        self.assertEqual(original, ((folder / "report.md").read_bytes(), drawing.read_bytes()))
+        self.assertEqual(_lineage_width(b'<svg viewBox="0 0 4000 800"/>'), 1600)
+        self.assertEqual(_lineage_width(b'<!DOCTYPE svg [<!ENTITY x "expanded">]><svg/>'), 800)
+
+    def test_final_report_rejects_unregistered_paths_and_cross_task_imports(self):
+        from theory_master.final_report_publication import publish_report
+        folder, _ = self._final_report_fixture()
+        with self.assertRaisesRegex(ValueError, "different task"):
+            publish_report(self.repo, folder)
+        publication = publish_report(self.research, folder)
+        source = f"final-reports/{publication['version']}/report.md"
+        route = f"/api/canvas-md/tasks/{self.ident}"
+        for target in ("../private.png", "agent-runs/private-input.json", "report.json", "%2e%2e/private.png", "%5cprivate.png"):
+            with self.subTest(target=target), self.assertRaises(ExplorerError):
+                canvas_md_image_get(route + "/image", urlencode({"source": source, "path": target}), self.repo, self.state)
+        with self.assertRaises(ExplorerError):
+            canvas_md_get(route + "/final-report-source", urlencode({"version": publication["version"], "ref": str(self.repo / "secret.txt")}), self.repo, self.state)
+        (Path(publication["directory"]) / "trajectory.svg").write_text("changed")
+        with self.assertRaises(ExplorerError):
+            canvas_md_image_get(route + "/image", urlencode({"source": source, "path": "trajectory.svg"}), self.repo, self.state)
+
+    def test_final_report_obsidian_images_keep_vault_relative_semantics(self):
+        from theory_master.final_report_publication import publish_report
+        folder, local_image = self._final_report_fixture()
+        snapshot = json.loads((folder / "source-snapshot.json").read_text())
+        snapshot["original_question"] = {"path": str(self.notebook / "research_plan.md")}
+        local = snapshot["figures"][0]
+        local["source_path"] = str(self.research / "1/workspace/docs/assets/curve.png")
+        local["reference"] = "assets/curve.png"
+        root_image = local_image + b"root-variant"
+        digest = hashlib.sha256(root_image).hexdigest()
+        (folder / "sources/files" / (digest + ".png")).write_bytes(root_image)
+        snapshot["figures"].append({**local, "id": "file:toy-vault-curve", "source_ref": "file:toy-vault-curve",
+            "source_path": str(self.notebook / "assets/curve.png"), "frozen_path": "files/" + digest + ".png",
+            "sha256": digest, "frozen_sha256": digest, "size": len(root_image)})
+        snapshot["source_index"]["file:toy-vault-curve"] = {"kind": "figure", "id": "file:toy-vault-curve"}
+        (folder / "source-snapshot.json").write_text(json.dumps(snapshot))
+        publication = publish_report(self.research, folder)
+        route = f"/api/canvas-md/tasks/{self.ident}"
+        payload, _ = canvas_md_get(route + "/final-report-source", urlencode({"version": publication["version"], "ref": "file:toy-note"}), self.repo, self.state)
+        source = json.loads(payload)["id"]
+        for vault, expected in (("0", local_image), ("1", root_image)):
+            image, _ = canvas_md_image_get(route + "/image", urlencode({"source": source, "path": "assets/curve.png", "vault": vault}), self.repo, self.state)
+            self.assertEqual(image, expected)
+
+    def test_final_report_discovers_only_internal_job_outputs_without_import_side_effects(self):
+        from theory_master.final_report_publication import final_report_descriptor, read_final_report
+        registry = self.research / ".theory-master/final-reports"
+        jobs = registry / "jobs"
+        jobs.mkdir(parents=True)
+        job_id = "a" * 64
+        job_path = jobs / (job_id + ".json")
+        job = {"schema": "sciver/final-report-job/v1", "job_id": job_id, "research_root": str(self.research),
+               "state": "queued", "updated_at": "2026-11-20T00:00:00+00:00"}
+        job_path.write_text(json.dumps(job))
+        queued = final_report_descriptor(self.research)
+        self.assertFalse(queued["available"])
+        self.assertEqual(queued["state"], "queued")
+        outside, _ = self._final_report_fixture("outside-report")
+        job.update(state="ready", output_dir=str(outside));job_path.write_text(json.dumps(job))
+        self.assertFalse(final_report_descriptor(self.research)["available"], "HTTP cannot trust external output_dir")
+        inside = registry / "versions" / job_id / "attempt-0001"
+        self._final_report_fixture(str(inside))
+        job["output_dir"] = str(inside);job_path.write_text(json.dumps(job))
+        ready = final_report_descriptor(self.research)
+        self.assertTrue(ready["available"])
+        self.assertIn("A bounded result", read_final_report(self.research)["content"])
+        self.assertFalse((registry / "publications").exists(), "read paths do not publish or write")
+
+    def test_final_report_job_regeneration_keeps_previous_readable_versions(self):
+        from theory_master.final_report_publication import final_report_descriptor, read_final_report
+        registry = self.research / ".theory-master/final-reports"
+        job_id = "b" * 64
+        first = registry / "versions" / job_id / "attempt-0001"
+        self._final_report_fixture(str(first))
+        jobs = registry / "jobs"; jobs.mkdir()
+        job_path = jobs / (job_id + ".json")
+        job = {"schema": "sciver/final-report-job/v1", "job_id": job_id, "research_root": str(self.research),
+               "state": "ready", "output_dir": str(first), "updated_at": "2026-11-20T00:00:00+00:00"}
+        job_path.write_text(json.dumps(job))
+        old_version = final_report_descriptor(self.research)["version"]
+        old_body = read_final_report(self.research, version=old_version)["content"]
+        job.pop("output_dir")
+        second = registry / "versions" / job_id / "attempt-0002"
+        second.mkdir()
+        (second / "status.json").write_text('{"state":"composing"}')
+        for state in ("queued", "running", "failed"):
+            job["state"] = state;job_path.write_text(json.dumps(job))
+            current = final_report_descriptor(self.research)
+            self.assertTrue(current["available"])
+            self.assertEqual(current["version"], old_version)
+            self.assertEqual(current["latest_job_state"], state)
+            self.assertEqual(read_final_report(self.research, version=old_version)["content"], old_body)
+        self._final_report_fixture(str(second))
+        body = (second / "report.md").read_text() + "\nA later clarified scope.\n"
+        (second / "report.md").write_text(body)
+        report = json.loads((second / "report.json").read_text());report["markdown"] = body
+        (second / "report.json").write_text(json.dumps(report))
+        result = json.loads((second / "result.json").read_text())
+        result.update(state="needs_revision", report_sha256=hashlib.sha256(body.encode()).hexdigest())
+        (second / "result.json").write_text(json.dumps(result))
+        job.update(state="needs_revision", output_dir=str(second));job_path.write_text(json.dumps(job))
+        current = final_report_descriptor(self.research)
+        self.assertEqual(current["state"], "needs_revision")
+        self.assertEqual(len(current["versions"]), 2)
+        self.assertIn(old_version, [row["version"] for row in current["versions"]])
+        self.assertEqual(read_final_report(self.research, version=old_version)["content"], old_body)
+
+    def test_final_report_job_discovery_rejects_untrusted_ids_and_symlink_attempts(self):
+        from theory_master.final_report_publication import final_report_descriptor
+        registry = self.research / ".theory-master/final-reports"
+        jobs = registry / "jobs";jobs.mkdir(parents=True)
+        outside, _ = self._final_report_fixture("external-attempt")
+        bad_id = "untrusted-job"
+        target = registry / "versions" / bad_id / "attempt-0001"
+        self._final_report_fixture(str(target))
+        job = {"schema": "sciver/final-report-job/v1", "job_id": bad_id, "research_root": str(self.research),
+               "state": "ready", "output_dir": str(target)}
+        (jobs / (bad_id + ".json")).write_text(json.dumps(job))
+        self.assertFalse(final_report_descriptor(self.research)["available"])
+        job_id = "c" * 64
+        symlink = registry / "versions" / job_id / "attempt-0001"
+        symlink.parent.mkdir()
+        symlink.symlink_to(outside, target_is_directory=True)
+        job.update(job_id=job_id, output_dir=str(symlink))
+        (jobs / (job_id + ".json")).write_text(json.dumps(job))
+        self.assertFalse(final_report_descriptor(self.research)["available"])
+
+    def test_final_report_versions_preserve_old_body_and_reject_changed_frozen_source(self):
+        from theory_master.final_report_publication import publish_report, read_final_report
+        folder, _ = self._final_report_fixture()
+        first = publish_report(self.research, folder)
+        self.assertEqual(publish_report(self.research, folder)["version"], first["version"])
+        old = read_final_report(self.research, version=first["version"])["content"]
+        body = (folder / "report.md").read_text() + "\nA clarified scope.\n"
+        (folder / "report.md").write_text(body)
+        report = json.loads((folder / "report.json").read_text()); report["markdown"] = body
+        (folder / "report.json").write_text(json.dumps(report))
+        result = json.loads((folder / "result.json").read_text());result["report_sha256"] = hashlib.sha256(body.encode()).hexdigest()
+        (folder / "result.json").write_text(json.dumps(result))
+        second = publish_report(self.research, folder)
+        self.assertNotEqual(second["version"], first["version"])
+        self.assertEqual(read_final_report(self.research, version=first["version"])["content"], old)
+        raw = next((folder / "sources/files").glob("*.json"));raw.write_text("changed")
+        with self.assertRaisesRegex(ValueError, "frozen report source changed"):
+            publish_report(self.research, folder)
 
 if __name__ == "__main__":
     unittest.main()

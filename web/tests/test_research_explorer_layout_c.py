@@ -36,7 +36,7 @@ def test_one_tree_graph_has_no_layout_switch_local_scope_or_per_node_controls():
     assert 'id="ex-edge-menu-title"' not in page
     assert 'id="ex-edge-menu-summary"' not in page
     assert 'border-radius:50%' in page
-    assert 'treeCoordinates(nodes,edges)' in page
+    assert 'SciverTreeLayout.treeCoordinates(nodes,' in page
     for retired in ('timelineCoordinates', 'setGraphLayout', 'setMode', 'latestScientificNodeId'):
         assert retired not in page
 

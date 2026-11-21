@@ -72,7 +72,7 @@ def _legacy_error_repair_flag(research_root: Path) -> bool | None:
 def supervisor_enabled(research_root: Path) -> bool:
     """Hot-read the switch; a legacy explicit OFF keeps old tasks closed."""
     root = Path(research_root)
-    for raw in (os.environ.get(KEY), _task_env_value(root, KEY)):
+    for raw in (_task_env_value(root, KEY), os.environ.get(KEY)):
         parsed = _parse(raw)
         if parsed is not None:
             return parsed
@@ -98,7 +98,7 @@ def write_supervisor_setting(research_root: Path, enabled: bool) -> Path:
     if output and output[-1].strip():
         output.append("")
     output.append(f"{KEY}={'1' if enabled else '0'}")
-    atomic(path, "\n".join(output).rstrip() + "\n")
+    atomic(path, "\n".join(output).rstrip() + "\n", sync_directory=True)
     return path
 
 

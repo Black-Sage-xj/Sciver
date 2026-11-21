@@ -10,6 +10,8 @@ Lead 负责提案、合格候选选择、Scientific Model 综合及既有 H 前�
 
 资格检查须区分执行所必需的输入与限制解释的假设。描述性关联不自动要求因果识别或总体推广的设计保证；Lead 不得悄悄强化 Goal。但候选自己设为不可缺少的条件也必须有现成来源或可信、有限且获授权的获取路径，不能以“之后核查，缺失就停止”替代可执行性。Challenger 在原审查和修订复核的既有必要条件范围内核查这些前提，不自行删除候选条件，也不提前索取 Investigator 的科研结果。真正缺少执行输入时仍保留非科研停止；冻结后不能靠改写条件继续。
 
+候选不可缺少的外部原文定义尚未取得时，Lead 在提出依赖该定义的候选前，使用现有 `needs_literature` / `targeted_source` 链，以具体 DOI 或 URL 为检索线索，要求所需原文段落及可访问程度。裸链接不是已取得的输入，也不自动成为仅做本地材料调查的 Investigator 可执行的获取路径。Challenger 原审和修订复核须核对实际执行者的权限与来源材料，不能仅凭文献网址放行。充分的本地材料无需外检，已有的有限获取路径仍可使用；一次 Literature detour 的上限、资料仍缺失时的如实收口及科学权威边界保持不变。这不要求所有 Cycle 检索，也不以本地缺失推断网站不可访问。
+
 qualified 进入已合格集合；selection 只选其中一个，不重开资格审查。revise 只允许一次保持原 hypothesis/scope/estimand 的有限修订，完整 decisive_test 必须包含所有绑定澄清；原 blocker ledger 是审计依据。Challenger 的修订复核只查原 blocker 和固定必要可行性条件，不能追加下一轮修复。cannot_repair 或 unresolved 不得被升级为合格，也不能进入 Investigator。
 
 Contract Repair 修正当前输出合同，只保留已建立且属于当前 Stage 权限的内容。候选 ID 和 blocker ID 仍是 SDK 封闭选项，不从旧线程或历史 Cycle 替换对象。Judge verdict 和 Hypothesis Lock 只在实际已存在的对应阶段作为固定来源，不凭格式修复创造。

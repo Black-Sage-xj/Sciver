@@ -68,6 +68,20 @@ def _safe_source_value(node: ast.AST, symbols: dict[str, ast.AST], stack: tuple[
             key = _safe_source_value(key_node, symbols, stack)
             result[key] = _safe_source_value(value_node, symbols, stack)
         return result
+    if isinstance(node, ast.DictComp) and len(node.generators) == 1:
+        generator = node.generators[0]
+        if not isinstance(generator.target, ast.Name) or generator.is_async or generator.ifs:
+            raise ValueError("schema comprehension requires one unconditional constant iterator")
+        values = _safe_source_value(generator.iter, symbols, stack)
+        if not isinstance(values, (list, tuple)) or len(values) > 100:
+            raise ValueError("schema comprehension requires a bounded constant sequence")
+        result = {}
+        for value in values:
+            if not isinstance(value, (str, int)):
+                raise ValueError("schema comprehension requires scalar constant names")
+            local = {**symbols, generator.target.id: ast.Constant(value=value)}
+            result[_safe_source_value(node.key, local, stack)] = _safe_source_value(node.value, local, stack)
+        return result
     if isinstance(node, ast.Name):
         name = node.id
         if name in stack:
@@ -97,11 +111,11 @@ def _safe_source_value(node: ast.AST, symbols: dict[str, ast.AST], stack: tuple[
 def _source_catalog(repo_root: Path | None = None) -> tuple[dict[tuple[str, str], dict[str, Any]], dict[tuple[str, str], dict[str, str]], dict[str, str]]:
     tm_root = _core_source_dir(repo_root)
     stage_symbols = _assignment_map(tm_root / "stage_registry.py")
-    display_source = tm_root / "hypothesis_display.py"
-    contract_symbols = {
-        **(_assignment_map(display_source) if display_source.is_file() else {}),
-        **_assignment_map(tm_root / "contract_stages.py"),
-    }
+    contract_symbols = {}
+    for filename in ("hypothesis_display.py", "evaluation_history.py", "goal_gaps.py", "contract_stages.py"):
+        source = tm_root / filename
+        if source.is_file():
+            contract_symbols.update(_assignment_map(source))
 
     cards_value = _safe_source_value(stage_symbols["STAGE_CARDS"], stage_symbols)
     labels_value = _safe_source_value(stage_symbols["ROLE_STAGE_LABELS"], stage_symbols)

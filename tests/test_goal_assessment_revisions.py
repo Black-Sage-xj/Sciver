@@ -150,18 +150,24 @@ def test_revision_metadata_is_all_or_none_and_canonical(db: Path, changes: dict)
 
 
 @pytest.mark.parametrize("verdict", [None, "open", "rejected"])
-def test_assessment_requires_a_supported_scientific_outcome(tmp_path: Path, verdict: str | None) -> None:
+def test_assessment_requires_a_committed_scientific_outcome(tmp_path: Path, verdict: str | None) -> None:
     with ScienceGraphStore(tmp_path / "graph.sqlite3") as store:
         store.add_hypothesis("H-0001")
         if verdict:
             store.append_outcome(outcome_id="cycle-outcome-1", hypothesis_id="H-0001",
                                  cycle_id="1", verdict=verdict)
-        with pytest.raises(ValueError, match="supported Cycle Outcome"):
+        if verdict is None:
+            with pytest.raises(ValueError, match="committed terminal Cycle Outcome"):
+                fail(store)
+            with pytest.raises(ValueError, match="committed terminal Cycle Outcome"):
+                seal(store)
+            assert store.goal_gate_history("1") == []
+            assert store.goal_terminal() is None
+        else:
             fail(store)
-        with pytest.raises(ValueError, match="supported Cycle Outcome"):
             seal(store)
-        assert store.goal_gate_history("1") == []
-        assert store.goal_terminal() is None
+            assert [x["verdict"] for x in store.goal_gate_history("1")] == ["not_passed", "passed"]
+            assert store.cycle_history("H-0001")[0]["verdict"] == verdict
 
 
 def test_passed_revision_and_seal_and_frontiers_rollback_together(db: Path, monkeypatch) -> None:

@@ -198,9 +198,40 @@ def _validate_checkpoint(source_cycle: Path, requested: str, source_spec: TaskSp
     return record, inputs
 
 
+def _replay_holdout(source_spec: TaskSpec, record: dict, inputs: Path) -> dict | None:
+    from .prequalification_holdout import holdout_files
+    from .research_inputs import _MAX_FILES
+
+    historical = holdout_files(inputs / "task_config.json")
+    current = holdout_files(source_spec.config_path)
+    if not historical and not current:
+        return None
+
+    external = (record.get("external_references") or {}).get("benchmark")
+    copied = inputs / "benchmark"
+    # A copied fixture would expose a second path outside the exact-file deny rules.
+    if (not external or "benchmark" not in record["source_sha256"]
+            or copied.exists() or copied.is_symlink()):
+        raise ValueError("protected replay requires a single verified external benchmark")
+    benchmark = Path(external)
+    if source_spec.benchmark_root != benchmark:
+        raise ValueError("current and frozen replay holdout benchmark roots differ")
+
+    pins = {}
+    for file in (*historical, *current):
+        if file.path != benchmark / file.reference.removeprefix("benchmark/"):
+            raise ValueError(f"replay holdout is outside the frozen benchmark: {file.reference}")
+        if pins.setdefault(file.reference, file.sha256) != file.sha256:
+            raise ValueError(f"conflicting replay holdout SHA-256: {file.reference}")
+    if len(pins) > _MAX_FILES:
+        raise ValueError("combined replay holdout exceeds the fixture pin limit")
+    return {"files": [{"reference": ref, "sha256": pins[ref]} for ref in sorted(pins)]}
+
+
 def replay_cycle(source_spec: TaskSpec, source_cycle: Path, requested: str, *, dry_run: bool = False,
                  backend_factory=None) -> dict[str, Any]:
     record, inputs = _validate_checkpoint(source_cycle, requested, source_spec)
+    holdout = _replay_holdout(source_spec, record, inputs)
     if dry_run:
         return {"status": "validated", "source_cycle": str(source_cycle), "checkpoint": record["name"], "stage": requested}
     lock_path = source_spec.research_root / ".cycle-replay.lock"
@@ -215,6 +246,8 @@ def replay_cycle(source_spec: TaskSpec, source_cycle: Path, requested: str, *, d
         if locked_record != record or locked_inputs != inputs:
             raise ValueError("checkpoint changed during replay preflight")
         record, inputs = locked_record, locked_inputs
+        if _replay_holdout(source_spec, record, inputs) != holdout:
+            raise ValueError("holdout policy changed during replay preflight")
         _assert_no_active_writer(source_spec)
         attempts_root = source_spec.research_root / ".cycle-replays" / str(record["logical_cycle"])
         attempts_root.mkdir(parents=True, exist_ok=True)
@@ -263,6 +296,8 @@ def replay_cycle(source_spec: TaskSpec, source_cycle: Path, requested: str, *, d
                            "max_cycles": 1})
             if benchmark_access is not None:
                 config["benchmark_root"] = str(benchmark_access)
+            if holdout is not None:
+                config["prequalification_holdout"] = holdout
             (task_home / "notes").mkdir(parents=True, exist_ok=True)
             config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             shutil.copy2(inputs / "scientific_model_state.json", runtime_root / "scientific_model_state.json")
@@ -341,6 +376,11 @@ def replay_cycle(source_spec: TaskSpec, source_cycle: Path, requested: str, *, d
                     benchmark_access if external_benchmark is not None else final_task / "benchmark"
                 )
             final_config.write_text(json.dumps(final_config_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            if _replay_holdout(source_spec, record, inputs) != holdout:
+                raise ValueError("holdout policy changed during replay preparation")
+            if holdout is not None:
+                from .prequalification_holdout import holdout_files
+                holdout_files(final_config)
             write_binding(final_task, final_config)
             write_binding(final_root, final_config)
             replay_cycle_id = None

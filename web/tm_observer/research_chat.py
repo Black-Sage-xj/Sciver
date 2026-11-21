@@ -25,7 +25,7 @@ from .research_chat_models import (
 )
 
 _ID = re.compile(r"[0-9a-f]{32}\Z")
-_MODES = {"migration", "frontier", "project", "preparation", "setup"}
+_MODES = {"migration", "frontier", "project", "preparation", "setup", "system"}
 _SCIENCE_EDGES = {"", "scientific_lineage", "hypothesis_evolution"}
 CHAT_SKILLS = ("research-progress", "research-discussion", "research-intervention",
                "research-evidence", "research-next-steps")
@@ -280,6 +280,10 @@ def _adopt_created_task(state_dir: Path, state: dict[str, Any], row: dict[str, A
 
 
 def _chat_skill(value: Any, mode: str) -> str | None:
+    if mode == "system":
+        if value is not None:
+            raise ResearchChatError("系统助手使用共享 Codex skills")
+        return None
     if mode == "preparation":
         if value is not None and value != PREPARATION_SKILL:
             raise ResearchChatError("筹备会话使用项目筹备功能")
@@ -328,6 +332,7 @@ def _message(record: dict[str, Any], role: str, content: str) -> None:
 
 
 _DEFAULT_TITLES = {
+    "system": "系统排障",
     "setup": "建立科研项目",
     "migration": "从已有工作迁移",
     "frontier": "了解研究前沿",
@@ -351,7 +356,7 @@ def _auto_title(content: str, mode: str) -> str:
 def _maybe_set_auto_title(record: dict[str, Any], content: str, *, before_index: int | None = None) -> None:
     """Name the first user turn unless the operator has explicitly named the session."""
     mode = str(record.get("mode") or "")
-    if mode not in {"project", "frontier", "preparation"} or record.get("title_source") == "manual":
+    if mode not in {"project", "frontier", "preparation", "system"} or record.get("title_source") == "manual":
         return
     title_source = record.get("title_source")
     current_title = str(record.get("title") or "")
@@ -540,7 +545,7 @@ def create(state_dir: Path, state: dict[str, Any], payload: dict[str, Any]) -> d
         raise ResearchChatError("建立新项目时无需选择已有任务")
     if mode == "preparation" and task_id:
         raise ResearchChatError("项目筹备不能绑定已有任务")
-    if mode not in {"migration", "preparation", "setup"} and _task(state, task_id) is None:
+    if mode not in {"migration", "preparation", "setup", "system"} and _task(state, task_id) is None:
         raise ResearchChatError("请选择现有任务", 404)
     if task_id and _task(state, task_id) is None:
         raise ResearchChatError("任务不存在", 404)
@@ -693,6 +698,7 @@ def _plan(goal: str, directory: Path, work_context: str = "") -> str:
 
 
 def _invoke_chat(backend: Any, prompt: str, model: str, *, thread_id: str | None = None,
+                 role: str = "research_chat",
                  on_delta: Any = None,
                  cancel_event: threading.Event | None = None, on_event: Any = None,
                  on_handle: Any = None, input_images: list[str] | None = None,
@@ -712,15 +718,15 @@ def _invoke_chat(backend: Any, prompt: str, model: str, *, thread_id: str | None
         if name in parameters:
             kwargs[name] = value
     from theory_master.supervisor_intervention import DEFAULT_PROVIDER
-    return invoke("research_chat", prompt, thread_id, model, DEFAULT_PROVIDER, **kwargs)
+    return invoke(role, prompt, thread_id, model, DEFAULT_PROVIDER, **kwargs)
 
 
-def _chat_routes(model: str, reasoning_effort: str) -> dict[str, Any]:
+def _chat_routes(model: str, reasoning_effort: str, role: str = "research_chat") -> dict[str, Any]:
     """Build a session-scoped Codex route without changing global TM agent routes."""
     from theory_master.backend_config import RoleRoute
     from theory_master.supervisor_intervention import DEFAULT_PROVIDER
 
-    return {"research_chat": RoleRoute(model, DEFAULT_PROVIDER, model_vendor="openai",
+    return {role: RoleRoute(model, DEFAULT_PROVIDER, model_vendor="openai",
                                         reasoning_effort=reasoning_effort)}
 
 
@@ -888,8 +894,11 @@ def _model_reply(task: dict[str, Any] | None, row: dict[str, Any], backend: Any 
                  on_handle: Any = None, request_user_input: Any = None) -> str:
     model = str(row.get("model") or "gpt-6-sol")
     reasoning_effort = str(row.get("reasoning_effort") or "medium")
+    system_assistant = row.get("mode") == "system"
+    agent_role = "system_assistant" if system_assistant else "research_chat"
     from .research_chat_literature_flow import prepare_literature
-    literature_result = prepare_literature(state_dir, search_root, row, cancel_event=cancel_event, on_event=on_event)
+    literature_result = (None if system_assistant else
+                         prepare_literature(state_dir, search_root, row, cancel_event=cancel_event, on_event=on_event))
     context = ""
     selected_vault = None
     preparing = row.get("mode") == "preparation"
@@ -903,7 +912,7 @@ def _model_reply(task: dict[str, Any] | None, row: dict[str, Any], backend: Any 
                    + "\nWorkspace search root: " + str(search_root)
                    + "\nCurrent preparation snapshot (user-supplied data):\n"
                    + json.dumps(preparation, ensure_ascii=False)[:28000])
-    if task:
+    if task and not system_assistant:
         research_root = Path(str(task["research_root"]))
         action_task = {key: task.get(key) for key in ("observer_id", "task_root", "research_root")}
         task_root = None
@@ -953,7 +962,19 @@ def _model_reply(task: dict[str, Any] | None, row: dict[str, Any], backend: Any 
                         "Use the Task's current Plan, graph and Worker state for subsequent requests. "
                         "The frozen preparation is provenance only; earlier standalone pilot results are not Judge evidence. "
                         f"Task console: /run/{task['observer_id']}/\n")
-    if preparing or task:
+    if system_assistant:
+        from theory_master.codex_shared_skills import shared_skill_prompt
+        import theory_master
+        source_root = Path(theory_master.__file__).resolve().parent.parent
+        selected_vault = source_root
+        context = "System assistant workspace: " + str(source_root)
+        context += "\nObserver state directory: " + str(state_dir.resolve())
+        context += "\nWorkspace search_root: " + str(search_root)
+        if task:
+            context += "\nSelected diagnostic project paths: " + json.dumps({
+                key: task.get(key) for key in ("observer_id", "task_root", "research_root")}, ensure_ascii=False)
+        context += "\n\n" + shared_skill_prompt(source_root, *([search_root] if search_root else []))
+    if (preparing or task) and not system_assistant:
         from theory_master.document_conversion import load_settings
         try:
             settings = load_settings()
@@ -1085,7 +1106,10 @@ def _model_reply(task: dict[str, Any] | None, row: dict[str, Any], backend: Any 
             "Do not restart retrieval for the same message. Keep access limits local to affected claims.\n" \
             + json.dumps(literature_result, ensure_ascii=False)
     prompt = (
-        (preparation_policy if preparing else task_policy)
+        ("You are Sciver System Assistant. Diagnose and resolve the operator's system issue using local evidence. "
+         "Use the shared Codex skills below. Keep this system conversation independent from research discussions. "
+         "Do not change scientific state or launch research as a side effect. Reply in Chinese.\n\n"
+         if system_assistant else preparation_policy if preparing else task_policy)
         + ("For literature-dependent work, invoke the existing Literature Agent through "
            "python -m tm_observer.research_chat_literature --state-dir <bound state_dir> "
            "--search-root <bound search_root> --session <bound session_id> --query <bounded question> "
@@ -1104,7 +1128,7 @@ def _model_reply(task: dict[str, Any] | None, row: dict[str, Any], backend: Any 
            "available HTML article text. A Literature report does not authorize changing a Research Plan, "
            "Scientific Model, conjecture, graph verdict or starting research. Link the returned report_href "
            "when available; do not present local filesystem paths as working web links.\n\n"
-           if (preparing or task) and not literature_result else "")
+           if (preparing or task) and not system_assistant and not literature_result else "")
         + f"{_skill_context(row)}\n\n"
         f"Selected workspace evidence:\n{context or 'No selected Sciver task evidence was available.'}\n\n{conversation}"
     )
@@ -1120,18 +1144,19 @@ def _model_reply(task: dict[str, Any] | None, row: dict[str, Any], backend: Any 
             from theory_master.codex_accounts import account_root, runtime_home
             writable_roots = tuple(dict.fromkeys(
                 root.resolve() for root in (state_dir, search_root, runtime_home(), account_root()) if root is not None))
-            client = CodexBackend(cwd, routes=_chat_routes(selected_model, reasoning_effort),
+            client = CodexBackend(cwd, routes=_chat_routes(selected_model, reasoning_effort, agent_role),
                                   writable_roots=writable_roots)
         try:
             ensure_thread = getattr(client, "ensure_thread", None)
             if callable(ensure_thread):
                 from theory_master.supervisor_intervention import DEFAULT_PROVIDER
-                selected_thread = ensure_thread("research_chat", selected_thread,
+                selected_thread = ensure_thread(agent_role, selected_thread,
                                                 selected_model, DEFAULT_PROVIDER)
                 row["codex_thread_id"] = selected_thread
                 _write(_store(state_dir), row)
             returned_thread, answer = _invoke_chat(
                 client, request_prompt, selected_model, thread_id=selected_thread,
+                role=agent_role,
                 on_delta=on_delta, cancel_event=cancel_event,
                 on_event=on_event, on_handle=on_handle, input_images=input_images,
                 request_user_input=request_user_input,
@@ -1281,6 +1306,8 @@ def _send_unlocked(state_dir: Path, search_root: Path, state: dict[str, Any], id
         # A deliberate action request is previewed; ordinary discussion reaches the model.
         prefix = content.strip().split(" ", 1)[0].lower()
         if prefix in {"/direction", "/preference"}:
+            if row["mode"] == "system":
+                raise ResearchChatError("请在科研讨论中调整研究方向")
             if task is None:
                 raise ResearchChatError("请先选择任务", 400)
             _, canvas = _load_canvas(task)
@@ -1396,7 +1423,7 @@ def begin_send(state_dir: Path, search_root: Path, state: dict[str, Any], ident:
             _finish_run(root, row, "interrupted")
         edit_message_id = payload.get("edit_message_id")
         if edit_message_id is not None:
-            if row.get("mode") not in {"project", "frontier", "preparation"}:
+            if row.get("mode") not in {"project", "frontier", "preparation", "system"}:
                 raise ResearchChatError("当前会话类型不支持编辑后重发", 409)
             if not isinstance(edit_message_id, str) or not edit_message_id:
                 raise ResearchChatError("无效的待编辑消息")
@@ -1512,7 +1539,7 @@ def begin_retry(state_dir: Path, search_root: Path, state: dict[str, Any], ident
     """Retry an interrupted/failed project conversation without hiding the old turn."""
     root = _store(state_dir)
     row = _recover_selected_session(root, ident)
-    if row.get("mode") not in {"project", "frontier", "preparation"}:
+    if row.get("mode") not in {"project", "frontier", "preparation", "system"}:
         raise ResearchChatError("当前会话类型不支持自动重试，请重新提交最后一步", 409)
     run = row.get("active_run") if isinstance(row.get("active_run"), dict) else {}
     if run.get("status") not in {"interrupted", "error", "stopped"}:

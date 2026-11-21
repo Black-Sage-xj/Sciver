@@ -8,7 +8,7 @@ from .role_registry import BUDGET_ROLES, PATH_ANCHOR_ROLES, ROLES
 
 AUXILIARY_ROLES = frozenset({
     "semantic_annotator", "budget_reviewer", "attention_reviewer",
-    "runtime_supervisor", "incident_supervisor", "research_chat",
+    "runtime_supervisor", "incident_supervisor", "research_chat", "system_assistant",
 })
 
 
@@ -23,6 +23,8 @@ def identity_files(role: str) -> tuple[Path, ...]:
     if role not in ROLES and role not in AUXILIARY_ROLES:
         raise ValueError(f"unknown TheoryMaster role: {role}")
     root = identities_root()
+    if role == "system_assistant":
+        return (root / "system_assistant.md",)
     if role == "semantic_annotator":
         return (root / "semantic_annotator.md",)
     if role == "budget_reviewer":

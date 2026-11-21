@@ -10,6 +10,7 @@ from typing import Any
 from .display import direction_text
 from .evidence import adjudicable_manifest_records
 from .report_materials import material_index, normalize_report_images, report_materials
+from .report_material_tools import prepare_catalog
 from .outcome_guide import validate_graph_summary
 from .runtime import canvas_ts, write_json
 
@@ -68,6 +69,7 @@ class ReportingMixin:
         evidence_context = self._evidence_context()
         material_context = {**self._path_anchors(), "cycle_dir": str(self.cycle_dir), **evidence_context}
         materials = report_materials(material_context)
+        material_catalog = prepare_catalog(self.cycle_dir / "report_material_catalog.json", materials)
         evidence_refs = [
             str(item["evidence_id"])
             for item in adjudicable_manifest_records(evidence_context.get("evidence_manifest"))
@@ -81,6 +83,7 @@ class ReportingMixin:
             "scientific_model_version_in": state.get("scientific_model_version_in"),
             "scientific_model_version_out": state.get("scientific_model_version_out"),
             "evidence_refs": evidence_refs,
+            "report_material_catalog": material_catalog,
             # A terminal report closes this Cycle only.  The next Cycle owns
             # proposing and locking its own hypothesis.
             "evolution_candidates": [],

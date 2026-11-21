@@ -21,7 +21,7 @@ class QualificationReview:
     def __init__(self, session: QualificationSession):
         self.session = session
 
-    def stop_unqualified(self, reason: str, candidate_ids: list[str]):
+    def stop_unqualified(self, reason: str, candidate_ids: list[str], *, allow_retry: bool = True):
         attempts = list(self.session.state.get("qualification_attempts") or [])
         attempts.append(
             {
@@ -34,7 +34,8 @@ class QualificationReview:
         )
         self.session.state["qualification_attempts"] = attempts
         rounds = int(self.session.state.get("qualification_proposal_rounds") or 1)
-        if rounds < 3:
+        supervisor = self.session.state.get("supervisor_qualification") or {}
+        if allow_retry and rounds < 3 and not supervisor:
             self.session.state["qualification_proposal_rounds"] = rounds + 1
             self.session.state["qualification_status"] = "pending"
             self.session.state.get("role_outputs", {}).pop(
@@ -67,6 +68,23 @@ class QualificationReview:
             ] = True
             self.session.owner._persist(self.session.state)
             raise _ProposalRetry(reason)
+        if not supervisor:
+            from .supervisor_qualification_recovery import review_exhausted_frontier
+
+            stopped = {
+                **self.session.state,
+                "frontier_review": {"generated_candidates": list(self.session.frontier_by_id.values())},
+            }
+            alternative = review_exhausted_frontier(self.session, stopped)
+            if alternative is not None and alternative.get("candidates"):
+                raise _ProposalRetry("Supervisor selected a candidate for qualification")
+            supervisor = self.session.state.get("supervisor_qualification") or {}
+        if supervisor.get("status") == "proposed":
+            from .supervisor_qualification_recovery import mark_selection_not_qualified
+
+            mark_selection_not_qualified(self.session, reason)
+        elif supervisor.get("status") in {"waiting", "delivery_planned", "delivery_reviewed"}:
+            reason = supervisor["reason"]
         self.session.state.update(
             {
                 "status": "no_qualified_candidate",
@@ -82,7 +100,7 @@ class QualificationReview:
                 "attention": {
                     "code": "no_qualified_candidate",
                     "reason": reason,
-                    "requested_action": "This local qualification attempt is exhausted. The Task/Worker may hand back to a fresh Research Lead within the remaining Cycle budget; explicit operator stops and resource/runtime guards still apply.",
+                    "requested_action": "This local qualification attempt is exhausted. Automatic fresh-Lead retry is bounded at the same known research direction; repeated unchanged failure waits for new evidence/direction or explicit operator retry. Stop and resource/runtime guards still apply.",
                 },
             }
         )
@@ -92,6 +110,8 @@ class QualificationReview:
             "selected_candidate_id": None,
             "reviews": list(self.session.reviews_by_id.values()),
         }
+        if supervisor.get("wake_condition"):
+            self.session.state["attention"]["wake_condition"] = supervisor["wake_condition"]
         self.session.state["evolution_candidates"] = []
         self.session.state["selected_next_candidate_id"] = None
         self.session.state["next_start_node_id"] = None
@@ -111,7 +131,7 @@ class QualificationReview:
             self.session.state,
             "qualification.no_qualified_candidate",
             {
-                "rounds": 3,
+                "rounds": rounds,
                 "reason": reason,
                 "attempts": self.session.state.get("qualification_attempts"),
             },
@@ -155,6 +175,7 @@ class QualificationReview:
                         "scope",
                         "goal_advance",
                         "estimand",
+                        "evaluation_materials",
                         "transition",
                     )
                 )
@@ -432,6 +453,7 @@ class QualificationReview:
                     "repair_limit": 1,
                 },
                 "frontier_state": self.session.prior_frontier,
+                "research_contract": self.session.owner.spec.contract,
                 "required_context": self.session.owner.spec.required_context,
             },
         )

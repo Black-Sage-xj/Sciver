@@ -316,6 +316,58 @@ class RefactorGuardrailsTest(unittest.TestCase):
 
 
 class ReporterPresentationTest(unittest.TestCase):
+    def test_large_report_prompt_retains_verified_manifest_and_editorial_sources(self):
+        from theory_master.prompt_stages import build_initial_prompt
+        from theory_master.report_materials import REPORT_PROMPT_MATERIAL_LIMIT, compact_report_materials
+
+        def asset(relative, kind="document"):
+            return {"reference": "/tmp/report/" + relative, "relative_path": relative,
+                    "kind": kind, "status": "available", "sha256": "d" * 64}
+
+        arrays = [asset(f"replicates/{index}/原始数据.json") for index in range(4013)]
+        figure = {**asset("图.svg", "figure"), "image_ref": "/tmp/report/%E5%9B%BE.svg"}
+        summary = asset("summary.md")
+        script = asset("run.py", "script")
+        group = {"evidence_batch_id": "E-batch", "evidence_ids": ["E-1"], "relation": "same_invocation",
+                 "producer_invocation": {"invocation_id": "inv-6", "role": "investigator"},
+                 "manifest_path": "/task/research/6/invocation_artifacts/inv-6.json", "manifest_sha256": "a" * 64,
+                 "assets": [*arrays, figure, summary, script],
+                 "integrity": {"status": "verified", "checked_hashes": {row["reference"]: "d" * 64 for row in arrays}}}
+        materials = [group]
+        compact = compact_report_materials(materials)
+        entry = compact[0]
+        self.assertEqual(entry["manifest_path"], group["manifest_path"])
+        self.assertEqual(entry["manifest_sha256"], group["manifest_sha256"])
+        self.assertEqual(entry["asset_count"], len(group["assets"]))
+        self.assertEqual(entry["omitted_asset_count"], len(group["assets"]) - len(entry["assets"]))
+        self.assertTrue(all(item in entry["assets"] for item in (figure, summary, script)))
+        self.assertEqual(entry["integrity"]["checked_hashes_count"], len(arrays))
+        self.assertIn("checked_hashes", group["integrity"])
+        self.assertEqual(len(group["assets"]), len(arrays) + 3)
+        self.assertLessEqual(len(json.dumps(compact, ensure_ascii=False).encode()), REPORT_PROMPT_MATERIAL_LIMIT)
+
+        from theory_master.report_material_tools import prepare_catalog
+        with tempfile.TemporaryDirectory() as temp:
+            catalog = prepare_catalog(Path(temp) / "materials.json", materials)
+            context = stage_context("reporter", "report", {
+                "judge": {"verdict": "open", "rationale": "保留裁定"}, "report_material_catalog": catalog})
+            self.assertIn(figure["image_ref"], Path(catalog["path"]).read_text())
+        self.assertIn("command_prefix", context["report_materials"])
+        self.assertIn("read", context["report_materials"]["operations"])
+        self.assertEqual(context["judge_decision"]["rationale"], "保留裁定")
+        contract = role_contract("reporter", phase="report")
+        prompt = build_initial_prompt(prefix="Cycle 6", role="reporter", stage="report",
+                                      contract_ref=contract.contract_id, contract_schema=contract.prompt_projection(),
+                                      context=context, write_rule="No file writes.")
+        self.assertLess(len(prompt), 1_048_576)
+        self.assertIn("report_material_tools", prompt)
+
+        many_batches = [{**group, "assets": [summary], "evidence_batch_id": f"E-{index}"}
+                        for index in range(160)]
+        packed = compact_report_materials(many_batches)
+        self.assertLessEqual(len(json.dumps(packed, ensure_ascii=False).encode()), REPORT_PROMPT_MATERIAL_LIMIT)
+        self.assertEqual(packed[-1]["omitted_material_row_count"], len(many_batches) - len(packed) + 1)
+
     def test_registered_materials_preserve_eligibility_and_reporter_only_access(self):
         from theory_master.report_materials import report_materials
         from theory_master.prompt_stages import build_initial_prompt, build_continuation_prompt
@@ -334,8 +386,9 @@ class ReporterPresentationTest(unittest.TestCase):
                  "artifact_pointers": ["secret.svg"]},
             ]}}
             projected = stage_context("reporter", "report", context)
-            assets = projected["report_materials"]
-            self.assertEqual(assets, report_materials(context))
+            assets = report_materials(context)
+            self.assertEqual(projected["report_materials"]["overview"]["total_files"], 2)
+            self.assertNotIn("assets", projected["report_materials"])
             self.assertEqual([row["evidence_id"] for row in assets], ["E-good"])
             self.assertEqual([a["kind"] for a in assets[0]["assets"]], ["figure", "table"])
             self.assertEqual(assets[0]["assets"][0]["status"], "available")
@@ -353,7 +406,8 @@ class ReporterPresentationTest(unittest.TestCase):
                 self.assertIn("Do not write a reproduction index", prompt)
                 self.assertIn("three ordered sections", prompt)
                 self.assertIn("do not write a second conclusion summary", prompt)
-                self.assertIn(assets[0]["assets"][0]["image_ref"], prompt)
+                self.assertNotIn(assets[0]["assets"][0]["image_ref"], prompt)
+                self.assertIn("progressive disclosure", prompt)
 
     def test_missing_ambiguous_and_external_materials_are_explicit(self):
         from theory_master.report_materials import report_materials, normalize_report_images

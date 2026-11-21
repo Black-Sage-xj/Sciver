@@ -82,6 +82,7 @@ class FrontierMaintenanceContractTest(unittest.TestCase):
         contract = role_contract("research_lead", phase="frontier_maintenance")
         contract.validate({"updates": [{
             "hypothesis_id": "H-0001", "status": "parked", "reason": "await a discriminating test",
+            "remaining_question": "Which competing mechanism explains the difference?", "dependency": "Missing independent comparison",
         }]}, {"_known_hypothesis_ids": ["H-0001"]})
         with self.assertRaisesRegex(ValueError, "unsupported fields"):
             contract.validate({"updates": [{
@@ -102,7 +103,7 @@ class FrontierMaintenanceContractTest(unittest.TestCase):
         self.assertIn("Hypothesis 科学状态或前沿状态", identity)
         self.assertIn("下一 Cycle 的候选由 Research Lead 提出", identity)
         card = stage_card_text("research_lead", "frontier_maintenance")
-        self.assertEqual(set(role_contract("research_lead", phase="frontier_maintenance").prompt_schema["updates"][0]), {"hypothesis_id", "status", "reason"})
+        self.assertEqual(set(role_contract("research_lead", phase="frontier_maintenance").prompt_schema["updates"][0]), {"hypothesis_id", "status", "reason", "remaining_question", "dependency", "reopen_basis"})
 
 
 if __name__ == "__main__":

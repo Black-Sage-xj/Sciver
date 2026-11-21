@@ -10,7 +10,7 @@ import sys
 import pytest
 
 from theory_master.skills import skills_root
-from theory_master.scholarly_selection import _reconcile_locked_source, _source_lock_record
+from theory_master.scholarly_selection import _query_variants, _reconcile_locked_source, _source_lock_record
 
 
 def module(name):
@@ -40,6 +40,70 @@ def test_doi_uses_exact_provider_endpoint(monkeypatch, source, raw):
     monkeypatch.setattr(mod, "get_json", lambda url: {})
     with pytest.raises(ValueError, match="requested DOI"):
         mod.search(source, "10.1234/abc", 20)
+
+
+@pytest.mark.parametrize("hint", [
+    "DOI 10.1234/ABC",
+    "See https://doi.org/10.1234/ABC.",
+    "Primary paper (10.1234/ABC); verify its model definition.",
+])
+def test_targeted_source_keeps_exact_doi_hint_with_domain_context(hint):
+    queries = _query_variants("targeted_source", "lead-source-1",
+        "Verify the source Hamiltonian and localization observable", hint,
+        "Three-dimensional chiral topological Anderson transition")
+    assert queries[0] == "10.1234/abc"
+    assert len(queries) == len(set(queries)) <= 4
+    assert any("Anderson" in query for query in queries[1:])
+
+
+@pytest.mark.parametrize("hint,identifier", [
+    ("arXiv:2211.09999v2", "2211.09999"),
+    ("https://arxiv.org/html/2211.09999v2", "2211.09999"),
+    ("original arxiv cond-mat/0601234v2", "cond-mat/0601234"),
+])
+def test_targeted_arxiv_hint_survives_prose_compaction(hint, identifier):
+    assert _query_variants("targeted_source", "gap", "Verify model", hint,
+        "Anderson localization")[0] == identifier
+
+
+def test_explicit_source_hint_precedes_planned_queries_without_affecting_landscape():
+    planned = ["Anderson model definitions", "Anderson boundary conditions"]
+    assert _query_variants("targeted_source", "gap", "Verify model", "DOI 10.1234/ABC",
+        "Anderson localization", planned) == ["10.1234/abc", *planned]
+    assert _query_variants("landscape", "gap", "Survey models", "DOI 10.1234/ABC",
+        "Anderson localization", planned) == planned
+
+
+def test_targeted_title_hint_is_not_lost_when_domain_context_is_present():
+    queries = _query_variants("targeted_source", "gap", "Verify Hamiltonian",
+        "Anisotropic Topological Anderson Transitions in Chiral Symmetry Classes",
+        "Anderson localization")
+    assert any("Anisotropic Topological" in query for query in queries)
+
+
+def test_lead_shaped_source_request_delivers_exact_doi_to_host_transport(tmp_path):
+    from types import SimpleNamespace
+    from theory_master.scholarly_transport import retrieve_scholarly
+    queries = []
+
+    def runner(command, **kwargs):
+        output = Path(command[command.index("--output-dir") + 1])
+        output.mkdir(parents=True, exist_ok=True)
+        if Path(command[1]).name == "lit_retrieve.py":
+            query = command[command.index("--query") + 1]
+            queries.append(query)
+            rows = [paper()] if query == "10.1234/abc" else []
+            (output / "papers.json").write_text(json.dumps(rows))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    result = retrieve_scholarly({
+        "source_gap_id": "lead-source-1", "task_type": "targeted_source",
+        "search_target": "Verify the source model and its observable",
+        "new_search_lead": "DOI 10.1234/ABC", "domain_context": "Anderson localization",
+    }, tmp_path, runner=runner)
+    assert queries[0] == "10.1234/abc"
+    assert result["request_identity"]["request"]["search_queries"] == queries
+    assert json.loads(Path(result["papers_json"]).read_text())[0]["doi"] == "10.1234/abc"
 
 
 def paper(doi="10.1234/abc", **fields):

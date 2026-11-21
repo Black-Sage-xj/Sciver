@@ -60,6 +60,7 @@ class OfflineServer:
         self.state = None
         self.events = []
         self.request_error = None
+        self.rollout_path = None
 
     def request(self, method, params, **kwargs):
         self.calls.append((method, params))
@@ -81,7 +82,7 @@ class OfflineServer:
         self.calls.append(("read", thread_id))
         status = ActiveThreadStatus(type="active", active_flags=[]) if self.active else IdleThreadStatus(type="idle")
         return SimpleNamespace(thread=SimpleNamespace(id=thread_id, turns=[self.turn] if self.active else [],
-                                                      status=SimpleNamespace(root=status)))
+                                                      status=SimpleNamespace(root=status), path=self.rollout_path))
 
     def thread_goal_set(self, thread_id, **kwargs):
         self.calls.append(("set", kwargs))
@@ -103,6 +104,16 @@ class OfflineServer:
 
     def cancel_goal_operation(self, state):
         self.calls.append(("cancel", state.thread_id))
+
+    def pause_goal(self, thread_id):
+        assert thread_id == self.goal.thread_id
+        self.calls.append(("pause", thread_id))
+        self.goal = self.goal.model_copy(update={"status": ThreadGoalStatus.paused})
+
+    def turn_interrupt(self, thread_id, turn_id):
+        assert thread_id == self.goal.thread_id and turn_id == self.turn.id
+        self.calls.append(("interrupt", turn_id))
+        self.active = False
 
     def start_goal_operation(self, *args):
         pytest.fail("must never start/recreate the original Goal")
@@ -147,6 +158,41 @@ def test_same_goal_resume_keeps_identity_usage_context_and_original_handoff(tmp_
     assert sum(call[0] == "set" for call in server.calls) == (0 if active else 1)
     assert sum(call[0] == "unregister" for call in server.calls) == 1
     assert not any(call[0] == "cancel" for call in server.calls)
+
+
+@pytest.mark.parametrize("original_transcript", [True, False])
+def test_verified_quota_resume_wakes_the_same_usage_limited_goal(tmp_path, original_transcript):
+    from theory_master.retained_goal_quota import goal_rollout_identity
+
+    runner, backend, server, origin, handoff = runner_fixture(tmp_path, "usageLimited", False)
+    rollout = tmp_path / "original-rollout.jsonl"
+    rollout.write_text("original native Goal transcript fixture")
+    backend.retained_goal_home = SimpleNamespace(
+        thread_id=origin["thread_id"], account="2", provider="codex",
+        binding=goal_rollout_identity(str(rollout)),
+    )
+    server.rollout_path = str(rollout if original_transcript else tmp_path / "another-rollout.jsonl")
+    backend.retained_goal_delivered = False
+    backend.client_account = "2"
+    original = handoff.read_bytes()
+    server.complete()
+
+    if not original_transcript:
+        with pytest.raises(NativeGoalRecoveryConflict, match="original native Goal transcript"):
+            runner.run()
+        assert not any(call[0] == "set" for call in server.calls)
+        return
+    identifier, raw = runner.run()
+
+    assert identifier == origin["thread_id"]
+    assert "The original authored claim." in raw
+    assert handoff.read_bytes() == original
+    assert [call for call in server.calls if call[0] == "set"] == [
+        ("set", {"status": ThreadGoalStatus.active}),
+    ]
+    identity = backend.last_native_goal["persistent_goal"]
+    assert identity["created_at"] == 123 and identity["tokens_used"] == 12350
+    assert identity["objective_sha256"] == origin["objective_sha256"]
 
 
 def test_already_complete_delivers_original_artifact_without_new_turn(tmp_path):
@@ -239,6 +285,7 @@ def test_control_after_verified_registration_pauses_owned_original_before_unregi
     assert names.count("cancel") == names.count("unregister") == 1
     assert names.index("cancel") < names.index("unregister")
     assert "set" not in names
+    assert not server.active and server.goal.status == ThreadGoalStatus.paused
 
 
 def test_control_during_stream_cancels_once_and_preserves_original_file(tmp_path):
@@ -320,6 +367,17 @@ def test_audited_original_setup_is_found_without_changing_science(tmp_path):
     assert session.state == before
 
 
+def test_origin_prefers_exact_bound_audit_over_same_second_inputs(tmp_path):
+    session, record, expected = session_fixture(tmp_path)
+    audit = tmp_path / "runtime_events.jsonl"
+    original = [json.loads(row) for row in audit.read_text().splitlines()]
+    for row in original:
+        row.update(invocation_id=record["invocation_id"], thread_id=session.identifier)
+    unrelated = {**original[1], "invocation_id": "inv-1-investigator-other", "content": "Other objective"}
+    audit.write_text("".join(json.dumps(row) + "\n" for row in [*original, unrelated]))
+    assert find_native_goal_origin(session) == expected
+
+
 def test_preparation_reuses_only_explicit_original_path_and_records_binding(tmp_path):
     from theory_master.invocation_transport import InvocationTransport
     session, _, origin = session_fixture(tmp_path)
@@ -338,6 +396,83 @@ def test_preparation_reuses_only_explicit_original_path_and_records_binding(tmp_
     assert session.handoff_path.read_text().find("original authored") >= 0
     assert session.native_goal_origin == origin
     assert session.invocation_ledger.transition.call_args.kwargs["native_goal_origin"] == origin
+
+
+def test_pinned_quota_cannot_launch_without_audited_original_goal(tmp_path):
+    from theory_master.invocation_transport import InvocationTransport
+
+    session, _, origin = session_fixture(tmp_path)
+    session.role = "investigator"
+    session.route = SimpleNamespace(provider="CodexHTTPS")
+    goal = SimpleNamespace(thread_id=origin["thread_id"], provider="CodexHTTPS")
+    session.owner.backend = SimpleNamespace(
+        invoke_goal=MagicMock(), retained_goal_home=goal, retained_goal_delivered=False,
+    )
+    session.state["prompt_metrics"] = [{}]
+    session.native_preflight_goal = "Replacement objective is forbidden"
+    session.prompt_context = {"frozen_objective": SCIENCE}
+    session.skill_addendum = ""
+    session.contract.prompt_projection = lambda context: "fixture contract"
+    session.invocation_ledger.snapshots = lambda: []
+    with pytest.raises(NativeGoalRecoveryConflict, match="original Investigator Goal"):
+        InvocationTransport(session)._prepare_native_delivery()
+    session.owner.backend.invoke_goal.assert_not_called()
+
+
+@pytest.mark.parametrize("source", ["human", "supervisor_attention"])
+@pytest.mark.parametrize("reattaching", [False, True])
+def test_native_goal_guidance_consumption_requires_a_setup_turn(tmp_path, source, reattaching):
+    from theory_master.attention_guidance import load_attention_guidance, write_attention_guidance
+    from theory_master.invocation_transport import InvocationTransport
+
+    session, _, origin = session_fixture(tmp_path)
+    if not reattaching:
+        session.invocation_ledger.snapshots = lambda: []
+    guidance = write_attention_guidance(tmp_path, "Use the verified source before the test.", source=source)
+    session.pending_guidance = guidance
+    session.state.update(
+        prompt_metrics=[{}], operator_guidance=guidance, operator_guidance_pending=True,
+        attention_guidance=guidance,
+    )
+    session.role = "investigator"
+    session.route = SimpleNamespace(model="fixture-model", provider="CodexHTTPS")
+    session.continuation = True
+    session.prompt = "Ordinary continuation is not used for a Native Goal."
+    session.skill_binding = None
+    session.skill_addendum = ""
+    session.native_preflight_goal = "Current authorized objective"
+    session.prompt_context = {"frozen_objective": SCIENCE, "operator_guidance": {"text": guidance["text"]}}
+    session.contract.prompt_projection = lambda context: "fixture contract"
+    session.invocation_ledger.transition = MagicMock()
+    invoke_goal = MagicMock(return_value=(session.identifier, '{"findings":["Fixture result."]}'))
+    session.owner.backend = SimpleNamespace(invoke_goal=invoke_goal, last_native_goal={"status": "complete"})
+    session.owner.spec = SimpleNamespace(research_root=tmp_path)
+    session.owner.collector = None
+    session.owner._persist = MagicMock()
+    session.owner._emit = MagicMock()
+    transport = InvocationTransport(session)
+    transport._prepare_native_delivery()
+    with patch("theory_master.invocation_transport.budget_status", return_value={
+        "allowance_tokens": 100_000, "observed_tokens": 10_000,
+    }):
+        transport._invoke_initial()
+
+    sent = invoke_goal.call_args.kwargs
+    setup, _ = json.JSONDecoder().raw_decode(sent["context_prompt"])
+    if reattaching:
+        assert "operator_guidance" not in setup
+        assert sent["goal_objective"] == origin["objective"]
+        assert sent["handoff_path"] == origin["handoff_path"]
+        assert load_attention_guidance(tmp_path) == guidance
+        assert session.state["operator_guidance_pending"] is True
+        assert session.state["attention_guidance"] == guidance
+        session.owner._emit.assert_not_called()
+    else:
+        assert setup["operator_guidance"]["text"] == guidance["text"]
+        assert sent["goal_objective"] == session.native_preflight_goal
+        assert load_attention_guidance(tmp_path)["status"] == "consumed"
+        assert session.state["operator_guidance_pending"] is False
+        assert session.owner._emit.call_args.args[1] == "attention.guidance_consumed"
 
 
 def test_inherited_monitor_origin_is_rechecked_against_original_audit(tmp_path):

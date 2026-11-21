@@ -39,7 +39,8 @@ def get_chat(self, path: str, state: dict, ctx: RequestContext, services: RouteS
         from .research_chat_management import list_sessions
         params = parse_qs(self.path.partition("?")[2])
         rows = list_sessions(ctx.notes_state_dir, query=(params.get("q") or [""])[0],
-                             task_id=(params.get("task_id") or [""])[0], view=(params.get("view") or ["active"])[0])
+                             task_id=(params.get("task_id") or [""])[0], view=(params.get("view") or ["active"])[0],
+                             channel=(params.get("channel") or [""])[0])
         self._send(json.dumps({"sessions": rows}, ensure_ascii=False).encode(), "application/json; charset=utf-8")
         return True
     if path.startswith("/api/research-chat/"):
@@ -137,11 +138,16 @@ def get_chat(self, path: str, state: dict, ctx: RequestContext, services: RouteS
             selected = "__new__"
         try:
             from .research_chat_management import list_sessions
-            sessions = list_sessions(ctx.notes_state_dir)
+            channel = "system" if (query.get("channel") or [""])[0] == "system" else "research"
+            if selected and selected != "__new__":
+                record = services.research_chat_snapshot(ctx.notes_state_dir, state, selected).get("session") or {}
+                channel = "system" if record.get("mode") == "system" else "research"
+            sessions = list_sessions(ctx.notes_state_dir, channel=channel)
             if selected is None:
-                selected = next((row["id"] for row in sessions if row.get("mode") in {"project", "frontier"}), "__new__")
+                selected = next((row["id"] for row in sessions if row.get("mode") in {"project", "frontier", "system"}), "__new__")
             view = services.research_chat_snapshot(ctx.notes_state_dir, state, selected)
             view["sessions"] = sessions
+            view["channel"] = channel
         except ResearchChatError as exc:
             self._send((json.dumps({"error": str(exc)}, ensure_ascii=False) + "\n").encode("utf-8"),
                        "application/json; charset=utf-8", HTTPStatus(exc.status))

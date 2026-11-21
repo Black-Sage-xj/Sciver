@@ -12,7 +12,7 @@ def test_sqlite_detail_and_projection_are_separate_read_surfaces(tmp_path):
         store.add_hypothesis("H-0001", title="Frontier", summary="Authoritative claim")
         store.add_hypothesis("H-0002", title="Child", summary="Derived claim")
         store.add_evolution(edge_id="edge-1", source="H-0001", target="H-0002", operator="derive")
-        store.set_frontiers_batch([{"hypothesis_id":"H-0001","status":"active","reason":"current"}])
+        store.set_frontiers_batch([{"hypothesis_id":"H-0001","status":"active","reason":"current", "remaining_question": "Does this fixture H retain the specified scientific opportunity?"}])
         projection = canvas_projection(store)
         detail = store.agent_hypothesis_detail("H-0002")
         assert detail["claim"] == "Derived claim"

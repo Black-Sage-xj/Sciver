@@ -71,23 +71,31 @@ def _close_lead_literature_request(output: Mapping[str, Any]) -> dict[str, Any] 
     request = output.get("literature_request")
     if not isinstance(request, Mapping):
         return None
+    closed_request = {
+        key: str(request.get(key) or "").strip()
+        for key in (
+            "task_type", "search_target", "why_external_needed",
+            "expected_external_evidence", "new_search_lead",
+        )
+        if request.get(key) not in (None, "")
+    }
+    for key in ("search_queries", "relevance_terms"):
+        if key in request:
+            closed_request[key] = list(request[key])
     return {
         "needs_literature": True,
-        "literature_request": {
-            key: str(request.get(key) or "").strip()
-            for key in (
-                "task_type", "search_target", "why_external_needed",
-                "expected_external_evidence", "new_search_lead",
-            )
-            if request.get(key) not in (None, "")
-        },
+        "literature_request": closed_request,
     }
 
 
 def _close_frontier(output: Mapping[str, Any]) -> dict[str, Any]:
+    if "no_new_science" in output:
+        return {"no_new_science": dict(output["no_new_science"])}
     literature = _close_lead_literature_request(output)
     if literature is not None:
         return literature
+    if "blocking_reason" in output:
+        return {"candidates": [], "blocking_reason": str(output["blocking_reason"]).strip()}
     candidates: list[dict[str, Any]] = []
     for index, raw in enumerate(output.get("candidates") or [], 1):
         item = dict(raw)

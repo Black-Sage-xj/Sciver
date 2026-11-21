@@ -53,6 +53,44 @@ def script(ident: str) -> str:
       if (window.__tmAddAgentConsole) return;
       window.__tmAddAgentConsole = true;
       const ident = __TASK_ID__;
+      document.addEventListener('change', async event => {
+        const input = event.target.closest?.('.tm-worker-supervisor [data-setting-key="supervisor"]');
+        if (!input || input.disabled) return;
+        const nav = input.closest('.tm-worker-tabs');
+        const context = document.querySelector('[data-worker-request-context]');
+        const info = nav?.querySelector('[data-worker-feedback]');
+        const status = nav?.querySelector('[data-supervisor-status]');
+        if (!context) {
+          input.checked = !input.checked;
+          if (info) { info.hidden = false; info.textContent = '无法读取任务状态，请刷新页面。'; }
+          return;
+        }
+        const selected = input.checked;
+        input.disabled = true;
+        if (nav) nav.dataset.supervisorSaving = '1';
+        if (info) { info.hidden = false; info.textContent = '正在保存 Supervisor 设置…'; }
+        try {
+          const response = await fetch('/api/run/' + ident + '/action', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-TM-Operator-Intent': '1'},
+            body: JSON.stringify({action: 'supervisor', value: selected,
+              request_id: crypto.randomUUID().replace(/-/g, ''),
+              expected_cycle: context.dataset.cycle || '',
+              expected_status: context.dataset.status || '',
+              expected_launch_id: context.dataset.launch || ''})
+          });
+          const result = await response.json();
+          if (!response.ok || !result.ok) throw new Error(result.error || '保存失败');
+          if (status) status.textContent = (selected ? '开启' : '关闭') + ' · 当前任务';
+          if (info) info.textContent = 'Supervisor 已' + (selected ? '开启' : '关闭') + '。';
+        } catch (error) {
+          input.checked = !selected;
+          if (info) info.textContent = '保存失败：' + String(error.message || error) + '。请刷新任务状态后再试。';
+        } finally {
+          input.disabled = false;
+          if (nav) delete nav.dataset.supervisorSaving;
+        }
+      });
       document.addEventListener('click', async event => {
         const button = event.target.closest?.('[data-worker-add],[data-worker-cancel],[data-worker-close]');
         if (!button || button.disabled) return;

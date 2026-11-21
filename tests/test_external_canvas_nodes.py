@@ -8,7 +8,7 @@ def test_external_reference_edges_do_not_change_sqlite_scientific_frontier(tmp_p
     db = tmp_path / "science_graph.sqlite3"
     with ScienceGraphStore(db) as store:
         store.add_hypothesis("H-0005", title="Frontier H", summary="A scientific claim")
-        store.set_frontiers_batch([{"hypothesis_id": "H-0005", "status": "active", "reason": "test"}])
+        store.set_frontiers_batch([{"hypothesis_id": "H-0005", "status": "active", "reason": "test", "remaining_question": "Does this fixture H retain the specified scientific opportunity?"}])
         store.db.execute(
             "INSERT INTO external_records(id,content_type,source,title,content,created_at) VALUES (?,?,?,?,?,?)",
             ("E-0001", "StageSummary", "manual-evidence-preservation", "Summary", "summary text", "test"),

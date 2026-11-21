@@ -75,6 +75,7 @@ class WorkflowScienceMixin:
                 raise ValueError(f"blocking_issues is only valid for revise: {candidate_id}")
             normalized.append({"candidate_id": candidate_id, "verdict": verdict, "reason": reason,
                                **({"reviewed_science": review["reviewed_science"]} if "reviewed_science" in review else {}),
+                               **({"scientific_checks": review["scientific_checks"]} if "scientific_checks" in review else {}),
                                **({"blocking_issues": normalized_blocking} if verdict == "revise" else {})})
         missing = sorted(set(candidates) - seen)
         if missing:

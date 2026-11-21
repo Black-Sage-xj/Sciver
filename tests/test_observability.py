@@ -147,6 +147,21 @@ class ObservabilityTest(unittest.TestCase):
             self.assertNotIn("thread_id", recorded)
             self.assertNotIn("turn_id", recorded)
 
+    def test_thread_config_persists_verified_holdout_profile(self):
+        with tempfile.TemporaryDirectory() as temp:
+            spec, _ = self.make(Path(temp), reworks=0)
+            collector = Collector(spec)
+            run_dir = spec.research_root / "tm-0000-test-goal"
+            collector.start_run("tm-0000-test-goal", spec, run_dir=run_dir)
+            profile = "tm-prequalification-" + "a" * 64
+            collector.on_codex({"event": "THREAD_CONFIG", "thread_action": "start",
+                                "prequalification_holdout_profile": profile},
+                               role="research_lead", thread_id="guarded-thread")
+            recorded = next(event for event in collector.runtime_events(limit=0)
+                            if event.get("event") == "THREAD_CONFIG")
+            self.assertEqual(recorded["prequalification_holdout_profile"], profile)
+            self.assertEqual(recorded["thread_id"], "guarded-thread")
+
     def test_last_action_tracks_cycle_start_live_tool_and_rework_history(self):
         with tempfile.TemporaryDirectory() as temp:
             spec, _ = self.make(Path(temp), reworks=0)

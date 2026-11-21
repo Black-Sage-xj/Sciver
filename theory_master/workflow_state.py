@@ -225,6 +225,20 @@ class WorkflowStateMixin:
                     write_json(run_state_path, run_state)
         return budget
 
+    def submit_paused_goal_guidance(self, text: str, *, source: str) -> dict[str, Any]:
+        """Queue explicit technical correction for the original paused Goal."""
+        from .native_goal_guidance import queue_guidance
+
+        cycle = latest_cycle_dir(self.spec.research_root, task_mode=self.spec.task_mode)
+        if cycle is None:
+            raise ValueError("no Cycle available for paused Goal guidance")
+        return queue_guidance(cycle, text, source=source)
+
+    def resolve_approved_budget_dependency(self, *, reason: str) -> dict[str, Any]:
+        """Resolve an explicitly diagnosed blocked Goal using its existing grant."""
+        from .native_goal_budget_notice import resolve_review_dependency
+        return resolve_review_dependency(self,reason=reason)
+
     def submit_attention_guidance(
         self, text: str, *, source: str = "human",
         authorize_prequalification_restart: bool = False,
@@ -286,7 +300,7 @@ class WorkflowStateMixin:
         return self.set_supervisor(enabled)
 
     def set_supervisor(self, enabled: bool) -> dict[str, Any]:
-        """Hot-toggle the single Supervisor switch (runtime and science reviews)."""
+        """Hot-toggle Supervisor and request recovery of an eligible stopped task."""
         from .supervisor_intervention import write_supervisor_setting
 
         enabled = bool(enabled)
@@ -295,6 +309,11 @@ class WorkflowStateMixin:
         result: dict[str, Any] = {"enabled": enabled, "handoff": None}
         if cycle is None:
             return result
+        if enabled:
+            from .supervisor_activation import record_policy_hold
+            policy = record_policy_hold(cycle)
+            if policy is not None:
+                return {**result, "handoff": "sdk:takeover:policy_hold", "takeover": policy}
         run_state_path = cycle / "run_state.json"
         run_state: dict[str, Any] = {}
         if run_state_path.is_file():
@@ -312,15 +331,23 @@ class WorkflowStateMixin:
         run_state.setdefault("cycle_id", cycle.name)
         run_state.setdefault("run_id", cycle.name)
         if enabled and str(run_state.get('status') or '').upper() == 'NEEDS_ATTENTION':
-            # A stopped Cycle has no owning SDK Runner. Never start an external
-            # repair process from a hot setting toggle; normal managed resume
-            # enters the internal reviewer/recovery path.
+            # A scientific stop without a safe recovery route remains visible.
             result['handoff'] = 'sdk:pending_managed_resume'
             run_state['attention_takeover_handoff'] = {
                 'status': 'sdk_pending_resume', 'target': None, 'error': None,
             }
         if run_state:
             write_json(run_state_path, run_state)
+        if enabled:
+            from .supervisor_activation import request_stopped_takeover
+            try:
+                takeover = request_stopped_takeover(self.spec)
+            except (OSError, ValueError, RuntimeError) as error:
+                result.update(handoff="sdk:takeover_launch_failed",
+                              takeover={"status": "launch_failed", "reason": str(error)})
+            else:
+                if takeover is not None:
+                    result.update(handoff=f"sdk:takeover:{takeover['status']}", takeover=takeover)
         return result
 
     def quota_auto_adjust_enabled(self) -> bool:
@@ -599,6 +626,9 @@ class WorkflowStateMixin:
         return value if isinstance(value, dict) else {"action": "invalid"}
 
     def _check_recovery_control(self, state: dict[str, Any]) -> None:
+        delivery_control = getattr(self, "_delivery_reassessment_control", None)
+        if delivery_control is not None:
+            delivery_control()
         action = self._control_action()
         if not action:
             return
@@ -683,7 +713,7 @@ class WorkflowStateMixin:
                     "supervisor_authorized", "supervisor_declined", "hard_cap_reached"):
             budget[key] = current[key]
 
-    def _persist(self, state: dict[str, Any], *, project: bool = False) -> None:
+    def _persist(self, state: dict[str, Any], *, project: bool = False, sync_directory: bool = False) -> None:
         """Checkpoint research_state.json. Control-line Canvas is cycle-boundary only."""
         self._normalize_state_axes(state)
         self._sync_investigator_budget_usage(state)
@@ -725,7 +755,7 @@ class WorkflowStateMixin:
                 self.cycle_dir, incident=old_incident, lifecycle='resume_attempt',
                 source_event='workflow.persist', state_from=previous_status, state_to=status,
             )
-        write_json(self._state_path(), state)
+        write_json(self._state_path(), state, sync_directory=sync_directory)
         # The authoritative state checkpoint, not an optional Collector/TUI,
         # guarantees persistent NEEDS_ATTENTION and FAILED incident records.
         # This also captures intermediate stops before an in-SDK repair succeeds.
@@ -830,6 +860,7 @@ class WorkflowStateMixin:
         anchors = {
             "task_home": str(task_home),
             "note_area": str(self.spec.document.parent.resolve()),
+            "research_plan_path": str(self.spec.document.resolve()),
             "notes_vault_root": str(canvas.parent),
             "research_root": str(self.spec.research_root.resolve()),
             "branch_canvas": str(canvas),

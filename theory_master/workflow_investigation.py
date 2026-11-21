@@ -1055,6 +1055,7 @@ class InvestigationMixin:
         state["resource_disposition"] = (
             "operational_blocked" if kind == "literature_transport_blocked"
             else "input_support_unavailable" if kind == "input_support_unavailable"
+            else "authorization_pending" if kind == "authorization_pending"
             else "external_source_gap_unresolved" if kind == "external_artifact_source_unavailable"
             else "readiness_incomplete" if kind.startswith("readiness_incomplete")
             else "no_scientific_evidence"
@@ -1096,17 +1097,36 @@ class InvestigationMixin:
     ) -> tuple[dict[str, Any], str]:
         """Recheck persisted source bytes before consuming an interrupted delivery."""
         delivered = state["execution_limit_handoff"]
+        fixture_inputs = None
+        audit = delivered["execution_limit"].get("input_support_audit")
+        if audit is not None:
+            # Availability was checked before the native stop. A restored input
+            # can wake the archived dependency, while the pins remain fixed.
+            from .research_inputs import registered_fixture_inputs
+
+            refs = set(audit["fixture_references"])
+            fixture_inputs = registered_fixture_inputs(self.spec)
+            pins = [{key: row[key] for key in ("reference", "path", "size", "sha256")}
+                    for row in fixture_inputs if row["reference"] in refs]
+            if not pins or delivered.get("fixture_audit_pins") != pins:
+                raise ValueError("execution-limit fixture pins changed after boundary verification")
         limit = read_execution_limit_handoff(
             NativeGoalResult(str((state.get("native_goal") or {}).get("status") or ""),
                              str(delivered["thread_id"]), 0, 0),
             Path(delivered["handoff_path"]), invocation_id=str(delivered["invocation_id"]),
             frozen_objective_sha256=frozen_science_digest(state["hypothesis_lock"]),
             workspace_path=Path(self.cycle_workspace),
+            fixture_inputs=fixture_inputs,
+            check_fixture_availability=False,
         )
         if limit is None or limit != delivered["execution_limit"]:
             raise ValueError("persisted execution-limit delivery changed before execution closure")
+        if limit["kind"] == "authorization_pending":
+            if (limit["authorization_clause"] not in self.spec.contract
+                    or limit["deliverable_clause"] not in self.spec.final_gate):
+                raise ValueError("authorization hold is not bound to the reviewed Research Contract and Final Gate")
         return self._mark_non_scientific_closure(
-            state, branch, record, kind="input_support_unavailable", reason=limit["reason"],
+            state, branch, record, kind=limit["kind"], reason=limit["reason"],
             execution_limit=limit,
         )
 
@@ -1131,6 +1151,9 @@ class InvestigationMixin:
             "status": "over", "phase": "complete",
             "resumable": False, "execution_active": False,
         })
+        from .supervisor_input_support import capture_input_support_baseline
+
+        capture_input_support_baseline(self.spec, state)
         write_json(self.cycle_dir / "operational_closure.json", state.get("operational_only_closure") or {})
         self._emit(state, "operational.closure_recorded", {
             "kind": (state.get("operational_only_closure") or {}).get("kind"),

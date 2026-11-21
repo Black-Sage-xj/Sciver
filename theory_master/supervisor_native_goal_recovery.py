@@ -266,7 +266,7 @@ def _origin(cycle: Path, state: dict, inputs: dict[str, str]) -> tuple[dict, dic
     return origin, record
 
 
-def read_existing_goal(cycle: Path, origin: dict):
+def read_existing_goal(cycle: Path, origin: dict, *, require_idle: bool = False):
     """GET only: never load/resume a thread or start/activate/cancel its Goal."""
     try:
         from openai_codex import Codex, CodexConfig
@@ -274,7 +274,7 @@ def read_existing_goal(cycle: Path, origin: dict):
     except ImportError as exc:
         raise ValueError("official native Goal reader is unavailable") from exc
     from .codex_accounts import runtime_home
-    from .codex_sdk_compat import read_goal
+    from .codex_sdk_compat import read_goal, read_thread
 
     home = runtime_home().absolute()
     if home.is_symlink() or not (home / "config.toml").is_file():
@@ -283,7 +283,13 @@ def read_existing_goal(cycle: Path, origin: dict):
         with Codex(
             CodexConfig(env={"CODEX_HOME": str(home)}, cwd=str(cycle / "workspace"))
         ) as client:
-            return read_goal(client, origin["thread_id"])
+            thread_id = origin["thread_id"]
+            if require_idle:
+                observed = read_thread(client, thread_id, include_turns=False).thread
+                if (observed.id != thread_id
+                        or getattr(getattr(observed.status, "root", None), "type", None) != "idle"):
+                    raise ValueError("original native Goal thread is not idle")
+            return read_goal(client, thread_id)
     except CodexError as exc:
         raise ValueError("original native Goal GET is unavailable") from exc
 

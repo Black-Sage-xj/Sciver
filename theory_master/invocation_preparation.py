@@ -21,6 +21,10 @@ class InvocationPreparation:
         self.session = session
 
     def _prepare_thread(self):
+        from .boot_native_goal import pending_boot_native_goal
+        from .native_goal_recovery import NativeGoalRecoveryConflict
+
+        boot_pin = pending_boot_native_goal(self.session.owner.backend)
         self.session.threads = self.session.state.setdefault("threads", {})
         self.session.thread_providers = self.session.state.get(
             "runtime_thread_providers"
@@ -33,6 +37,9 @@ class InvocationPreparation:
         self.session.thread_key = self.session.owner._thread_key(
             self.session.state, self.session.actual
         )
+        if boot_pin is not None and (self.session.actual != "investigator"
+                or self.session.stage != boot_pin["stage"] or self.session.fresh_thread):
+            raise NativeGoalRecoveryConflict("Boot Resume did not reach the original Investigator stage")
         required = (self.session.context.get("submission_delivery") or {}).get("thread_id")
         if required and (self.session.fresh_thread or self.session.threads.get(self.session.thread_key) != required):
             from .submission_rework import _stop
@@ -46,10 +53,26 @@ class InvocationPreparation:
             self.session.thread_id = None
         else:
             self.session.thread_id = self.session.threads.get(self.session.thread_key)
-        self.session.owner._apply_pending_task_route(
-            self.session.state, self.session.actual, self.session.thread_id
-        )
+        qualify_thread = getattr(self.session.owner.backend, "qualification_thread", None)
+        if self.session.thread_id and callable(qualify_thread):
+            if qualify_thread(self.session.actual, self.session.thread_id) is None:
+                if boot_pin is not None:
+                    raise NativeGoalRecoveryConflict("Boot Resume lost the original Investigator thread")
+                self.session.threads.pop(self.session.thread_key, None)
+                self.session.thread_providers.pop(self.session.thread_key, None)
+                self.session.thread_id = None
+                self.session.fresh_thread = True
+        if boot_pin is None:
+            self.session.owner._apply_pending_task_route(
+                self.session.state, self.session.actual, self.session.thread_id
+            )
         self.session.route = self.session.owner.routes[self.session.actual]
+        if boot_pin is not None:
+            binding = boot_pin["account_binding"]
+            if (self.session.thread_id != boot_pin["thread_id"]
+                    or self.session.route.provider != binding["provider"]
+                    or self.session.route.model != binding["model"]):
+                raise NativeGoalRecoveryConflict("Boot Resume cannot replace the original Investigator thread or route")
         provider_failover = self.session.state.get("runtime_provider_failover")
         frozen_routes = self.session.state.get("runtime_role_routes")
         frozen_route = (
@@ -67,6 +90,8 @@ class InvocationPreparation:
             and isinstance(known_thread_provider, str)
             and (known_thread_provider != self.session.route.provider)
         ):
+            if boot_pin is not None:
+                raise NativeGoalRecoveryConflict("Boot Resume cannot change the original Investigator provider")
             if required:
                 from .submission_rework import _stop
                 _stop(self.session.owner, self.session.state, "The original Investigator provider changed; retain the thread and public submission gap without starting a new session.")

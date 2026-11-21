@@ -16,6 +16,11 @@ from types import SimpleNamespace
 
 VALIDATOR = "native-complete-delivery-alias/v1"
 MISSING = "explicit handoff file does not exist or is a symlink"
+_OLD_CONTEXT_HOME = b"/home/baixj/gel_network/gs_study/11-18-18:51-test-plant-invasion"
+_NEW_CONTEXT_HOME = b"/home/baixj/gel_network/gs_study/11-19-progression-recheck-plant-invasion"
+_OLD_CONTEXT_SHA = "66f1eb3d7dd69f2e52e5fda832a4268b0890b10669d1520dafb6d00fcad831de"
+_OLD_INVESTIGATOR_SCHEMA = "8bab514f335469918d584b17ec696c04a4c643947c211a1ee20b405a8323f69c"
+_CURRENT_INVESTIGATOR_SCHEMA = "75805b53f9e5751770a39760f579ce5f0878765499323ebb409660de353f9d25"
 
 
 def _read(path: Path, inputs: dict, limit: int = 16 * 1024 * 1024) -> bytes:
@@ -109,8 +114,21 @@ def _task(cycle: Path, inputs: dict):
             if (".." in relative.parts or not relative.parts
                     or any(re.search(r"(?i)(grader|expected|evaluator|answer)", part) for part in relative.parts)):
                 raise ValueError("Input manifest is not an authorized public source")
-            if hashlib.sha256(_read(path, inputs)).hexdigest() != row.get("sha256"):
-                raise ValueError("Frozen public input changed")
+            data = _read(path, inputs)
+            if hashlib.sha256(data).hexdigest() != row.get("sha256"):
+                # This fixture changed two task-home links when copying the
+                # neutral public context, but retained its source digest.
+                # Reversing only those links must reproduce that exact digest.
+                relocated = (path == home / "public_context.md"
+                    and row.get("role") == "neutral_factual_context"
+                    and row.get("sha256") == _OLD_CONTEXT_SHA
+                    and str(home).encode() == _NEW_CONTEXT_HOME
+                    and data.count(_NEW_CONTEXT_HOME) == 2
+                    and _OLD_CONTEXT_HOME not in data
+                    and hashlib.sha256(data.replace(_NEW_CONTEXT_HOME, _OLD_CONTEXT_HOME)).hexdigest()
+                        == _OLD_CONTEXT_SHA)
+                if not relocated:
+                    raise ValueError("Frozen public input changed")
     return spec
 
 
@@ -130,7 +148,16 @@ def _evidence(cycle: Path, state: dict) -> tuple[dict, dict, dict]:
     attention = state.get("attention") or {}
     invocation = str(state.get("last_invocation_id") or "")
     thread = str((state.get("threads") or {}).get("investigator") or "")
-    if (state.get("status") != "needs_attention" or state.get("phase") != "investigator:handoff_invalid"
+    prior_reentry = "The original native Goal reattachment opportunity was already used; another reentry requires review."
+    blocker = resume_blocker(state, runtime_revalidated=True)
+    contract = role_contract("investigator", phase="investigate")
+    historical_contract_ref = {"contract_id": "theory-master/role/investigator/investigate",
+                               "contract_version": 10, "schema_hash": _OLD_INVESTIGATOR_SCHEMA}
+    current_contract_ref = {**historical_contract_ref, "schema_hash": _CURRENT_INVESTIGATOR_SCHEMA}
+    if (cycle.name != "5" or cycle.parent.parent.name != "17-plant-invasion-2b9d7e76c636"
+            or (state.get("runtime_source_provenance") or {}).get("sdk_git_sha")
+                != "db4ad9044bd32cce5f1043ccb601d6e3753e2550"
+            or state.get("status") != "needs_attention" or state.get("phase") != "investigator:handoff_invalid"
             or state.get("execution_active") or state.get("active_invocation_id") or state.get("worker_id")
             or state.get("protocol_health") != "valid" or state.get("scientific_verdict") is not None
             or (state.get("goal_completion") or {}).get("verdict") == "passed"
@@ -141,7 +168,10 @@ def _evidence(cycle: Path, state: dict) -> tuple[dict, dict, dict]:
                            "failure_phase": "invoke", "error_type": "RecoveryStop"}
             or native.get("status") != "complete" or native.get("thread_id") != thread
             or native.get("provider_failure") or native.get("runtime_failure_kind")
-            or resume_blocker(state, runtime_revalidated=True)):
+            or blocker != prior_reentry
+            or resume_blocker(state, runtime_revalidated=True, for_repair=True) is not None
+            or int(state.get("supervisor_runtime_resume_count") or 0) != 1
+            or contract.descriptor() != current_contract_ref):
         raise ValueError("Not an unclosed completed native Goal delivery-path failure")
     spec = _task(cycle, inputs)
     if state.get("goal_sha256") != spec.goal_sha256:
@@ -151,12 +181,11 @@ def _evidence(cycle: Path, state: dict) -> tuple[dict, dict, dict]:
     runtime = _rows(cycle / "runtime_events.jsonl", inputs)
     ledger = InvocationLedger(cycle / "invocations.jsonl")
     record = ledger.snapshot(invocation) or {}
-    contract = role_contract("investigator", phase="investigate")
     if (not ledger_rows or ledger_rows[-1].get("invocation_id") != invocation
             or record.get("state") != "interrupted" or record.get("commit_state") != "not_committed"
             or record.get("failure_phase") != "invoke" or record.get("closure_hash")
             or record.get("reason") != "SDK handoff invalid: " + MISSING
-            or record.get("thread_id") != thread or record.get("contract_ref") != contract.descriptor()
+            or record.get("thread_id") != thread or record.get("contract_ref") != historical_contract_ref
             or record.get("role") != "investigator" or record.get("stage") != "investigate"
             or not record.get("native_goal_identity")
             or (cycle / "semantic_closure" / (invocation + ".json")).exists()):
@@ -166,7 +195,8 @@ def _evidence(cycle: Path, state: dict) -> tuple[dict, dict, dict]:
     origin = find_native_goal_origin(SimpleNamespace(
         state=resumed, owner=SimpleNamespace(cycle_dir=cycle), invocation_ledger=ledger,
         invocation_id="inv-delivery-alias-proof", stage="investigate", logical_key=record["logical_key"],
-        identifier=thread, contract=contract, handoff_path=cycle / "workspace/.tm-handoff/inv-delivery-alias-proof.json"))
+        identifier=thread, contract=SimpleNamespace(descriptor=lambda: historical_contract_ref),
+        handoff_path=cycle / "workspace/.tm-handoff/inv-delivery-alias-proof.json"))
     declared = Path(origin["handoff_path"])
     if declared.exists() or declared.is_symlink():
         raise ValueError("Canonical original handoff already exists")
@@ -192,7 +222,7 @@ def _evidence(cycle: Path, state: dict) -> tuple[dict, dict, dict]:
                 or failed.get("error_type") != "InvalidRequestError" or failed.get("failure_phase") != "invoke"
                 or failed.get("error") != "JSON-RPC error -32600: thread must be idle before starting a goal: " + thread
                 or failed.get("thread_id") != thread or failed.get("logical_key") != record["logical_key"]
-                or failed.get("contract_ref") != contract.descriptor()
+                or failed.get("contract_ref") != historical_contract_ref
                 or not re.fullmatch(r"inv-[A-Za-z0-9_-]+", alias_id)):
             continue
         begin = (starts.get(alias_id) or {}).get("at")
@@ -255,7 +285,9 @@ def _evidence(cycle: Path, state: dict) -> tuple[dict, dict, dict]:
         "authority": "sdk_complete_with_audited_delivery_alias",
         "resume_preparation": "saved_delivery_semantic_closure", "invocation_id": invocation,
         "thread_id": thread, "role": "investigator", "stage": "investigate", "logical_key": record["logical_key"],
-        "contract_ref": contract.descriptor(), "handoff_path": str(path), "handoff_sha256": inputs[str(path)],
+        "contract_ref": historical_contract_ref, "current_contract_ref": current_contract_ref,
+        "original_source_git_sha": "db4ad9044bd32cce5f1043ccb601d6e3753e2550",
+        "handoff_path": str(path), "handoff_sha256": inputs[str(path)],
         "raw_findings_sha256": stable_hash(mapped), "frozen_objective_sha256": origin["frozen_objective_sha256"],
         "artifact_manifest_path": str(manifest_path), "artifact_manifest_sha256": inputs[str(manifest_path)],
         "config_path": str(spec.config_path), "benchmark_root": str(spec.benchmark_root),
@@ -338,3 +370,124 @@ def reprocess_completed_delivery_alias(config_path: Path) -> dict:
         raise ValueError("No original Cycle")
     owner._bind_cycle(cycle, create=False)
     return reprocess_failed_native_delivery(owner)
+
+
+def project_reprocessed_delivery_to_judge(config_path: Path, *, dry_run: bool = False) -> dict:
+    """Finish the SDK routing projection after the historical offline replay.
+
+    The first Resume after the model-free commit exposed a missing investigation
+    round projection and failed during Setup, before another model Turn. This
+    adapter consumes only the already committed Investigator output.
+    """
+    from .invocations import InvocationLedger, stable_hash
+    from .native_delivery_reprocessing import _stopped_task
+    from .runtime import now, write_json
+    from .specification import TaskSpec
+    from .supervisor_repair_receipts import _digest
+    from .workflow import Workflow
+
+    class OfflineBackend:
+        name = "offline-delivery-projection"
+        def invoke(self, *args, **kwargs):
+            raise AssertionError("Delivery projection cannot call a model")
+        invoke_goal = ensure_thread = invoke
+
+    spec = TaskSpec.from_config(config_path)
+    root = spec.research_root.resolve()
+    cycle = root / "5"
+    if cycle.parent.parent.name != "17-plant-invasion-2b9d7e76c636":
+        raise ValueError("Delivery projection belongs to another task")
+    with _stopped_task(root):
+        state_path = cycle / "research_state.json"
+        state = _json(state_path, {})
+        failed = state.get("last_invocation_failure") or {}
+        recovery = state.get("recovery") or {}
+        committed_id = "inv-5-investigator-d2ff31815a7e"
+        setup_id = "inv-5-investigator-e710e2ed4eea"
+        audit = state.get("supervisor_delivery_reprocessing") or {}
+        attempt_key = "attempt-0001"
+        record = (state.get("investigation_attempts") or {}).get(attempt_key) or {}
+        if (state.get("status") != "failed" or state.get("phase") != "failed"
+                or state.get("execution_active") or state.get("scientific_verdict") is not None
+                or recovery.get("kind") != "NativeGoalRecoveryConflict"
+                or recovery.get("message") != "unfinished native Goal changed thread or contract"
+                or failed != {"invocation_id": setup_id, "role": "investigator",
+                              "stage": "investigate", "failure_phase": "setup",
+                              "error_type": "NativeGoalRecoveryConflict"}
+                or state.get("last_invocation_id") != setup_id
+                or state.get("investigation_attempt") != 1
+                or state.get("investigation_round_count") != 0
+                or state.get("total_investigation_round_count") != 0
+                or state.get("next_executor") != "investigator"
+                or record.get("outputs") != []
+                or audit.get("status") != "committed" or audit.get("invocation_id") != committed_id
+                or audit.get("extra_model_requests") != 0):
+            raise ValueError("Not the unprojected, already committed delivery")
+        owner = Workflow(spec, OfflineBackend())
+        owner._bind_cycle(cycle, create=False)
+        ledger = InvocationLedger(cycle / "invocations.jsonl")
+        committed, setup = ledger.snapshot(committed_id) or {}, ledger.snapshot(setup_id) or {}
+        closure_path = cycle / "semantic_closure" / (committed_id + ".json")
+        closure = _json(closure_path, {})
+        persisted_audit = _json(cycle / "delivery_reprocessing" / (committed_id + ".json"), {})
+        receipt_path = Path(str(audit.get("receipt_path") or ""))
+        receipt = _json(receipt_path, {})
+        if (persisted_audit != audit or _digest(receipt) != audit.get("receipt_sha256")
+                or receipt.get("validator") != VALIDATOR
+                or receipt.get("cycle") != str(cycle)
+                or committed.get("state") != "committed"
+                or committed.get("commit_state") != "committed"
+                or committed.get("closure_artifact") != str(closure_path)
+                or committed.get("closure_hash") != audit.get("closure_hash")
+                or stable_hash(closure) != audit.get("closure_hash")
+                or setup.get("state") != "failed" or setup.get("commit_state") != "not_committed"
+                or setup.get("failure_phase") != "setup"
+                or setup.get("error_type") != "NativeGoalRecoveryConflict"
+                or (cycle / "semantic_closure" / (setup_id + ".json")).exists()
+                or closure.get("agent_output") != (state.get("agent_outputs") or {}).get("investigator")
+                or closure.get("closed_output") != (state.get("role_outputs") or {}).get("investigator")):
+            raise ValueError("Committed Investigator delivery is not intact")
+        adjudicable = owner._adjudicable_judge_records(owner._evidence_context())
+        if not adjudicable:
+            raise ValueError("Committed delivery has no adjudicable Evidence")
+        if dry_run:
+            return {"next_executor": "judge", "committed_invocation_id": committed_id,
+                    "evidence_ids": [row["evidence_id"] for row in adjudicable],
+                    "dry_run": True}
+        output = state["role_outputs"]["investigator"]
+        record["outputs"].append({
+            "executor_role": "investigator", "round": 1, "round_completed": True,
+            "invocation_id": committed_id, "output": output,
+            "evidence_refs": list(state.get("evidence_refs") or []),
+        })
+        state["investigation_round_count"] = 1
+        state["total_investigation_round_count"] = 1
+        record["readiness"] = {"decision": "send_to_judge",
+                               "reason": "investigator_submission", "ready": True}
+        state["previous_executor"] = "investigator"
+        state["next_executor"] = "judge"
+        state.update(status="paused", phase="engineering_delivery_projected", resumable=True,
+                     execution_active=False, active_invocation_id=None, attention={},
+                     recovery={"action": "engineering_delivery_projected", "kind": "saved_native_delivery",
+                               "invocation_id": committed_id, "at": now()})
+        owner._emit(state, "investigation.round_completed", {
+            "role": "investigator", "investigation_attempt": 1, "round": 1,
+            "thread_id": (state.get("threads") or {}).get("investigator"),
+            "source": "receipt_bound_offline_delivery_projection",
+        })
+        owner._emit(state, "investigation.routing", {
+            "investigation_attempt": 1, **record["readiness"], "selected_executor": "judge",
+            "source": "receipt_bound_offline_delivery_projection",
+        })
+        owner._save_attempt(state)
+        owner._checkpoint(state, "attempt-0001-r1")
+        write_json(cycle / "delivery_reprocessing" / (committed_id + "-routing.json"), {
+            "schema": "theory-master/delivery-routing-projection/v1", "at": now(),
+            "committed_invocation_id": committed_id, "failed_setup_invocation_id": setup_id,
+            "closure_hash": audit["closure_hash"],
+            "adjudicable_evidence_ids": [row["evidence_id"] for row in adjudicable],
+            "next_executor": "judge", "extra_model_requests": 0,
+        })
+        owner._persist(state)
+        return {"next_executor": "judge", "committed_invocation_id": committed_id,
+                "evidence_ids": [row["evidence_id"] for row in adjudicable]}

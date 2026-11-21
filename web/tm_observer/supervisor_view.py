@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from .run_monitor import CYCLE_NAME, redact
-from .supervisor_incident_ui import CHAT_MODULE, DIALOGUE_SCRIPT, dialogue_html
+from .supervisor_incident_ui import CHAT_MODULE, COMPOSER_STYLE, DIALOGUE_SCRIPT, dialogue_html
 
 KEY = "THEORY_MASTER_SUPERVISOR"
 LEGACY_ATTENTION_KEY = "THEORY_MASTER_ATTENTION_TAKEOVER"
@@ -420,9 +420,36 @@ def _engineering_recovery_banner(run: dict[str, Any]) -> str:
             '</div></section>')
 
 
+def _qualification_wait_status(run: dict[str, Any], folder: Path, scientific: dict[str, Any]) -> dict[str, str] | None:
+    review = scientific.get("supervisor_qualification")
+    if (scientific.get("status") != "no_qualified_candidate"
+            or not isinstance(review, dict) or review.get("status") not in {"waiting", "review_exhausted"}
+            or not SESSION_ID.fullmatch(str(review.get("session_id") or ""))
+            or not supervisor_enabled_for(run, scientific)):
+        return None
+    runtime = _read_small_json(folder.parent / ".theory-master" / "runtime.json", 64_000) or {}
+    wait = runtime.get("qualification_wait")
+    if (runtime.get("state") != "RECOVERY_WAIT" or runtime.get("requested_operation") != "takeover"
+            or str(runtime.get("current_cycle") or "") != folder.name or runtime.get("runner_pid")
+            or not isinstance(wait, dict) or wait.get("cycle") != folder.name
+            or not runtime.get("launch_id") or wait.get("launch_id") != runtime.get("launch_id")
+            or wait.get("session_id") != review["session_id"]
+            or wait.get("direction_fingerprint") != review.get("direction_fingerprint")):
+        return None
+    from .collector import _pid_alive
+    if runtime.get("supervisor_start_ticks") is None or not _pid_alive(runtime.get("supervisor_pid"), runtime["supervisor_start_ticks"]):
+        return None
+    message = str(review.get("wake_condition") or review.get("reason") or "")
+    return {"status": "waiting", "label": "Supervisor 等待研究条件",
+            "detail": _clean(message, 2200)[0], "progress": "已完成全任务资格审查"}
+
+
 def _durable_recovery_status(run: dict[str, Any], folder: Path,
                              scientific: dict[str, Any]) -> dict[str, Any] | None:
     """One current-failure projection for the detail banner and task-list chip."""
+    qualification_wait = _qualification_wait_status(run, folder, scientific)
+    if qualification_wait is not None:
+        return qualification_wait
     wid = str(scientific.get('worker_id') or '')
     if re.fullmatch(r'worker-[1-9][0-9]*', wid):
         worker = _read_small_json(folder.parent / '.theory-master/workers' / wid / 'runtime.json', 64_000)
@@ -845,7 +872,7 @@ def page_body(run: dict[str, Any], cycle: str = "", state: dict[str, Any] | None
     incident_script = (CHAT_MODULE + DIALOGUE_SCRIPT) if any("tm-incident-form" in item for item in articles) else (
         CHAT_MODULE if any("loquix-message-item" in item for item in articles) else '')
     return (
-        '<style>' + SUPERVISOR_STYLE + '</style>'
+        '<style>' + SUPERVISOR_STYLE + COMPOSER_STYLE + '</style>'
         '<section class="tm-run-workspace tm-supervisor-page" aria-label="Supervisor 接管对话">'
         + f'<nav class="tm-supervisor-cycles" aria-label="选择 Cycle">{cycle_links}</nav>'
         + warnings + recovery_panel + ("".join(articles) if articles else empty) + incident_script + refresh + '</section>'

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -49,7 +50,8 @@ def task(tmp_path, monkeypatch):
             store.add_hypothesis(f'H-{n:04d}', title=f'Existing H {n}')
     plan = tmp_path / 'research_plan.md'
     plan.write_text('# Goal\nAn unfinished research Goal.')
-    spec = SimpleNamespace(research_root=root, branch_canvas=canvas, document=plan, max_cycles=2)
+    spec = SimpleNamespace(research_root=root, branch_canvas=canvas, document=plan, max_cycles=2,
+                           task_mode=True, task_home=tmp_path)
     monkeypatch.setattr('theory_master.worker_routes.resolve_worker_routes', lambda *_: {})
     monkeypatch.setattr('theory_master.worker_routes._route_capacity', lambda spec, n: (n, [None] * n))
     monkeypatch.setattr('theory_master.worker_launch._task_scoped_process_env', lambda *_: {})
@@ -82,11 +84,18 @@ def install_workflow(monkeypatch, spec, outcome):
             self.cycle_dir = root / cycle
             state = outcome(cycle) if callable(outcome) else copy.deepcopy(outcome)
             state.update(cycle_id=cycle, worker_id=self.worker_id)
+            if state.get('status') == 'no_qualified_candidate':
+                state['wake_fingerprint'] = wr.research_direction_fingerprint(spec)
             lock = state.get('hypothesis_lock') or {}
             if lock.get('id'):
                 self.worker_claims.bind_hypothesis(self.worker_id, self.worker_claim_id,
                                                   self.worker_claim_epoch, lock['id'])
             path = self.cycle_dir / 'research_state.json'
+            if state.get("operational_only_closure"):
+                from theory_master.supervisor_input_support import capture_input_support_baseline
+
+                capture_input_support_baseline(spec, state)
+                (self.cycle_dir / "operational_closure.json").write_text(json.dumps(state["operational_only_closure"]))
             path.write_text(json.dumps(state))
             model = self.cycle_dir / 'scientific_model_out.json'
             model.write_text('{"version":0,"summary":"unchanged"}')
@@ -133,6 +142,67 @@ def test_local_failure_finishes_old_claim_and_next_allocation_is_unbound(task, m
     assert all(path.read_bytes() == data for path, data in snapshots)
     assert wr.schedule_once(spec, resource_slots=1)['started'] == []
 
+
+
+
+def register_observations(spec):
+    path = spec.task_home / "new_observations.csv"
+    data = b"t,x\n0,1\n"
+    path.write_bytes(data)
+    (spec.task_home / "input_manifest.json").write_text(json.dumps({
+        "schema": "theorymaster/public-research-input-manifest/v1",
+        "data_files": [{"path": path.name, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}],
+    }))
+
+@pytest.mark.parametrize("withdraw_before_worker", [False, True])
+def test_worker_waits_after_two_input_limited_cycles_then_starts_one_fresh_claim(task, monkeypatch, withdraw_before_worker):
+    from theory_master.specification import TaskSpec
+    from theory_master.supervisor_activation import request_stopped_takeover
+
+    spec, root = task
+    spec.max_cycles = 4
+    monkeypatch.setattr(TaskSpec, "from_task_root", lambda root: spec)
+    waits = []
+    monkeypatch.setattr("theory_master.supervisor_activation._launch_worker_recovery",
+                        lambda path: waits.append(path) or {"status": "worker_recovery_started"})
+    visits, snapshots = install_workflow(monkeypatch, spec, lambda c: local_state("input_support_unavailable", c))
+    assert run_claim(spec, root)[0] == 0
+    assert wr.read_worker(root, "worker-1")["status"] == "OVER"
+    code, claims, old = run_claim(spec, root)
+    assert code == 0 and claims.list_claims() == []
+    worker = wr.read_worker(root, "worker-1")
+    assert worker["status"] == wr.WAITING_RESEARCH_DIRECTION
+    assert worker["input_support_wait_cycle"] == "2" and worker["last_claim_id"] == old["claim_id"]
+    assert request_stopped_takeover(spec)["status"] == "worker_recovery_started"
+    assert waits == [root]
+
+    launches = []
+
+    def launch(argv, **_):
+        launches.append(argv)
+        if not withdraw_before_worker:
+            return
+        (spec.task_home / "new_observations.csv").unlink()
+        claim = argv[argv.index("--claim-id") + 1]
+        epoch = int(argv[argv.index("--epoch") + 1])
+        assert wr.run_once(spec, "worker-1", claim, epoch) == 0
+        assert len(visits) == 2
+
+    monkeypatch.setattr("theory_master.worker_launch._launch_detached_service", launch)
+    spec.document.write_text(spec.document.read_text() + "\nA new plan annotation is not input.")
+    assert wr.schedule_once(spec, resource_slots=1)["started"] == []
+
+    register_observations(spec)
+    result = wr.schedule_once(spec, resource_slots=1, supervisor_recovery_only=True)
+    assert len(result["started"]) == len(launches) == 1
+    assert result["started"][0]["worker_id"] == "worker-1"
+    assert "--resume-cycle" not in launches[0]
+    if withdraw_before_worker:
+        state = wr.read_worker(root, "worker-1")
+        assert state["status"] == wr.WAITING_RESEARCH_DIRECTION and state["current_cycle"] == "2"
+        assert not claims.list_claims()
+    assert wr.schedule_once(spec, resource_slots=1)["started"] == []
+    assert all(path.read_bytes() == data for path, data in snapshots)
 
 @pytest.mark.parametrize('reason', ['no_qualified_candidate', 'input_support_unavailable'])
 @pytest.mark.parametrize('guard', ['pause', 'interrupt', 'budget', 'protocol', 'runtime', 'abandoned'])
@@ -193,8 +263,10 @@ def test_daemon_replans_with_new_claims_only_within_remaining_worker_quota(task,
     path = root / '.theory-master/worker_scheduler.json'
     original_waiting_state = None
     if previous_count:
-        waiting_worker(root, local_state(reason))
+        waiting_worker(root, local_state(reason), spec=spec)
         original_waiting_state = (root / '1/research_state.json').read_bytes()
+        if reason == "input_support_unavailable":
+            register_observations(spec)
         path.write_text(json.dumps({'status': 'STOPPED', 'quota_mode': 'per_worker', 'resume_batch': True,
             'max_cycles_per_worker': 2, 'cycles_started_by_worker': {'worker-1': previous_count}}))
     launches = []
@@ -220,9 +292,17 @@ def test_daemon_replans_with_new_claims_only_within_remaining_worker_quota(task,
         assert visits[0]['cycle'] == '2'
 
 
-def waiting_worker(root, state):
+def waiting_worker(root, state, *, spec=None):
     cycle = root / '1'
     cycle.mkdir()
+    if spec is not None:
+        (cycle / '.theory-master-cycle').write_text('theory-master/v2\ng\n')
+        state['wake_fingerprint'] = wr.research_direction_fingerprint(spec)
+        if state.get("operational_only_closure"):
+            from theory_master.supervisor_input_support import capture_input_support_baseline
+
+            capture_input_support_baseline(spec, state)
+            (cycle / "operational_closure.json").write_text(json.dumps(state["operational_only_closure"]))
     (cycle / 'research_state.json').write_text(json.dumps(state))
     wr.save_worker(root, 'worker-1', status=wr.WAITING_RESEARCH_DIRECTION, current_cycle='1',
                    claim_id=None, epoch=None, pid=None)
@@ -230,7 +310,7 @@ def waiting_worker(root, state):
 
 def test_historical_canonical_waiting_attempt_wakes_for_one_fresh_claim(task, monkeypatch):
     spec, root = task
-    waiting_worker(root, local_state('no_qualified_candidate'))
+    waiting_worker(root, local_state('no_qualified_candidate'), spec=spec)
     before = (root / '1/research_state.json').read_bytes()
     launches = []
     monkeypatch.setattr('theory_master.worker_launch._launch_detached_service', lambda args, **kw: launches.append(args))

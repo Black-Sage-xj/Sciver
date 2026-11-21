@@ -17,6 +17,7 @@ from .goal_materials import (
     MATERIAL_PATH_KEYS,
     goal_material_sources,
     material_roots,
+    published_materials,
     resolve_material,
     required_benchmark_references,
     rewrite_markdown_navigation,
@@ -114,7 +115,10 @@ def materialize_goal_snapshot(
     root = cycle_dir / "goal_snapshots" / uuid.uuid4().hex
     root.mkdir(parents=True)
     allowed = material_roots(spec)
-    layout_root = Path(commonpath(allowed))
+    publications = published_materials(spec)
+    # Exact published files can be outside the ordinary read roots. Include
+    # their location only for mirrored layout, without authorizing siblings.
+    layout_root = Path(commonpath([*allowed, *(Path(p) for p in publications)]))
     payload = json.loads(seed.delivery)
     catalog = payload.get("goal_material_sources")
     if catalog is None:  # Older persisted callers still use the same boundary.
@@ -177,7 +181,8 @@ def materialize_goal_snapshot(
 
     def freeze(path: Path) -> str:
         resolved = path.resolve()
-        if not any(resolved.is_relative_to(base) for base in allowed):
+        publication_hash = publications.get(str(resolved))
+        if not any(resolved.is_relative_to(base) for base in allowed) and publication_hash is None:
             raise ValueError(
                 f"Goal snapshot material leaves registered task roots: {path}"
             )
@@ -192,7 +197,13 @@ def materialize_goal_snapshot(
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
                 output.write(chunk)
-        sources[str(resolved)] = digest.hexdigest()
+        captured = digest.hexdigest()
+        expected = registered[str(resolved)].get("sha256")
+        if expected and captured != expected:
+            raise ValueError("Goal delivery source changed before snapshot capture")
+        sources[str(resolved)] = captured
+        if publication_hash is not None and digest.hexdigest() != publication_hash:
+            raise ValueError(f"Goal publication changed during snapshot: {path}")
         copied[str(resolved)] = str(target)
         rewrite_navigation(target)
         target.chmod(0o444)
@@ -270,6 +281,8 @@ def materialize_goal_snapshot(
         "scientific_model_snapshot": str(model),
         **({"submission_contract": payload["submission_contract"]}
            if payload.get("submission_contract") is not None else {}),
+        **({"archival_goal_delivery": payload["archival_goal_delivery"]}
+           if payload.get("archival_goal_delivery") is not None else {}),
         "required_context_aliases": {
             ref: {
                 "path": copied.get(row.get("path", ""))

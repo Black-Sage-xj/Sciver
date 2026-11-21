@@ -183,6 +183,7 @@ class FakeBackend:
                 value = {
                     "verdict": "not_passed",
                     "rationale": "the deterministic smoke trajectory does not yet satisfy the task Final Gate",
+                    "gaps": [{"kind": "scientific", "requirement": "Complete the task Final Gate", "basis": "The deterministic smoke result alone is insufficient"}],
                 }
             else:
                 self.judges += 1; more = self.judges <= self.reworks
@@ -190,6 +191,8 @@ class FakeBackend:
                          "objection": ({"requested_resolution": "run the controlled check",
                                          "needs_external_scholarship": False} if more else None),
                          "rationale": "one controlled check remains" if more else "deterministic smoke verdict"}
+        elif role == "attention_reviewer":
+            value = {"action": "hold", "reason": "The offline fixture retains the original attention boundary for explicit intervention.", "guidance": ""}
         elif role == "reporter":
             value = {
                 "title": "TheoryMaster smoke report", "summary": "SDK-independent workflow smoke completed.",

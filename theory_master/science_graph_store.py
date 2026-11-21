@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from .evaluation_history import evaluation_history
 from .goal_terminal import GoalSealedError
 from .outcome_guide import graph_summary_text
 
@@ -303,6 +304,16 @@ class ScienceGraphStore:
                 priority TEXT CHECK(priority IS NULL OR priority = 'preferred'),
                 reason TEXT NOT NULL DEFAULT '', changed_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS hypothesis_evaluation_materials(
+                hypothesis_id TEXT PRIMARY KEY REFERENCES hypotheses(id), source_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS goal_assessment_details(
+                assessment_id TEXT PRIMARY KEY, source_json TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS frontier_opportunities(
+                hypothesis_id TEXT PRIMARY KEY REFERENCES hypotheses(id),
+                source_json TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS legacy_frontier_archive(
                 id TEXT PRIMARY KEY, hypothesis_id TEXT NOT NULL,
                 anchor_outcome TEXT, status TEXT NOT NULL,
@@ -447,8 +458,8 @@ class ScienceGraphStore:
         row = self.db.execute(
             "SELECT id,verdict FROM cycle_evaluations WHERE cycle_id=?", (cycle_id,)
         ).fetchone()
-        if row is None or row["verdict"] != "supported":
-            raise ValueError("Goal Gate assessment requires a supported Cycle Outcome")
+        if row is None or row["verdict"] not in {"supported", "rejected", "open"}:
+            raise ValueError("Goal Gate assessment requires a committed terminal Cycle Outcome")
         return row
 
     def _record_goal_gate_assessment(self, cycle_id: str, verdict: str, rationale: str) -> None:
@@ -509,11 +520,21 @@ class ScienceGraphStore:
             records += [{key: row[key] for key in row.keys() if key != "revision_index"}
                         for row in self.db.execute(
                             "SELECT * FROM goal_gate_assessment_revisions" + where + " ORDER BY revision_index", args)]
+        if self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='goal_assessment_details'").fetchone():
+            details = {r["assessment_id"]: json.loads(r["source_json"]) for r in self.db.execute("SELECT * FROM goal_assessment_details")}
+            for record in records:
+                if record["assessment_id"] in details:
+                    record["gaps"] = details[record["assessment_id"]]
         return records
 
     def goal_gate_history(self, cycle_id: str) -> list[dict[str, Any]]:
         """Append order, including any untouched legacy assessment first."""
         return self._goal_gate_history_rows(str(cycle_id))
+
+    def latest_goal_gate_assessment(self) -> dict[str, Any] | None:
+        """The most recently committed task-level verdict across all Cycles."""
+        return max(self._goal_gate_history_rows(),
+                   key=lambda row: row["recorded_at"], default=None)
 
     def goal_gate_assessment(
         self, cycle_id: str, *, assessment_id: str = "", delivery_revision: str = "",
@@ -532,6 +553,7 @@ class ScienceGraphStore:
 
     def _record_goal_gate_revision(
         self, cycle_id: str, verdict: str, rationale: str, metadata: dict[str, str],
+        *, reassessment_of: str = "",
     ) -> None:
         if verdict not in {"passed", "not_passed"} or not isinstance(rationale, str) or not rationale.strip():
             raise ValueError("Goal Gate assessment requires verdict and rationale")
@@ -552,9 +574,17 @@ class ScienceGraphStore:
         if self.goal_gate_assessment(cycle_id, delivery_revision=metadata["delivery_revision"]) is not None:
             raise ValueError("Goal delivery revision already has a different assessment ID")
         history = self.goal_gate_history(cycle_id)
-        if any(row.get("science_digest") and row["science_digest"] != metadata["science_digest"] for row in history):
+        previous = history[-1] if history else None
+        if reassessment_of and (
+            previous is None or previous["verdict"] != "not_passed"
+            or previous["assessment_id"] != reassessment_of
+            or previous != self.latest_goal_gate_assessment()
+        ):
+            raise ValueError("Supervisor reassessment does not match the latest Goal verdict")
+        if (not reassessment_of and previous and previous.get("science_digest")
+                and previous["science_digest"] != metadata["science_digest"]):
             raise ValueError("Delivery-only reassessment cannot change the science_digest")
-        previous_id = history[-1]["assessment_id"] if history else None
+        previous_id = previous["assessment_id"] if previous else None
         self.db.execute(
             "INSERT INTO goal_gate_assessment_revisions(assessment_id,cycle_id,outcome_id,delivery_revision,"
             "science_digest,receipt_path,verdict,rationale,supersedes,recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
@@ -569,19 +599,33 @@ class ScienceGraphStore:
 
     def record_goal_gate_not_passed(
         self, *, cycle_id: str, rationale: str, assessment_id: str = "", delivery_revision: str = "",
-        science_digest: str = "", receipt_path: str = "",
+        science_digest: str = "", receipt_path: str = "", reassessment_of: str = "", gaps: list[dict[str, Any]] | None = None,
     ) -> None:
-        """Attach a failed task-level Gate to its immutable supported Cycle Outcome."""
+        """Attach a task-level Gate to its immutable scientific Cycle Outcome."""
         with self.transaction():
             metadata = self._goal_assessment_metadata(assessment_id, delivery_revision, science_digest, receipt_path)
+            identity = metadata["assessment_id"] if metadata else "legacy:" + str(cycle_id)
+            previous = self.goal_gate_assessment(str(cycle_id), assessment_id=identity)
             if metadata is None:
                 self._record_goal_gate_assessment(str(cycle_id), "not_passed", rationale)
             else:
-                self._record_goal_gate_revision(str(cycle_id), "not_passed", rationale, metadata)
+                self._record_goal_gate_revision(
+                    str(cycle_id), "not_passed", rationale, metadata, reassessment_of=reassessment_of)
+            if gaps is not None:
+                from .goal_gaps import validate_gaps
+                validate_gaps(gaps, "not_passed")
+                old = self.db.execute("SELECT source_json FROM goal_assessment_details WHERE assessment_id=?", (identity,)).fetchone()
+                if old and json.loads(old[0]) != gaps:
+                    raise ValueError("Goal assessment gap replay conflicts")
+                if old is None:
+                    if previous is not None:
+                        raise ValueError("Cannot add gap details to a frozen historical assessment")
+                    self.db.execute("INSERT INTO goal_assessment_details VALUES (?,?)", (identity, _json(gaps)))
 
     def seal_goal(self, *, goal_id: str, source_cycle: str, research_plan_sha256: str,
                   judge_receipt_ref: str | None, detail: dict[str, Any], assessment_id: str = "",
-                  delivery_revision: str = "", science_digest: str = "", receipt_path: str = "") -> dict[str, Any]:
+                  delivery_revision: str = "", science_digest: str = "", receipt_path: str = "",
+                  reassessment_of: str = "") -> dict[str, Any]:
         """Persist Goal PASS once and close every open frontier in the same transaction.
 
         Idempotent: an existing seal is returned unchanged (``newly_sealed`` False).
@@ -635,7 +679,9 @@ class ScienceGraphStore:
                 # Both writes belong to this transaction. Write the new
                 # assessment before the terminal makes further appends illegal.
                 if metadata is not None:
-                    self._record_goal_gate_revision(source_cycle, "passed", str(detail.get("rationale") or ""), metadata)
+                    self._record_goal_gate_revision(
+                        source_cycle, "passed", str(detail.get("rationale") or ""), metadata,
+                        reassessment_of=reassessment_of)
                 self.db.execute(
                     "INSERT INTO task_goal_terminal(goal_id,verdict,source_cycle,sealed_at,"
                     "research_plan_sha256,judge_receipt_ref,detail_json) VALUES (?,?,?,?,?,?,?)",
@@ -1138,7 +1184,7 @@ class ScienceGraphStore:
 
     def set_frontier(self, *, branch_id: str, hypothesis_id: str, status: str,
                      anchor_outcome: str | None = None, reason: str = "",
-                     preferred: bool = False) -> None:
+                     preferred: bool = False, opportunity: dict[str, str] | None = None) -> None:
         """One authoritative frontier row per H; multirow legacy DB requires repair."""
         if status not in _STATUSES:
             raise ValueError(f"Unknown frontier state: {status}")
@@ -1152,17 +1198,37 @@ class ScienceGraphStore:
                 raise ValueError(f"H {hypothesis_id} has duplicate frontier rows: explicit reconciliation required")
             prior = existing[0] if existing else None
             row_id = str(prior["id"]) if prior else branch_id
+            priority = "preferred" if preferred and status == "active" else None
+            previous_opportunity = self.frontier_opportunity(hypothesis_id)
+            if opportunity is None:
+                opportunity = {} if status == "closed" else previous_opportunity
+            same_row = prior is not None and all(prior[key] == value for key, value in (
+                ("status", status), ("anchor_outcome", anchor_outcome), ("priority", priority), ("reason", reason)))
+            if same_row and opportunity == previous_opportunity:
+                return
+            if opportunity:
+                self.db.execute("INSERT INTO frontier_opportunities VALUES (?,?) ON CONFLICT(hypothesis_id) "
+                                "DO UPDATE SET source_json=excluded.source_json",
+                                (hypothesis_id, _json(opportunity)))
+            else:
+                self.db.execute("DELETE FROM frontier_opportunities WHERE hypothesis_id=?", (hypothesis_id,))
             self.db.execute(
                 "INSERT INTO frontier_branches(id,hypothesis_id,anchor_outcome,status,priority,reason,changed_at)"
                 " VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
                 "anchor_outcome=excluded.anchor_outcome,status=excluded.status,priority=excluded.priority,"
                 "reason=excluded.reason,changed_at=excluded.changed_at",
                 (row_id, hypothesis_id, anchor_outcome, status,
-                 "preferred" if preferred and status == "active" else None, reason, _timestamp()),
+                 priority, reason, _timestamp() if prior is None or prior["status"] != status else prior["changed_at"]),
             )
-            self._event("frontier.changed", row_id,
+            self._event("frontier.changed" if prior is None or prior["status"] != status else "frontier.annotated", row_id,
                         {"hypothesis_id": hypothesis_id, "from": prior["status"] if prior else None,
-                         "to": status, "anchor_outcome": anchor_outcome, "reason": reason})
+                         "to": status, "anchor_outcome": anchor_outcome, "reason": reason, **opportunity})
+
+    def frontier_opportunity(self, hypothesis_id: str) -> dict[str, str]:
+        if not self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='frontier_opportunities'").fetchone():
+            return {}
+        row = self.db.execute("SELECT source_json FROM frontier_opportunities WHERE hypothesis_id=?", (hypothesis_id,)).fetchone()
+        return json.loads(row[0]) if row else {}
 
     def frontier_view(self) -> dict[str, Any]:
         """DB-authoritative H states; absence is unknown, not closed."""
@@ -1174,7 +1240,7 @@ class ScienceGraphStore:
             )
         }
         for row in self.db.execute("SELECT * FROM frontier_branches ORDER BY id"):
-            hypotheses[row["hypothesis_id"]]["branches"].append(dict(row))
+            hypotheses[row["hypothesis_id"]]["branches"].append({**dict(row), **self.frontier_opportunity(row["hypothesis_id"])})
         for h_id, value in hypotheses.items():
             branches = value["branches"]
             if len(branches) > 1:
@@ -1227,10 +1293,14 @@ class ScienceGraphStore:
                     raise ValueError(f"Invalid frontier status: {status}")
                 if self.db.execute("SELECT 1 FROM hypotheses WHERE id=?", (h,)).fetchone() is None:
                     raise ValueError(f"Unknown frontier H: {h}")
+                from .frontier_opportunity import validate_opportunity
+                prior = self.db.execute("SELECT * FROM frontier_branches WHERE hypothesis_id=?", (h,)).fetchone()
+                opportunity = validate_opportunity(update, prior["status"] if prior else None)
                 self.set_frontier(
                     branch_id="frontier:"+h, hypothesis_id=h, status=status,
-                    reason=reason, preferred=bool(update.get("preferred")),
-                    anchor_outcome=update.get("anchor_outcome"),
+                    reason=reason, preferred=bool(update.get("preferred", prior and prior["priority"] == "preferred")),
+                    anchor_outcome=update.get("anchor_outcome", prior["anchor_outcome"] if prior else None),
+                    opportunity=opportunity if status != "closed" else {},
                 )
 
     def close_all_frontiers_for_goal(self, reason: str = "Final Gate passed") -> list[str]:
@@ -1255,12 +1325,19 @@ class ScienceGraphStore:
         ).fetchone():
             reading_contexts = {row["hypothesis_id"]: json.loads(row["source_json"])
                                 for row in self.db.execute("SELECT hypothesis_id,source_json FROM hypothesis_reading_context")}
+        evaluation_materials: dict[str, list[dict[str, Any]]] = {}
+        for entry in evaluation_history(self):
+            evaluation_materials.setdefault(entry["hypothesis_id"], []).append({
+                key: entry[key] for key in ("unit_id", "use", "independence", "prior_feedback", "history_basis")
+            })
         goal_gate_by_outcome: dict[str, list[dict[str, Any]]] = {}
         for assessment in self._goal_gate_history_rows():
             goal_gate_by_outcome.setdefault(assessment["outcome_id"], []).append(assessment)
         hypotheses = []
         for h in self.db.execute("SELECT * FROM hypotheses ORDER BY id"):
             item = dict(h)
+            if h["id"] in evaluation_materials:
+                item["evaluation_materials"] = evaluation_materials[h["id"]]
             if h["id"] in reading_contexts:
                 item["research_transition"] = reading_contexts[h["id"]]
             row = self.db.execute(
@@ -1323,7 +1400,7 @@ class ScienceGraphStore:
                     "verdict": latest["verdict"], "report_ref": payload.get("report_ref"),
                 }
             item["frontiers"] = [
-                dict(r) for r in self.db.execute(
+                {**dict(r), **self.frontier_opportunity(h["id"])} for r in self.db.execute(
                     "SELECT * FROM frontier_branches WHERE hypothesis_id=? ORDER BY id", (h["id"],))
             ]
             incoming = [dict(r) for r in self.db.execute(
@@ -1423,6 +1500,9 @@ class ScienceGraphStore:
                     row["reason"] = reason
                 if frontier.get("anchor_outcome"):
                     row["anchor_outcome"] = str(frontier["anchor_outcome"])
+                for field in ("remaining_question", "dependency", "reopen_basis"):
+                    if frontier.get(field):
+                        row[field] = frontier[field]
                 rows.append(row)
             return rows
 
@@ -1614,6 +1694,10 @@ class ScienceGraphStore:
           or str(edge["target_external"]) in relevant_external_ids]
         return {
             "schema": "theorymaster/agent-science-graph/v1",
+            "goal_gap_details": [{"assessment_id": row["assessment_id"], "cycle_id": row["cycle_id"], "gaps": row["gaps"]}
+                                 for row in self._goal_gate_history_rows() if row.get("gaps")],
+            "evaluation_history": evaluation_history(self),
+            "evaluation_history_scope": "Frozen declarations with terminal Outcome markers; incomplete for legacy/undeclared use, never attestation of blind access. Inspect primary reports and input partitions as needed.",
             "projection_version": "compact-frontier-v4",
             "entry_hypothesis_id": entry if entry in known_h else None,
             "semantics": {
@@ -1622,7 +1706,7 @@ class ScienceGraphStore:
                 "cycle_result_pattern": "aggregate of Cycle-local verdicts, not a whole-H or task Goal verdict",
                 "current_frontiers": "Active-only; nested frontier status is implicit; other states in H index; full detail via hypothesis-detail",
                 "focus_details": "empty means no H was selected for automatic detail expansion, not that Outcomes are absent",
-                "goal_gate_attention": "task-level not_passed assessments linked to supported Cycle Outcomes; closed H remains relevant",
+                "goal_gate_attention": "task-level not_passed assessments linked to terminal Cycle Outcomes; closed H remains relevant",
                 "lineage": "Incoming typed edges to active H and edges incident to focus; omitted edges via hypothesis-detail",
                 "external": "Only relevant IDs/summaries; full source via external-detail",
             },
@@ -1690,6 +1774,10 @@ class ScienceGraphStore:
           or str(edge["target_hypothesis"]) in relevant_ids]
         return {
             "schema": "theorymaster/agent-candidate-review-graph/v1",
+            "goal_gap_details": [{"assessment_id": row["assessment_id"], "cycle_id": row["cycle_id"], "gaps": row["gaps"]}
+                                 for row in self._goal_gate_history_rows() if row.get("gaps")],
+            "evaluation_history": evaluation_history(self),
+            "evaluation_history_scope": "Frozen declarations with terminal Outcome markers; incomplete for legacy/undeclared use, never attestation of blind access. Inspect primary reports and input partitions as needed.",
             "semantics": "SQLite-derived source-H dossiers and typed adjacent lineage for the current candidate shortlist; no Canvas geometry or file path is authoritative.",
             "candidate_sources": candidate_sources,
             "source_hypotheses": details,
@@ -1780,6 +1868,8 @@ class ScienceGraphStore:
         } for node in graph["nodes"] if node.get("type") == "External"]
         return {
             "schema": "theorymaster/agent-goal-completion-graph/v1",
+            "evaluation_history": evaluation_history(self),
+            "evaluation_history_scope": "Frozen declarations with terminal Outcome markers; incomplete for legacy/undeclared use, never attestation of blind access. Inspect primary reports and input partitions as needed.",
             "semantics": "SQLite-authoritative H trajectory, whole-H assessments, recent Cycle-local outcomes, explicit frontier labels, typed lineage, External references, and task-wide Goal assessment history. Recheck prior Goal gaps against the current delivery revision. Read detail_ref only when needed to decide the existing Final Gate; no Canvas parsing.",
             "hypotheses": h_rows,
             "lineage_columns": ["from", "to", "operator", "outcome_ref", "role"],

@@ -95,6 +95,8 @@ class QualificationLockCommit:
             "decisive_test": self.session.decisive_test,
             "cycle_criteria": self.session.cycle_criteria,
             "initial_investigation_intent": self.session.decisive_test,
+            **({"evaluation_materials": json.loads(json.dumps(self.session.selected["evaluation_materials"]))}
+               if "evaluation_materials" in self.session.selected else {}),
         }
 
     def _commit_hypothesis_lock(self):
@@ -214,6 +216,8 @@ class QualificationLockCommit:
             "cycle_criteria": json.loads(json.dumps(self.session.cycle_criteria)),
             "initial_investigation_intent": self.session.decisive_test,
             "candidate_provenance": json.loads(json.dumps(self.session.selected)),
+            **({"evaluation_materials": json.loads(json.dumps(self.session.selected["evaluation_materials"]))}
+               if "evaluation_materials" in self.session.selected else {}),
             "qualification": {
                 "selection_rationale": self.session.decision,
                 "review": json.loads(json.dumps(self.session.selected_review)),

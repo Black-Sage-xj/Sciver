@@ -66,6 +66,32 @@ def test_operational_attention_is_distinct_from_science_and_operator_pause(stopp
     assert not jobs.due(cycle, state)
 
 
+def test_maintenance_stop_stays_terminal_across_input_changes_only_for_its_incident(stopped):
+    from theory_master.supervisor_activation import stopped_recovery
+
+    _, cycle, state, _ = stopped
+    job = jobs.ensure_job(cycle, state)
+    hold = {**job, 'status': 'stopped', 'current_action': 'maintenance_stop',
+            'next_wakeup_epoch': None, 'input_digest': jobs.inputs(cycle.parent, state)}
+    jobs.save_job(cycle, hold)
+    before = jobs.path_for(cycle).read_bytes()
+    (cycle.parent / 'config.toml').write_text('model="changed"')
+
+    assert stopped_recovery(cycle, state, include_wait=True) is None
+    assert not jobs.due(cycle, state, at=10**12)
+    changed_state = copy.deepcopy(state)
+    changed_state['recovery']['at'] = 'new-failure'
+    assert stopped_recovery(cycle, changed_state) == 'runtime'
+    assert jobs.due(cycle, changed_state)
+    assert jobs.path_for(cycle).read_bytes() == before
+
+    for incorrect in ({'cycle': '2'}, {'recovery_owner': 'sdk:worker_supervisor:other'},
+                      {'current_action': 'respect_stop'}):
+        jobs.save_job(cycle, {**hold, **incorrect})
+        assert stopped_recovery(cycle, state) == 'runtime'
+        assert jobs.due(cycle, state)
+
+
 def test_fresh_repair_after_cap_grants_only_one_resume_and_reissued_receipt_cannot_refresh(stopped):
     engine, cycle, state, _ = stopped
     state['supervisor_runtime_resume_count'] = 3

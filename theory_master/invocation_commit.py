@@ -123,6 +123,13 @@ class InvocationCommit:
                     "reason": "Research Lead Literature detour is planning context, not current-Cycle adjudicative Evidence",
                 }
             ]
+        elif (self.session.role == "investigator" and
+              (self.session.context.get("submission_delivery") or {}).get("authority")
+              == "operator_delivery_structure_only"):
+            # A delivery supplement records execution provenance, not a new
+            # scientific Finding or an amendment to committed Evidence.
+            self.session.evidence_registration_audit = [{"status": "delivery_only",
+                "reason": "Explicit operator delivery correction preserves committed scientific Evidence"}]
         elif self.session.role in CAPABILITIES or self.session.role == "challenger":
             refs = self.session.owner._register_evidence(
                 self.session.state,

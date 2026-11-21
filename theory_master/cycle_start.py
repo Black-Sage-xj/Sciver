@@ -40,7 +40,9 @@ class CycleStartup:
             }
             recovery = dict(self.cycle.state.get("recovery") or {})
             recovery.update(
-                {"action": "resume", "allow_thread_fallback": True, "resumed_at": now()}
+                {"action": "resume",
+                 "allow_thread_fallback": not self.cycle.owner._boot_resume_active,
+                 "resumed_at": now()}
             )
             self.cycle.interrupted_attention = self.cycle.state.get("attention") or {}
             if (
@@ -196,25 +198,20 @@ class CycleStartup:
         if self.cycle.owner.collector is not None:
             start = getattr(self.cycle.owner.collector, "start_run", None)
             if callable(start):
-                if self.cycle.same_cycle_continuation:
-                    start(
-                        self.cycle.run_id,
-                        self.cycle.owner.spec,
-                        run_dir=self.cycle.owner.cycle_dir,
-                        notes_dir=self.cycle.owner.notes_dir,
-                        branch_canvas=self.cycle.owner.branch_canvas,
-                        cycle_workspace=self.cycle.owner.cycle_workspace,
-                        same_cycle_continuation=True,
-                    )
-                else:
-                    start(
-                        self.cycle.run_id,
-                        self.cycle.owner.spec,
-                        run_dir=self.cycle.owner.cycle_dir,
-                        notes_dir=self.cycle.owner.notes_dir,
-                        branch_canvas=self.cycle.owner.branch_canvas,
-                        cycle_workspace=self.cycle.owner.cycle_workspace,
-                    )
+                continuation = {}
+                if self.cycle.owner._boot_resume_active:
+                    continuation["retained_cycle_index"] = self.cycle.owner.invocation_cycle_index
+                elif self.cycle.same_cycle_continuation:
+                    continuation["same_cycle_continuation"] = True
+                start(
+                    self.cycle.run_id,
+                    self.cycle.owner.spec,
+                    run_dir=self.cycle.owner.cycle_dir,
+                    notes_dir=self.cycle.owner.notes_dir,
+                    branch_canvas=self.cycle.owner.branch_canvas,
+                    cycle_workspace=self.cycle.owner.cycle_workspace,
+                    **continuation,
+                )
         if not self.cycle.resuming:
             self.cycle.state.update(
                 {

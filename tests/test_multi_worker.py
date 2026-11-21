@@ -29,7 +29,7 @@ def _make(tmp_path: Path, count: int = 5):
     with ScienceGraphStore(database) as store:
         for n in range(1, count + 1):
             store.add_hypothesis(f"H-{n:04d}", title=f"Scientific title {n}")
-            store.set_frontiers_batch([{"hypothesis_id": f"H-{n:04d}", "status": "active", "reason": "fixture"}])
+            store.set_frontiers_batch([{"hypothesis_id": f"H-{n:04d}", "status": "active", "reason": "fixture", "remaining_question": "Does the fixture H satisfy its remaining scientific requirement?"}])
     return BranchClaims(root, database)
 
 
@@ -60,9 +60,9 @@ def test_manual_preferred_order_and_nested_frontiers(tmp_path):
             store.add_hypothesis(f"H-{n:04d}", title=f"H {n}")
         store.add_evolution(edge_id="edge-1", source="H-0001", target="H-0003", operator="derive")
         store.set_frontiers_batch([
-            {"hypothesis_id":"H-0001","status":"active","reason":"parent remains eligible"},
-            {"hypothesis_id":"H-0002","status":"active","reason":"preferred","preferred":True},
-            {"hypothesis_id":"H-0003","status":"active","reason":"child eligible"},
+            {"hypothesis_id":"H-0001","status":"active","reason":"parent remains eligible", "remaining_question": "Does the fixture H satisfy its remaining scientific requirement?"},
+            {"hypothesis_id":"H-0002","status":"active","reason":"preferred","preferred":True, "remaining_question": "Does the fixture H satisfy its remaining scientific requirement?"},
+            {"hypothesis_id":"H-0003","status":"active","reason":"child eligible", "remaining_question": "Does the fixture H satisfy its remaining scientific requirement?"},
             {"hypothesis_id":"H-0004","status":"closed","reason":"closed"},
         ])
     # I-12: historical Preferred is display-only and no longer orders frontiers.
@@ -94,7 +94,7 @@ def test_stale_canvas_and_single_claim_per_worker(tmp_path):
     old_revision = manager.status()["graph_revision"]
     with ScienceGraphStore(manager.graph_path) as store:
         store.add_hypothesis("H-0003", title="new frontier")
-        store.set_frontiers_batch([{"hypothesis_id": "H-0003", "status": "active", "reason": "new"}])
+        store.set_frontiers_batch([{"hypothesis_id": "H-0003", "status": "active", "reason": "new", "remaining_question": "Does the fixture H satisfy its remaining scientific requirement?"}])
     with pytest.raises(ValueError, match="revision changed"):
         manager.claim("worker-1", expected_revision=old_revision)
     claim = manager.claim("worker-1")

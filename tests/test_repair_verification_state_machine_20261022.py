@@ -18,6 +18,7 @@ from theory_master.prompt_stages import stage_context
 from theory_master.science_graph_store import ScienceGraphStore
 from theory_master.specification import TaskSpec
 from theory_master.stage_registry import stage_card_text, stage_definition_text
+from theory_master.supervisor_intervention import write_supervisor_setting
 from theory_master.workflow import RecoveryStop, Workflow
 from theory_master.workflow_qualification import QualificationMixin
 
@@ -188,7 +189,9 @@ class BoundedRepairVerificationTest(unittest.TestCase):
                              "an eligible cross-network pair requires exact equality of the full vectors, "
                              "then compare the frozen outcome under the same scope."),
             )
-            state = Workflow(make_spec(Path(temp)), backend).run()
+            spec = make_spec(Path(temp))
+            write_supervisor_setting(spec.research_root, False)
+            state = Workflow(spec, backend).run()
             self.assertEqual(state["qualification_status"], "no_qualified_candidate")
             self.assertFalse(state.get("hypothesis_locked"))
             self.assertNotEqual((state.get("hypothesis_lock") or {}).get("status"), "locked")
@@ -305,7 +308,9 @@ class BoundedRepairVerificationTest(unittest.TestCase):
     def test_unresolved_exits_bounded_proposal_without_lock(self):
         with tempfile.TemporaryDirectory() as temp:
             backend = RepairFixtureBackend(verification="unresolved")
-            state = Workflow(make_spec(Path(temp)), backend).run()
+            spec = make_spec(Path(temp))
+            write_supervisor_setting(spec.research_root, False)
+            state = Workflow(spec, backend).run()
             self.assertEqual(state["qualification_status"], "no_qualified_candidate")
             self.assertFalse(state["hypothesis_locked"])
             self.assertEqual(backend.repair_calls, 3)
@@ -485,7 +490,9 @@ class BoundedRepairVerificationTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp:
             backend = RepairFixtureBackend(verification="unresolved")
-            workflow = Workflow(make_spec(Path(temp)), backend)
+            spec = make_spec(Path(temp))
+            write_supervisor_setting(spec.research_root, False)
+            workflow = Workflow(spec, backend)
             gate = ObservedGate()
             workflow.worker_proposal_gate = gate
             state = workflow.run()

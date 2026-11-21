@@ -22,7 +22,7 @@ def task(tmp_path: Path):
     with ScienceGraphStore(tmp_path / "science_graph.sqlite3") as store:
         store.add_hypothesis("H-0001", title="Bound H")
         store.add_hypothesis("H-0002", title="Parent H")
-        store.set_frontiers_batch([{"hypothesis_id": h, "status": "active", "reason": "fixture"}
+        store.set_frontiers_batch([{"hypothesis_id": h, "status": "active", "reason": "fixture", "remaining_question": "Does the fixture H satisfy its remaining scientific requirement?"}
                                    for h in ("H-0001", "H-0002")])
     plan = tmp_path / "research_plan.md"
     plan.write_text("# Goal", encoding="utf-8")

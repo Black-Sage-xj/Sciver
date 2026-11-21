@@ -107,6 +107,62 @@ def goal_sealed(research_root: Path, graph_path: Path, *, spec: Any | None = Non
     }
 
 
+def recovery_goal_blocker(research_root: Path, *, spec: Any | None = None) -> str | None:
+    """Resolve task-wide terminal authority without loading plans or model routes.
+
+    A bound task with unreadable or mismatched authority cannot be classified
+    as open. Unbound legacy diagnostic roots may have no graph yet.
+    """
+    from sqlite3 import Error as SQLiteError
+    from types import SimpleNamespace
+
+    from .notebook import notebook_config
+    from .science_graph_store import ScienceGraphStore
+    from .task import absolute, effective_path_model
+    from .workflow_goal import verified_completed_goal_state
+
+    root = Path(research_root).resolve()
+    try:
+        if spec is None:
+            binding = notebook_config(root)
+            if binding is not None:
+                _, config = binding
+                _, bound_root, _ = effective_path_model(config)
+                if bound_root != root:
+                    return "goal_authority_unavailable"
+                canvas = absolute(config.get("branch_canvas"), "branch_canvas")
+                graph = Path(config.get("graph_database") or canvas.parent / "science_graph.sqlite3").expanduser()
+                spec = SimpleNamespace(
+                    research_root=root, task_mode=True,
+                    document=absolute(config.get("plan_path"), "plan_path"), goal_id=config["goal_id"],
+                )
+            else:
+                pointer = root / ".theory-master" / "task.json"
+                if pointer.is_symlink() or pointer.parent.is_symlink():
+                    return "goal_authority_unavailable"
+                graph = root / "science_graph.sqlite3"
+        else:
+            if Path(spec.research_root).resolve() != root:
+                return "goal_authority_unavailable"
+            graph = Path(getattr(spec, "graph_database", None)
+                         or Path(spec.branch_canvas).resolve().parent / "science_graph.sqlite3")
+        if not graph.is_absolute() or any(part.is_symlink() for part in (graph, *graph.parents)):
+            return "goal_authority_unavailable"
+        if not graph.is_file():
+            return "goal_authority_unavailable" if spec is not None or graph.exists() else None
+        with ScienceGraphStore(graph, readonly=True) as store:
+            terminal = store.goal_terminal()
+        if terminal is not None:
+            if spec is not None and str(terminal["goal_id"]) != str(spec.goal_id):
+                return "goal_authority_unavailable"
+            return "goal_completed"
+        if spec is not None and verified_completed_goal_state(spec, graph) is not None:
+            return "goal_completed"
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, SQLiteError):
+        return "goal_authority_unavailable"
+    return None
+
+
 def assert_goal_open(research_root: Path, graph_path: Path, *, spec: Any | None = None) -> None:
     terminal = goal_sealed(research_root, graph_path, spec=spec)
     if terminal is not None:

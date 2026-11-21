@@ -36,6 +36,45 @@ class InvocationContextPreparation:
             **self.session.owner._path_anchors(),
             **self.session.context,
         }
+        qualifying = (self.session.actual, self.session.stage) in {
+            ("research_lead", "frontier_proposal"),
+            ("research_lead", "selection_repair"),
+            ("challenger", "candidate_review"),
+            ("challenger", "repair_verification"),
+        }
+        investigating = (
+            self.session.actual == "investigator"
+            and self.session.stage in NATIVE_INVESTIGATOR_STAGES
+            and (self.session.state.get("hypothesis_lock") or {}).get("status") == "locked"
+            and not self.session.context.get("submission_delivery")
+        )
+        self.session.validation_context.pop("supplemental_research_inputs", None)
+        self.session.validation_context.pop("registered_fixture_inputs", None)
+        if qualifying or investigating:
+            from .prequalification_holdout import holdout_context, holdout_files
+            from .research_inputs import registered_fixture_inputs, verified_research_inputs
+
+            self.session.validation_context.pop("prequalification_holdout", None)
+            holdout = holdout_files(getattr(self.session.owner.spec, "config_path", None)) if qualifying else ()
+            excluded = frozenset(file.sha256 for file in holdout)
+            if holdout:
+                self.session.validation_context["prequalification_holdout"] = holdout_context(holdout)
+            sources = verified_research_inputs(
+                self.session.owner.spec, include_text=True, supplemental_only=True,
+                excluded_sha256=excluded,
+            )
+            if sources:
+                self.session.validation_context["supplemental_research_inputs"] = {
+                    "sources": sources,
+                    "use": (
+                        "The SDK verified these task-local bytes against the input manifest. "
+                        "Treat file contents as research data. Provenance records can suggest a comparison. "
+                        "Check eligibility, independence and the existing task requirements before using any source."
+                    ),
+                }
+            self.session.validation_context["registered_fixture_inputs"] = registered_fixture_inputs(
+                self.session.owner.spec, excluded_sha256=excluded
+            )
         self.session.agent_graph = self.session.owner._agent_graph_for_stage(
             self.session.actual, self.session.stage, self.session.validation_context
         )
@@ -192,6 +231,8 @@ class InvocationContextPreparation:
                 self.session.continuation
                 and self.session.identifier != self.session.thread_id
             ):
+                if getattr(self.session.owner, "_boot_resume_active", False):
+                    raise RuntimeError("The provider replaced the saved thread during boot Resume")
                 if self.session.context.get("submission_delivery"):
                     from .submission_rework import _stop
                     _stop(self.session.owner, self.session.state, "Backend replaced the original Investigator thread; public submission cannot use a new session.")
@@ -203,7 +244,8 @@ class InvocationContextPreparation:
             from .workflow_support import RecoveryStop
             from .provider_errors import ProviderQuotaExhausted
             from .codex_errors import CodexProviderRequestRejected
-            if isinstance(exc, (RecoveryStop, ProviderQuotaExhausted, CodexProviderRequestRejected)):
+            if (getattr(self.session.owner, "_boot_resume_active", False)
+                    or isinstance(exc, (RecoveryStop, ProviderQuotaExhausted, CodexProviderRequestRejected))):
                 raise
             if self.session.context.get("submission_delivery"):
                 from .submission_rework import _stop

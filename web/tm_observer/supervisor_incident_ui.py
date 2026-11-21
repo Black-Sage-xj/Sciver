@@ -30,6 +30,29 @@ _STYLE = """
 .tm-incident-error {min-height:1.2rem; margin:8px 14px 0; color:#fecdd3}
 .tm-incident-actions {margin:8px 14px 14px}
 """
+COMPOSER_STYLE = """
+.tm-incident-chat {
+  --loquix-composer-padding:6px 10px 10px;
+  --loquix-composer-container-bg:#202027;
+  --loquix-composer-container-border-color:#383840;
+  --loquix-composer-container-border-radius:16px;
+  --loquix-composer-container-focus-border-color:#7664d0;
+  --loquix-input-padding:11px 14px 7px;
+  --loquix-input-focus-ring-color:rgba(124,58,237,.18);
+  --loquix-actions-bar-padding:0 6px 4px;
+  --loquix-attachment-panel-padding:4px;
+  --loquix-attachment-trigger-padding:4px 10px;
+  --loquix-attachment-trigger-border-color:#464650;
+  --loquix-attachment-trigger-bg:#26262c;
+  --loquix-attachment-trigger-color:#d4d4da;
+  --loquix-attachment-trigger-hover-bg:#303039;
+  --loquix-attachment-trigger-hover-border-color:#6960a7;
+  --loquix-ai-color:#8066dc;
+}
+.tm-incident-chat loquix-attachment-panel::part(trigger) {border-style:solid; border-radius:9px}
+.tm-incident-chat loquix-attachment-panel::part(trigger):focus-visible,
+.tm-incident-chat loquix-chat-composer::part(send-button):focus-visible {outline:2px solid #a394ff; outline-offset:3px}
+"""
 _SENDER = {"human": "user", "supervisor": "assistant", "tool": "tool", "system": "system"}
 CHAT_MODULE = '<script type="module" src="/vendor/loquix-incident.js"></script>'
 DIALOGUE_SCRIPT = """
@@ -253,7 +276,7 @@ def page_body(record: dict[str, Any], messages: list[dict[str, Any]], *, task_id
     if waiting:
         script += '<script>setTimeout(()=>location.reload(),3000);</script>'
     return (
-        f'<style>{_STYLE}</style><section class="tm-incident" aria-label="Supervisor Incident">'
+        f'<style>{_STYLE}{COMPOSER_STYLE}</style><section class="tm-incident" aria-label="Supervisor Incident">'
         '<header><strong>Supervisor Incident</strong>'
         f'<p class="tm-incident-meta">Cycle {_e(record.get("cycle_id"))}<br>Trigger:<br>'
         f'{_e(record.get("trigger_event"))}</p></header>'

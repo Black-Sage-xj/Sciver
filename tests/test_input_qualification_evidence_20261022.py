@@ -122,7 +122,7 @@ class InputQualificationEvidence(unittest.TestCase):
         original = copy.deepcopy(output)
         review.validate(output, {"candidates": [{"id": "cand-offline"}]})
         self.assertEqual(output, original)
-        self.assertEqual(review.version, 5)
+        self.assertEqual(review.version, 6)
         for role, stage in (("research_lead", "frontier_proposal"),
                             ("challenger", "candidate_review")):
             text = stage_card_text(role, stage) + procedure_card_text(role, stage)

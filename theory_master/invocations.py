@@ -43,7 +43,10 @@ class InvocationLedger:
         record = {"schema": LEDGER_SCHEMA, "recorded_at": now(), **event}
         self.path.parent.mkdir(parents=True, exist_ok=True)
         prior = self.path.read_text(encoding="utf-8") if self.path.is_file() else ""
-        atomic(self.path, prior + json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+        # A prepared/running slot must survive power loss before external work
+        # can begin. Its presence fences cold-boot checkpoint admission.
+        atomic(self.path, prior + json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n",
+               sync_directory=True)
         return record
 
     def records(self) -> list[dict[str, Any]]:

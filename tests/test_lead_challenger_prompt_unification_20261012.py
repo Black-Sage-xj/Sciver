@@ -39,7 +39,7 @@ class QualificationIntegrity(unittest.TestCase):
         self.contract = role_contract("challenger", phase="candidate_review")
 
     def test_candidate_id_authoritative_even_if_review_array_reordered(self):
-        self.assertEqual(self.contract.version, 5)
+        self.assertEqual(self.contract.version, 6)
         reviews = {"reviews": [
             {"candidate_id": "cand-B", "verdict": "reject", "reason": "B fails"},
             {"candidate_id": "cand-A", "verdict": "qualified", "reason": "A works"},
@@ -96,7 +96,7 @@ class QualificationIntegrity(unittest.TestCase):
         self.assertIn("candidate_id",prompt)
         self.assertIn("hypothesis",prompt)
         self.assertIn("for an unmet Goal/Final Gate or a necessary prerequisite",prompt)
-        self.assertIn("Output contract: theory-master/role/challenger/candidate-review/v5",prompt)
+        self.assertIn("Output contract: theory-master/role/challenger/candidate-review/v6",prompt)
         self.assertEqual(prompt.count(stage_definition_text("challenger", "candidate_review")), 1)
         self.assertIn("Review frozen_objective as the binding science", prompt)
         self.assertIn("proposal_context only explains priority and provenance", prompt)

@@ -29,9 +29,9 @@ class RunListTests(unittest.TestCase):
         self.assertIn('window.location.assign(row.dataset.taskUrl)', html)
         self.assertIn("['Enter',' '].includes(event.key)", html)
         self.assertNotIn('<th>操作</th>', html)
-        self.assertEqual(html.count('<th>'), 5)
+        self.assertEqual(html.count('<th>'), 6)
         self.assertEqual(html.count('<tr class="tm-run-clickable"'), PAGE_SIZE)
-        self.assertIn('colspan="5"', run_index_body({"runs": []}))
+        self.assertIn('colspan="6"', run_index_body({"runs": []}))
         self.assertNotIn('/runs/', html)
         page3 = run_index_body(state, page=3)
         self.assertEqual(page3.count('class="tm-run-task-link"'), 3)
@@ -71,6 +71,63 @@ class RunListTests(unittest.TestCase):
         self.assertEqual(page.select_one('.tm-run-state')['title'], 'WAITING_QUOTA')
         self.assertEqual(len(page.select('.tm-run-task-link')), 1)
         self.assertIn('FUTURE_STATE', run_index_body({'runs': rows}, status='FUTURE_STATE'))
+
+    def test_task_goal_seal_supersedes_a_newer_stopped_cycle_only_in_index(self):
+        from bs4 import BeautifulSoup
+        from theory_master.science_graph_store import ScienceGraphStore
+        from tm_observer.collector import collect_state
+        from tm_observer.supervisor_view import index_chip
+
+        def write_task(folder, name, seal_goal_id):
+            task = folder / name
+            metadata = task / '.theory-master'
+            metadata.mkdir(parents=True)
+            config = metadata / 'task_config.json'
+            database = metadata / 'custom_graph.sqlite3'
+            (metadata / 'task.json').write_text(json.dumps({'config_path': str(config)}))
+            config.write_text(json.dumps({'task_name': name, 'goal_id': name,
+                                          'graph_database': str(database)}))
+            (task / '2').mkdir()
+            (task / '6' / 'supervisor').mkdir(parents=True)
+            (task / '6' / 'research_state.json').write_text(json.dumps({
+                'status': 'no_qualified_candidate', 'execution_active': False,
+                'attention': {'code': 'no_qualified_candidate'},
+            }))
+            (task / '6' / 'supervisor' / 'status.json').write_text(json.dumps({
+                'schema': 'theory-master/supervisor-status/v1', 'status': 'hold',
+                'code': 'no_qualified_candidate',
+            }))
+            if seal_goal_id is not None:
+                with ScienceGraphStore(database, auto_refresh_canvas=False) as graph:
+                    graph.seal_goal(goal_id=seal_goal_id, source_cycle='2',
+                                    research_plan_sha256='a' * 64, judge_receipt_ref=None,
+                                    detail={})
+
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            write_task(root, 'Sealed task', 'Sealed task')
+            write_task(root, 'Unsealed task', None)
+            write_task(root, 'Other Goal task', 'Foreign Goal')
+            state = collect_state(root, include_git_info=False)
+            sealed = next(row for row in state['runs'] if row['task_name'] == 'Sealed task')
+            self.assertEqual(sealed['state'], 'NEEDS_ATTENTION')
+            self.assertEqual(sealed['cycle'], '6')
+            self.assertFalse(sealed['pid_alive'])
+            self.assertIn('Supervisor 已停下', index_chip(sealed))
+            self.assertIn('Supervisor 已停下', run_detail_body(sealed))
+
+            completed = BeautifulSoup(run_index_body(state, status='GOAL_PASSED'), 'html.parser')
+            self.assertEqual([link.get_text() for link in completed.select('.tm-run-task-link')],
+                             ['Sealed task'])
+            self.assertEqual(completed.select_one('[data-label="轮次"]').get_text(), '6')
+            self.assertEqual(completed.select_one('.tm-run-state').get_text(), 'Goal 已通过')
+            self.assertEqual(completed.select_one('.tm-run-state')['title'], 'Goal 通过于 Cycle 2')
+            self.assertIsNone(completed.select_one('.tm-supervisor-chip'))
+
+            attention = BeautifulSoup(run_index_body(state, status='NEEDS_ATTENTION'), 'html.parser')
+            self.assertCountEqual([link.get_text() for link in attention.select('.tm-run-task-link')],
+                                  ['Unsealed task', 'Other Goal task'])
+            self.assertEqual(len(attention.select('.tm-supervisor-chip')), 2)
 
     def test_untrusted_list_data_is_escaped(self):
         entry = self.rows(1)[0]
@@ -1347,3 +1404,131 @@ class RecentEventsRightDetailTests(unittest.TestCase):
         mismatch=BeautifulSoup(_recent_timeline(raw,stamps[::-1]),"html.parser")
         self.assertEqual(len(mismatch.select(".tm-recent-select")),0)
         self.assertEqual(len(mismatch.select(".tm-run-events-recent li")),2)
+
+
+class FinalReportEntryTests(unittest.TestCase):
+    def run_record(self, root="/public-synthetic/research"):
+        return {"observer_id": "a" * 16, "research_root": root, "state": "COMPLETED",
+                "run_id": 1, "cycle": "1", "task_name": "Public synthetic task"}
+
+    def metadata(self, state="ready", **extra):
+        return {"available": state in {"ready", "needs_revision"}, "state": state,
+                "title": "A bounded synthetic research result", "versions": [], **extra}
+
+    def test_task_binding_and_cache_are_scoped_to_one_page_render(self):
+        from unittest.mock import patch
+        from tm_observer.final_report_ui import report_view
+        row = self.run_record()
+        cache = {}
+        with patch("tm_observer.final_report_ui.report_metadata", return_value=self.metadata()) as read:
+            first = report_view(row, cache)
+            same = report_view(row, cache)
+            self.assertEqual(read.call_count, 1)
+            self.assertEqual(first, same)
+            self.assertNotIn("research_root", first)
+            self.assertEqual(first["href"], "/research-explorer/?observer_id=" + "a" * 16 + "&final_report=1")
+            read.return_value = self.metadata("needs_revision")
+            self.assertEqual(report_view(row, {})["label"], "待修订")
+            self.assertEqual(read.call_count, 2)
+
+    def test_invalid_bindings_never_read_a_report_or_create_a_link(self):
+        from unittest.mock import patch
+        from tm_observer.final_report_ui import report_view
+        with patch("tm_observer.final_report_ui.report_metadata") as read:
+            for row in ({}, self.run_record("relative/research"),
+                        {**self.run_record(), "observer_id": "../invalid"}):
+                with self.subTest(row=row):
+                    self.assertEqual(report_view(row)["href"], "")
+            read.assert_not_called()
+
+    def test_unfinished_tasks_have_no_document_entry_even_if_a_report_exists(self):
+        from unittest.mock import patch
+        from bs4 import BeautifulSoup
+        from tm_observer.final_report_ui import report_view
+        from tm_observer.final_report_entry_ui import render_report_entry
+        with patch("tm_observer.final_report_ui.report_metadata", return_value=self.metadata()) as read:
+            for state in ("LIVE", "RUNNING", "OVER", "PAUSED", "STOPPED", "FAILED", "NEW", "UNKNOWN"):
+                row = {**self.run_record(), "state": state, "raw_status": "COMPLETED"}
+                with self.subTest(state=state):
+                    view = report_view(row, {row["research_root"]: self.metadata()})
+                    self.assertFalse(view["visible"])
+                    self.assertFalse(view["available"])
+                    self.assertEqual(view["href"], "")
+                    for placement in ("console", "list"):
+                        page = BeautifulSoup(render_report_entry(row, placement=placement), "html.parser")
+                        self.assertFalse(page.select(".tm-final-report-entry, a, svg"))
+                        self.assertTrue(page.select_one("[data-final-report-entry]").has_attr("hidden"))
+            read.assert_not_called()
+
+    def test_both_surfaces_distinguish_readable_drafts_from_generation_states(self):
+        from unittest.mock import patch
+        from bs4 import BeautifulSoup
+        from tm_observer.final_report_entry_ui import render_report_entry
+        labels = {"ready": "已生成", "needs_revision": "待修订", "queued": "排队中",
+                  "running": "生成中", "failed": "生成失败", "missing": "尚未生成"}
+        for state, label in labels.items():
+            with self.subTest(state=state), patch("tm_observer.final_report_ui.report_metadata", return_value=self.metadata(state)):
+                for placement in ("console", "list"):
+                    page = BeautifulSoup(render_report_entry(self.run_record(), placement=placement), "html.parser")
+                    entry = page.select_one(".tm-final-report-entry")
+                    self.assertEqual(entry["data-report-state"], state)
+                    self.assertIn(label, entry.get_text())
+                    self.assertEqual(entry["data-report-available"], str(state in {"ready", "needs_revision"}).lower())
+                    if state in {"ready", "needs_revision"}:
+                        self.assertIn("final_report=1", entry["href"])
+                        self.assertTrue(entry.select("svg.tm-final-report-icon"))
+                    else:
+                        self.assertFalse(entry.has_attr("href"))
+                        self.assertEqual(entry["role"], "status")
+                        self.assertFalse(entry.select("svg"))
+        with patch("tm_observer.final_report_ui.report_metadata", return_value=self.metadata("missing")):
+            active = {**self.run_record(), "state": "LIVE"}
+            self.assertNotIn("完成后生成", render_report_entry(active))
+
+    def test_report_title_is_escaped_and_previous_version_stays_readable_during_regeneration(self):
+        from unittest.mock import patch
+        from bs4 import BeautifulSoup
+        from tm_observer.final_report_entry_ui import render_report_entry
+        malicious = '<img src=x onerror="alert(1)">'
+        with patch("tm_observer.final_report_ui.report_metadata", return_value=self.metadata(title=malicious, latest_job_state="running")):
+            page = BeautifulSoup(render_report_entry(self.run_record(), placement="console"), "html.parser")
+            self.assertFalse(page.select("img,script,[onerror]"))
+            entry = page.select_one("a.tm-final-report-entry")
+            self.assertEqual(entry["title"], malicious)
+            self.assertIn("新版生成中", entry.get_text())
+            self.assertEqual(entry["data-report-available"], "true")
+
+    def test_task_list_only_reads_visible_reports_and_keeps_task_links_separate(self):
+        from unittest.mock import patch
+        from bs4 import BeautifulSoup
+        rows = [{**self.run_record(), "observer_id": f"{i:016x}"} for i in range(43)]
+        with patch("tm_observer.final_report_ui.report_metadata", return_value=self.metadata()) as read:
+            page = BeautifulSoup(run_index_body({"runs": rows}), "html.parser")
+            self.assertEqual(read.call_count, 1)
+            self.assertEqual(len(page.select("a.tm-final-report-entry")), PAGE_SIZE)
+            self.assertEqual(len(page.select("a.tm-run-task-link")), PAGE_SIZE)
+            self.assertIn("最终总报告", [item.get_text() for item in page.select("th")])
+            for entry in page.select("a.tm-final-report-entry"):
+                self.assertTrue(entry["href"].startswith("/research-explorer/?observer_id="))
+
+    def test_console_uses_task_report_when_a_historical_worker_is_selected(self):
+        from unittest.mock import patch
+        from bs4 import BeautifulSoup
+        master = self.run_record()
+        worker = {**master, "observer_id": "b" * 16, "research_root": "/public-synthetic/worker"}
+        with patch("tm_observer.worker_console.select_worker", return_value=(worker, [], "worker-1")), \
+             patch("tm_observer.worker_console.worker_batch_cycle_progress", return_value={}), \
+             patch("tm_observer.worker_console.live_task_runner", return_value=False), \
+             patch("tm_observer.run_views._worker_summary_controls", return_value=""), \
+             patch("tm_observer.run_tui_bridge.read_tui", return_value={"parts": {}, "status": "COMPLETED"}), \
+             patch("tm_observer.final_report_ui.report_metadata", return_value=self.metadata()) as read:
+            page = BeautifulSoup(run_detail_body(master, worker_id="worker-1", fragment=True), "html.parser")
+            entry = page.select_one('[data-final-report-entry="console"] a')
+            self.assertIn("observer_id=" + "a" * 16, entry["href"])
+            read.assert_called_once_with(Path(master["research_root"]))
+            read.reset_mock()
+            unfinished = {**master, "state": "LIVE"}
+            page = BeautifulSoup(run_detail_body(unfinished, worker_id="worker-1", fragment=True), "html.parser")
+            self.assertIsNone(page.select_one('[data-final-report-entry="console"] .tm-final-report-entry'))
+            self.assertTrue(page.select_one('[data-final-report-entry="console"]').has_attr("hidden"))
+            read.assert_not_called()

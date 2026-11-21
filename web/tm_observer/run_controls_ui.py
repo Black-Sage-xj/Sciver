@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from . import run_monitor
-from .quota_auto_ui import _help_tooltip
+from .quota_auto_ui import _help_tooltip, quota_auto_card
 from .supervisor_view import supervisor_enabled_for
 
 
@@ -306,12 +306,31 @@ def _switch_control(key: str, label: str, enabled: bool, mode: str) -> str:
 
 
 def quota_auto_switch(run: dict[str, Any]) -> str:
-    """Render the sole quota toggle, attached to the controller status card."""
+    """Render the quota toggle for the task Settings page."""
     sources, _models, _flags = _settings_sources(run)
     for key, label, _description, enabled, mode, _aux in sources:
         if key == "quota_auto_adjust":
             return _switch_control(key, label, enabled, mode)
     return ""
+
+
+def supervisor_worker_control(run: dict[str, Any]) -> str:
+    """Render the task-wide Supervisor switch beside the Agent controls."""
+    enabled = supervisor_enabled_for(run, run_monitor.data(run))
+    return (
+        '<div class="tm-worker-supervisor" data-worker-supervisor-control>'
+        '<span class="tm-worker-supervisor-copy">'
+        '<span class="tm-worker-supervisor-title"><strong>Supervisor</strong>'
+        + _help_tooltip(
+            "supervisor-toggle",
+            "任务跑不下去时由 SDK 内部 Supervisor 接管。开关保存后在下一次安全判定生效，不打断当前 Agent Turn。",
+        )
+        + '</span><small data-supervisor-status>'
+        + ("开启" if enabled else "关闭")
+        + ' · 当前任务</small></span>'
+        + _switch_control("supervisor", "Supervisor", enabled, "hot")
+        + '</div>'
+    )
 
 
 def settings_panel(run: dict[str, Any], *, audit_only: bool = False) -> str:
@@ -321,6 +340,7 @@ def settings_panel(run: dict[str, Any], *, audit_only: bool = False) -> str:
     toggles = []
     details = []
     audit_menu = ""
+    supervisor_menu = ""
     learning_panel = ""
     for key, label, description, enabled, mode, aux in sources:
         if key == "skill_learning":
@@ -371,6 +391,16 @@ def settings_panel(run: dict[str, Any], *, audit_only: bool = False) -> str:
                 '<button type="button" data-setting-save-model="' + aux + '">保存模型</button></div>'
                 '<p class="tm-setting-advanced-note">只有点击“保存模型”才写入任务覆盖配置。</p>'
             )
+        if key == "supervisor" and audit_only:
+            supervisor_item = item.replace(
+                'data-setting-detail="supervisor" hidden>',
+                'data-setting-detail="supervisor">',
+            )
+            supervisor_menu = (
+                '<details class="tm-setting-gear-submenu">'
+                '<summary>Supervisor 模型配置</summary>'
+                + supervisor_item + '</section></details>'
+            )
         if key == "cycle_audit":
             # A standalone settings page exposes the actual Audit model
             # editor, unlike a hidden item in Run's contextual detail rail.
@@ -391,8 +421,19 @@ def settings_panel(run: dict[str, Any], *, audit_only: bool = False) -> str:
         else:
             details.append(item + '</section>')
     if audit_only:
+        state = run_monitor.data(run)
+        quota_state = state.get("quota_auto_adjust")
+        quota_state = dict(quota_state) if isinstance(quota_state, dict) else {}
+        quota_state["enabled"] = bool(state.get("quota_auto_adjust_enabled"))
+        if not quota_state.get("status") and not quota_state.get("enabled"):
+            quota_state["status"] = "disabled"
+        quota_panel = quota_auto_card(
+            quota_state,
+            quota_switch_html=quota_auto_switch(run),
+        )
         return ('<section class="tm-settings-audit" id="tm-web-settings"'
-                ' aria-label="科研后台设置">' + audit_menu + learning_panel
+                ' aria-label="科研后台设置">' + quota_panel + supervisor_menu
+                + audit_menu + learning_panel
                 + '<p class="tm-setting-feedback" role="status" aria-live="polite"></p>'
                 '</section>')
     return (

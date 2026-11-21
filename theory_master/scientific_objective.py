@@ -18,14 +18,23 @@ def frozen_science_view(value: Any, *, legacy: bool = False) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return {}
     science = {key: value.get(key) for key in SCIENCE_FIELDS}
+    if "evaluation_materials" in value:
+        science["evaluation_materials"] = value["evaluation_materials"]
     if legacy and not science["decisive_test"]:
         science["decisive_test"] = value.get("cycle_milestone")
     return {key: val for key, val in science.items() if val not in (None, "", [], {})}
 
 
+def complete_science(value: Mapping[str, Any]) -> bool:
+    return all(isinstance(value.get(key), str) and value[key].strip() for key in SCIENCE_FIELDS)
+
+
 def serialize_frozen_science(objective: Mapping[str, Any]) -> str:
     # Preserve exact field values, including Unicode and scientific whitespace.
-    return json.dumps({key: objective[key] for key in SCIENCE_FIELDS},
+    payload = {key: objective[key] for key in SCIENCE_FIELDS}
+    if "evaluation_materials" in objective:
+        payload["evaluation_materials"] = objective["evaluation_materials"]
+    return json.dumps(payload,
                       ensure_ascii=False, separators=(",", ":"))
 
 

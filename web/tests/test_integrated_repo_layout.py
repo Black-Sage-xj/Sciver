@@ -25,7 +25,7 @@ class IntegratedRepoLayoutTests(TestCase):
         with tempfile.TemporaryDirectory() as folder:
             package = Path(folder) / 'site-packages' / 'theory_master'
             package.mkdir(parents=True)
-            for name in ('stage_registry.py', 'contract_stages.py', 'hypothesis_display.py', 'prompt_stages.py'):
+            for name in ('stage_registry.py', 'contract_stages.py', 'hypothesis_display.py', 'prompt_stages.py', 'evaluation_history.py', 'goal_gaps.py'):
                 shutil.copyfile(source / name, package / name)
             with patch('tm_observer.stage_flow.importlib.util.find_spec',
                        return_value=SimpleNamespace(origin=str(package / '__init__.py'))), \

@@ -16,7 +16,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from .operator_technical_recovery import VALIDATOR as TECHNICAL_RECOVERY_VALIDATOR
 from .runtime import now, write_json
+from .supervisor_qualification_reentry import VALIDATOR as QUALIFICATION_REPLY_VALIDATOR
+from .supervisor_reporter_input_recovery import VALIDATOR as REPORTER_INPUT_VALIDATOR
+from .supervisor_fixture_conflict_recovery import VALIDATOR as FIXTURE_CONFLICT_VALIDATOR
 
 SCHEMA = 'theory-master/supervisor-repair/v1'
 CANVAS_VALIDATOR = 'canvas-offline/v1'
@@ -29,6 +33,10 @@ BENCHMARK_PROVENANCE_VALIDATOR = 'benchmark-provenance-alias/v1'
 NATIVE_GOAL_REATTACHMENT_VALIDATOR = 'native-goal-origin-reattachment/v1'
 LINEAGE_STRUCTURE_VALIDATOR = 'lead-lineage-structure-reentry/v1'
 DELIVERY_ALIAS_VALIDATOR = 'native-complete-delivery-alias/v1'
+JSON_ARRAY_VALIDATOR = 'json-root-array-reentry/v1'
+COMPLETED_DELIVERY_VALIDATOR = 'operator-completed-delivery-reentry/v1'
+FRONTIER_EMPTY_VALIDATOR = 'lead-empty-frontier-reentry/v1'
+REPORT_DOCUMENT_VALIDATOR = 'report-document-snapshot-reentry/v1'
 # Import-only, non-instantiating probes; expanding this map requires review.
 _ATTRIBUTE_CLASSES = {'Workflow': 'workflow'}
 RECEIPT_KEY = 'supervisor_repair_receipt'
@@ -65,7 +73,10 @@ def failure_binding(cycle: Path, state: dict) -> str:
             raise ValueError('Repair checkpoint does not match the frozen Cycle identity')
     elif not state.get('role_outputs'):
         from .supervisor_lineage_recovery import is_untouched_lineage_failure
-        if not is_untouched_lineage_failure(cycle, state):
+        from .supervisor_json_array_recovery import is_untouched_json_array_failure
+        from .supervisor_qualification_reentry import is_untouched_envelope_failure
+        if not (is_untouched_lineage_failure(cycle, state) or is_untouched_json_array_failure(cycle, state)
+                or is_untouched_envelope_failure(cycle, state)):
             raise ValueError('Repair has no committed checkpoint or role boundary')
     return _digest([str(cycle.resolve()), protected, checkpoint_hash])
 
@@ -148,7 +159,7 @@ def inspect_repair_receipt(cycle: Path, state: dict, *, engine: Path | None = No
     receipt = json.loads(path.read_text())
     if (not isinstance(receipt, dict) or _digest(receipt) != ref.get('sha256')
             or receipt.get('schema') != SCHEMA
-            or receipt.get('validator') not in {CANVAS_VALIDATOR, ATTRIBUTE_VALIDATOR, CANDIDATE_VALIDATOR, CONFIG_VALIDATOR, CONTRACT_PROJECTION_VALIDATOR, EXECUTION_LIMIT_PROTOCOL_VALIDATOR, BENCHMARK_PROVENANCE_VALIDATOR, NATIVE_GOAL_REATTACHMENT_VALIDATOR, LINEAGE_STRUCTURE_VALIDATOR, DELIVERY_ALIAS_VALIDATOR}
+            or receipt.get('validator') not in {CANVAS_VALIDATOR, ATTRIBUTE_VALIDATOR, CANDIDATE_VALIDATOR, CONFIG_VALIDATOR, CONTRACT_PROJECTION_VALIDATOR, EXECUTION_LIMIT_PROTOCOL_VALIDATOR, BENCHMARK_PROVENANCE_VALIDATOR, NATIVE_GOAL_REATTACHMENT_VALIDATOR, LINEAGE_STRUCTURE_VALIDATOR, DELIVERY_ALIAS_VALIDATOR, JSON_ARRAY_VALIDATOR, COMPLETED_DELIVERY_VALIDATOR, FRONTIER_EMPTY_VALIDATOR, REPORT_DOCUMENT_VALIDATOR, REPORTER_INPUT_VALIDATOR, TECHNICAL_RECOVERY_VALIDATOR, QUALIFICATION_REPLY_VALIDATOR, FIXTURE_CONFLICT_VALIDATOR}
             or receipt.get('phase') != 'repair_validated'
             or receipt.get('failure_binding') != failure_binding(cycle, state)
             or receipt.get('source_root') != str(engine.resolve())
@@ -172,6 +183,38 @@ def inspect_repair_receipt(cycle: Path, state: dict, *, engine: Path | None = No
     if receipt['validator'] == LINEAGE_STRUCTURE_VALIDATOR:
         from .supervisor_lineage_recovery import recheck_receipt_inputs
         recheck_receipt_inputs(receipt)
+        return receipt
+    if receipt['validator'] == JSON_ARRAY_VALIDATOR:
+        from .supervisor_json_array_recovery import recheck_receipt_inputs
+        recheck_receipt_inputs(receipt)
+        return receipt
+    if receipt['validator'] == COMPLETED_DELIVERY_VALIDATOR:
+        from .operator_completed_delivery import recheck_receipt_inputs
+        recheck_receipt_inputs(receipt)
+        return receipt
+    if receipt['validator'] == FRONTIER_EMPTY_VALIDATOR:
+        from .supervisor_frontier_recovery import recheck_receipt_inputs
+        recheck_receipt_inputs(receipt)
+        return receipt
+    if receipt['validator'] == REPORT_DOCUMENT_VALIDATOR:
+        from .supervisor_report_document_recovery import recheck_receipt_inputs
+        recheck_receipt_inputs(receipt, state)
+        return receipt
+    if receipt['validator'] == FIXTURE_CONFLICT_VALIDATOR:
+        from .supervisor_fixture_conflict_recovery import recheck_receipt_inputs
+        recheck_receipt_inputs(receipt, state)
+        return receipt
+    if receipt['validator'] == REPORTER_INPUT_VALIDATOR:
+        from .supervisor_reporter_input_recovery import recheck_receipt_inputs
+        recheck_receipt_inputs(receipt, state)
+        return receipt
+    if receipt['validator'] == TECHNICAL_RECOVERY_VALIDATOR:
+        from .operator_technical_recovery import recheck_receipt_inputs
+        recheck_receipt_inputs(receipt)
+        return receipt
+    if receipt['validator'] == QUALIFICATION_REPLY_VALIDATOR:
+        from .supervisor_qualification_reentry import recheck_receipt_inputs
+        recheck_receipt_inputs(receipt, state)
         return receipt
     if receipt['validator'] == DELIVERY_ALIAS_VALIDATOR:
         from .supervisor_delivery_alias_recovery import recheck_receipt_inputs
@@ -214,6 +257,14 @@ def validate_existing_execution_limit_protocol(cycle: Path, state: dict, *, engi
     Its scientific explanation is neither evaluated nor promoted to a handoff.
     A fresh Investigator must author any execution-limit record itself.
     """
+    from .supervisor_technical_rescan_recovery import validate_technical_rescan
+    authorized_rescan = validate_technical_rescan(cycle, state, engine=engine)
+    if authorized_rescan is not None:
+        return authorized_rescan
+    from .operator_technical_recovery import validate_operator_technical_recovery
+    operator_recovery = validate_operator_technical_recovery(cycle, state, engine=engine)
+    if operator_recovery is not None:
+        return operator_recovery
     recovery, native = state.get('recovery') or {}, state.get('native_goal') or {}
     if (state.get('status') != 'failed' or state.get('execution_active')
             or recovery.get('action') != 'error' or recovery.get('kind') != 'NativeGoalRuntimeFailure'

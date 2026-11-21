@@ -149,6 +149,78 @@ def test_missing_shape_is_corrected_by_original_investigator_then_sealed(tmp_pat
     )
 
 
+def test_python_delivery_uses_original_thread_and_frozen_structure_only(tmp_path):
+    spec = make_spec(tmp_path / "task")
+    declaration = {
+        "schema": "theory-master/public-python-submission-contract/v1",
+        "filename": "solution.py",
+        "callable": {"name": "solve", "parameters": ["x", "y"]},
+        "allowed_imports": ["numpy"],
+    }
+    (spec.benchmark_root / "submission.json").write_text(json.dumps(declaration))
+    backend = AuthorBackend()
+    workflow = Workflow(spec, backend)
+    initial_source = "def solve(x):\n    return x\n"
+    supplemental_source = (
+        "def solve(x, y):\n"
+        "    raise AssertionError('structural verification must not call the entrypoint')\n"
+    )
+    invoke = backend.invoke
+
+    def write_python(role, prompt, *args):
+        if role == "investigator":
+            workspace = Path(backend.cwd)
+            if context(prompt).get("submission_delivery"):
+                (workspace / "supplemental").mkdir()
+                (workspace / "supplemental" / "solution.py").write_text(supplemental_source)
+            else:
+                (workspace / "solution.py").write_text(initial_source)
+        return invoke(role, prompt, *args)
+
+    with patch.object(backend, "invoke", side_effect=write_python):
+        state = workflow.run()
+
+    assert state["goal_status"] == "passed", state.get("error")
+    assert state["scientific_verdict"] == "supported"
+    assert len(backend.prompts) == 2
+    assert len(set(backend.investigator_threads)) == 1
+    assert backend.goal_calls == 1
+    assert state["submission_delivery_repair_count"] == 1
+    assert state["submission_delivery_attempt"]["status"] == "completed"
+    correction = context(backend.prompts[-1])
+    feedback = correction["submission_delivery"]
+    assert feedback["format"] == "python"
+    assert correction["public_submission"] == feedback["frozen_material_access"]["submission_contract"]
+    assert correction["public_submission"]["callable"] == declaration["callable"]
+    assert correction["public_submission"]["allowed_imports"] == ["numpy"]
+    assert "supplemental Python artifact named `solution.py`" in feedback["instruction"]
+    assert "This stage checks structure only." in backend.prompts[-1]
+    assert "Do not execute the artifact" in feedback["instruction"]
+    assert "supplemental JSON artifact" not in backend.prompts[-1]
+    assert (workflow.cycle_workspace / "solution.py").read_text() == initial_source
+    receipt = json.loads(Path(state["goal_completion"]["receipt_path"]).read_text())
+    validation = receipt["submission_validation"]
+    assert validation["verification"] == "python_ast_structure"
+    assert validation["submission"]["path"].endswith("supplemental/solution.py")
+
+
+def test_delivery_rejects_an_unknown_frozen_format_before_dispatch():
+    from theory_master.submission_rework import correct_submission_delivery
+    from theory_master.workflow_support import RecoveryStop
+
+    owner = SimpleNamespace(
+        _check_recovery_control=lambda state: None,
+        _emit=lambda *args: None,
+        _persist=lambda state: None,
+    )
+    state = {"goal_submission_gap": {"validation": {"contract_sha256": "pinned"}}}
+    snapshot = SimpleNamespace(access={"submission_contract": {"format": "unknown", "sha256": "pinned"}})
+    with pytest.raises(RecoveryStop, match="does not authorize this correction format"):
+        correct_submission_delivery(owner, state, snapshot)
+    assert state["attention"]["code"] == "public_submission_incomplete"
+    assert "submission_delivery_repair_count" not in state
+
+
 def test_valid_authored_delivery_has_no_extra_turn(tmp_path):
     spec = make_spec(tmp_path / "task")
     backend = AuthorBackend(initial_valid=True)
@@ -304,7 +376,7 @@ def test_schema_const_path_is_opaque_and_alias_is_frozen(tmp_path):
 
 
 def test_resume_delivery_gap_only_reenters_goal_without_rewriting_science(tmp_path):
-    from theory_master.submission_rework import _stop
+    from theory_master.submission_rework import _stop, submission_takeover_preflight
 
     spec = make_spec(tmp_path / "task")
     backend = AuthorBackend()
@@ -325,6 +397,9 @@ def test_resume_delivery_gap_only_reenters_goal_without_rewriting_science(tmp_pa
     assert state["scientific_phase"] == "committed"
     assert state["submission_delivery_repair_count"] == 1
     cycle = workflow.cycle_dir
+    persisted = (cycle / "research_state.json").read_bytes()
+    assert submission_takeover_preflight(cycle, state)["status"] == "ready"
+    assert (cycle / "research_state.json").read_bytes() == persisted
     preserved = {
         path: path.read_bytes()
         for path in cycle.rglob("*")
@@ -378,17 +453,79 @@ def test_resume_delivery_gap_only_reenters_goal_without_rewriting_science(tmp_pa
 
 
 def test_resume_exhausted_gap_cannot_buy_another_correction(tmp_path):
+    from theory_master.submission_rework import submission_takeover_preflight
+
     spec = make_spec(tmp_path / "task", reworks=1)
     backend = AuthorBackend(repair_valid=False)
     workflow = Workflow(spec, backend)
     state = workflow.run()
     assert state["submission_delivery_repair_count"] == 1
+    assert submission_takeover_preflight(workflow.cycle_dir, state)["code"] == "submission_corrections_exhausted"
     count = len(backend.calls)
     state = Workflow(spec, backend).resume(str(spec.master_id))
     assert state["status"] == "needs_attention", state.get("error")
     assert state["submission_delivery_repair_count"] == 1
     assert len(backend.calls) == count
     assert state["goal_status"] != "passed"
+
+
+@pytest.mark.parametrize("drift", [False, True])
+def test_supervisor_gate_only_resume_spends_no_extra_correction(tmp_path, drift):
+    from theory_master import submission_rework
+
+    spec = make_spec(tmp_path / "task", reworks=2)
+    backend = AuthorBackend()
+    workflow = Workflow(spec, backend)
+    correct = submission_rework.correct_submission_delivery
+
+    def stop_after_authoring(owner, state, snapshot, **kwargs):
+        correct(owner, state, snapshot, **kwargs)
+        submission_rework._stop(owner, state, "offline interruption after registration")
+
+    with patch.object(submission_rework, "correct_submission_delivery", side_effect=stop_after_authoring):
+        state = workflow.run()
+    cycle = workflow.cycle_dir
+    assert state["submission_delivery_repair_count"] == 1
+    if not drift:
+        state["investigator_budget"] = {"exhausted": True}
+        (cycle / "research_state.json").write_text(json.dumps(state))
+    assert submission_rework.submission_takeover_preflight(cycle, state)["status"] == "ready_for_goal"
+    calls = len(backend.calls)
+    resumed = Workflow(spec, backend)
+    goal_gate = resumed._run_goal_completion
+
+    def change_after_preflight(*args, **kwargs):
+        if drift:
+            (cycle / "workspace/authored_submission.json").unlink()
+        return goal_gate(*args, **kwargs)
+
+    with patch.object(resumed, "_run_goal_completion", side_effect=change_after_preflight):
+        state = resumed.resume(str(spec.master_id), supervisor_takeover=True)
+
+    assert state["submission_delivery_repair_count"] == 1
+    assert resumed.cycle_dir == cycle
+    if drift:
+        assert state["attention"]["code"] == "public_submission_incomplete"
+        assert backend.calls[calls:] == []
+    else:
+        assert state["goal_status"] == "passed"
+        assert backend.calls[calls:] == [("judge", "goal_completion")]
+
+
+def test_supervisor_preflight_declines_changed_submission_receipt(tmp_path):
+    from theory_master.submission_rework import submission_takeover_preflight
+
+    spec = make_spec(tmp_path / "task", reworks=0)
+    workflow = Workflow(spec, AuthorBackend())
+    state = workflow.run()
+    receipt = Path(state["goal_submission_gap"]["receipt_path"])
+    content = json.loads(receipt.read_text())
+    content["source_cycle"] = "other-cycle"
+    receipt.write_text(json.dumps(content))
+
+    result = submission_takeover_preflight(workflow.cycle_dir, state, spec=spec)
+    assert result["status"] == "hold"
+    assert result["code"] == "submission_authority_unverified"
 
 
 def test_valid_but_unregistered_workspace_json_cannot_satisfy_gate(tmp_path):

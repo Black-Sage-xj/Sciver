@@ -62,10 +62,9 @@ html[data-sciver-theme] .ex-reader .ex-transition-facts .ex-md{font-size:13px;li
 .ex-transition-role,.ex-transition-status{display:block;font-size:11px;line-height:1.7;color:var(--read-muted)}
 html[data-sciver-theme] .ex-reader .ex-transition-source-link{max-width:100%;margin:0;padding:2px 0;white-space:normal;overflow-wrap:anywhere;text-align:left;color:var(--read-blue)}
 .ex-transition-source-link small{color:var(--read-muted);font-size:10px}
-.ex-transition-goal,.ex-transition-results{margin-top:11px;font-size:12px;color:var(--read-muted)}
-.ex-transition-goal>summary,.ex-transition-results>summary{cursor:pointer}
+.ex-transition-goal{margin-top:11px;font-size:12px;color:var(--read-muted)}
+.ex-transition-goal>summary{cursor:pointer}
 .ex-transition-goal[open]>summary{margin-bottom:9px}
-.ex-transition-results .ex-ref{font-size:11px}
 .ex-research-transition>.ex-reader-empty+.ex-transition-sources{margin-top:12px;margin-bottom:0}
 .ex-assessment-note{margin:17px 0 0;font-size:12px;color:var(--read-muted);line-height:1.6}
 .ex-whole-assessment{margin-top:17px;font-size:12px}
@@ -125,6 +124,9 @@ html[data-sciver-theme] .ex-reader .ex-md tr:nth-child(even) td{background:color
 html[data-sciver-theme] .ex-reader .ex-md tr:last-child td{border-bottom:0}
 html[data-sciver-theme] .ex-reader .ex-md hr{height:1px;border:0;background:var(--read-border);margin:24px 0}
 html[data-sciver-theme] .ex-reader .ex-md img{max-width:100%;height:auto;border-radius:8px}
+html[data-sciver-theme] .ex-reader .ex-md .research-lineage-image{max-width:100%;overflow-x:auto;scrollbar-color:var(--read-muted) var(--read-soft)}
+html[data-sciver-theme] .ex-reader .ex-md .research-lineage-image img{max-width:none;display:block}
+html[data-sciver-theme] .ex-reader .ex-md .research-story-image img{max-width:100%}
 html[data-sciver-theme] .ex-reader .ex-md .katex-display{overflow-x:auto;overflow-y:hidden;padding:10px 0;color:var(--read-blue)}
 html[data-sciver-theme] .ex-reader .ex-md .token:is(.comment,.prolog,.doctype,.cdata){color:var(--read-muted)}
 html[data-sciver-theme] .ex-reader .ex-md .token:is(.keyword,.boolean,.tag,.atrule){color:var(--read-purple)}

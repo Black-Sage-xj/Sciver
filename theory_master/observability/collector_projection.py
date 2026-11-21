@@ -549,8 +549,8 @@ class CollectorProjectionMixin:
             self.state["attention"] = {
                 "code": "no_qualified_candidate",
                 "reason": str(sci.get("qualification_rationale") or "Qualification stopped without a qualified candidate."),
-                "requested_action": "Review or revise the research preparation, then resume this Cycle.",
-                "resume_behavior": "Resume restarts qualification from Research Lead with a fresh frontier before Challenger review.",
+                "requested_action": "Provide a new research direction or declared input, or explicitly request another attempt; repeated unchanged qualification waits after a bounded fresh-Lead retry.",
+                "resume_behavior": "Task Resume requests a fresh Cycle and preserves the exhausted attempt; automatic continuation remains bounded by unchanged research direction and existing stop/resource guards.",
             }
         elif self.state.get("human_attention") and str(sci.get("status") or "") == "needs_attention":
             self.state["attention"] = {

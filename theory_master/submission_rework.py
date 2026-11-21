@@ -5,10 +5,17 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
+import sqlite3
+from pathlib import Path
 from typing import Any
 
 from .runtime import now, write_json
 from .workflow_support import RecoveryStop
+
+
+def _gap_digest(gap: dict) -> str:
+    return hashlib.sha256(json.dumps(gap, sort_keys=True).encode()).hexdigest()
 
 
 def persist_submission_gap(
@@ -25,14 +32,137 @@ def persist_submission_gap(
         "snapshot_manifest_sha256": snapshot.manifest_sha256,
         "authority": "public_submission_structure_only",
     }
-    digest = hashlib.sha256(json.dumps(gap, sort_keys=True).encode()).hexdigest()
-    path = owner.cycle_dir / "submission_delivery" / (digest + ".json")
+    path = owner.cycle_dir / "submission_delivery" / (_gap_digest(gap) + ".json")
     write_json(path, gap)
     state["goal_submission_gap"] = {**gap, "receipt_path": str(path)}
     state["goal_status"] = "active"
     owner._emit(state, "goal.submission_incomplete", state["goal_submission_gap"])
     owner._persist(state)
     return state["goal_submission_gap"]
+
+
+def _restore_submission_snapshot(cycle: Path, state: dict):
+    from .delivery_repair import _canonical
+    from .goal_snapshot import GoalAuthoritySnapshot
+    from .public_submission import MAX_SUBMISSION_BYTES, read_bounded_regular_file, strict_json
+
+    gap = state["goal_submission_gap"]
+    pending = state["goal_delivery_pending"]
+    if (gap["source_cycle"] != cycle.name or gap["repair_role"] != "investigator"
+            or gap["authority"] != "public_submission_structure_only"
+            or gap["validation"]["status"] != "invalid"
+            or gap["validation"]["code"] != gap["code"]
+            or pending["cycle_id"] != cycle.name or pending["closed_status"] not in {"over", "completed"}
+            or any(not gap[key] or gap[key] != pending[key] for key in (
+                "delivery_revision", "snapshot_manifest", "snapshot_manifest_sha256"))):
+        raise ValueError("Submission gap does not bind the pending delivery")
+    evidence = {key: value for key, value in gap.items() if key != "receipt_path"}
+    receipt = cycle / "submission_delivery" / (_gap_digest(evidence) + ".json")
+    if (gap["receipt_path"] != str(receipt)
+            or strict_json(read_bounded_regular_file(receipt, MAX_SUBMISSION_BYTES)) != evidence):
+        raise ValueError("Submission gap receipt changed")
+    revision = gap["delivery_revision"]
+    if not re.fullmatch(r"[a-f0-9]{64}", revision):
+        raise ValueError("Invalid frozen submission revision identity")
+    revision_path = cycle.parent / "delivery_revisions" / f"{revision}.json"
+    frozen = strict_json(read_bounded_regular_file(revision_path, MAX_SUBMISSION_BYTES))
+    if (hashlib.sha256(_canonical(frozen)).hexdigest() != revision or frozen["cycle_id"] != cycle.name
+            or frozen["submission_contract"]["sha256"] != gap["validation"]["contract_sha256"]):
+        raise ValueError("Frozen submission revision changed")
+    manifest = Path(gap["snapshot_manifest"])
+    if manifest.name != "manifest.json" or manifest.parent.parent != cycle / "goal_snapshots":
+        raise ValueError("Submission snapshot belongs to another Cycle")
+    read_bounded_regular_file(manifest, MAX_SUBMISSION_BYTES)
+    snapshot = GoalAuthoritySnapshot.restore(manifest, gap["snapshot_manifest_sha256"])
+    access = snapshot.access
+    if (access["delivery_revision"] != gap["delivery_revision"]
+            or access["submission_contract"]["sha256"] != gap["validation"]["contract_sha256"]):
+        raise ValueError("Submission snapshot changed its delivery or public schema authority")
+    return snapshot
+
+
+def submission_takeover_preflight(cycle: Path, state: dict, *, spec: Any = None) -> dict | None:
+    """Classify a stopped submission without dispatching or changing its evidence."""
+    attention = state.get("attention")
+    if not isinstance(attention, dict) or attention.get("code") != "public_submission_incomplete":
+        return None
+
+    def hold(code: str, reason: str) -> dict:
+        return {"status": "hold", "code": code, "reason": reason}
+
+    from .delivery_repair import _canonical, current_delivery_payload
+    from .goal_terminal import goal_sealed
+    from .investigator_budget import budget_status
+    from .notebook import graph_database_path
+    from .public_submission import check_current_submission
+    from .science_graph_store import ScienceGraphStore
+    from .specification import TaskSpec
+
+    cycle = Path(cycle).absolute()
+    control = cycle / "recovery_control.json"
+    try:
+        recovery = state.get("recovery") or {}
+        if (state.get("cycle_id") != cycle.name or state.get("status") != "needs_attention"
+                or state.get("phase") != "goal_submission:delivery_pending"
+                or state.get("execution_active") or state.get("active_invocation_id") is not None
+                or not state.get("resumable") or state.get("abandoned_cycle")
+                or control.exists() or control.is_symlink()
+                or recovery.get("action") in {"pause", "interrupt", "kill", "abandon_cycle"}):
+            return hold("submission_stop_changed", "The original submission stop is no longer available for takeover.")
+
+        spec = spec or TaskSpec.from_task_root(cycle.parent)
+        lock, threads = state["hypothesis_lock"], state["threads"]
+        judge = state["role_outputs"]["judge"]
+        thread = threads.get("investigator")
+        native = state.get("native_goal") or {}
+        if (Path(spec.research_root).resolve() != cycle.parent or state.get("goal_sha256") != spec.goal_sha256
+                or state.get("protocol_health") != "valid" or state.get("goal_status") != "active"
+                or state.get("scientific_phase") != "committed" or state.get("scientific_verdict") != "supported"
+                or judge.get("verdict") != "supported" or lock.get("status") != "locked" or not lock.get("id")
+                or not isinstance(thread, str) or not thread.strip()
+                or native.get("thread_id") not in (None, thread)
+                or threads.get(f"attempt-{int(state.get('investigation_attempt') or 0):04d}:investigator")
+                    not in (None, thread)):
+            raise ValueError("Original scientific or Investigator identity has changed")
+        graph = spec.graph_database or graph_database_path(Path(spec.branch_canvas).resolve().parent)
+        if goal_sealed(cycle.parent, graph, spec=spec) is not None:
+            return hold("submission_goal_sealed", "The task Goal is already sealed.")
+        with ScienceGraphStore(graph, readonly=True) as store:
+            outcome = store.cycle_evaluation(cycle.name)
+        if (not outcome or outcome.get("cycle_id") != cycle.name or outcome.get("verdict") != "supported"
+                or outcome.get("hypothesis_id") != lock["id"]):
+            raise ValueError("No matching committed supported Outcome")
+
+        snapshot = _restore_submission_snapshot(cycle, state)
+        current = current_delivery_payload(spec, graph, cycle)
+        contract = current.get("submission_contract") or {}
+        if contract.get("sha256") != snapshot.access["submission_contract"]["sha256"]:
+            raise ValueError("Public submission contract changed")
+        check = check_current_submission(current)
+        if check and check["status"] == "valid":
+            return {"status": "ready_for_goal", "code": "submission_already_valid",
+                    "reason": "The registered public submission is ready for the same Cycle’s Goal Gate."}
+
+        saved_budget = state.get("investigator_budget") or {}
+        budget = budget_status(cycle, cycle.parent, state)
+        if budget["exhausted"] or saved_budget.get("exhausted") or saved_budget.get("rejected"):
+            return hold("submission_budget_exhausted", "The original Investigator token allowance is exhausted or declined.")
+        count = int(state.get("submission_delivery_repair_count") or 0)
+        attempt = state.get("submission_delivery_attempt") or {}
+        limit = max(0, int(spec.max_judge_reworks_per_cycle) - int(state.get("judge_rework_count") or 0))
+        current_revision = hashlib.sha256(_canonical(current)).hexdigest()
+        continuing = (attempt.get("status") == "running"
+                      and attempt.get("delivery_revision") == current_revision
+                      == state["goal_submission_gap"]["delivery_revision"])
+        if count < 0 or (continuing and (count < 1 or attempt.get("count") != count
+                                       or attempt.get("output_key") != f"investigator_submission_delivery_{count}")):
+            raise ValueError("Original bounded delivery attempt changed")
+        if count > limit or (count == limit and not continuing):
+            return hold("submission_corrections_exhausted", "The original bounded public submission corrections are exhausted.")
+        return {"status": "ready", "code": "submission_correction_available",
+                "reason": "The original Investigator can continue the bounded delivery under the existing allowance."}
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, RuntimeError, sqlite3.Error):
+        return hold("submission_authority_unverified", "The original submission evidence or delivery authority could not be verified.")
 
 
 def _stop(owner: Any, state: dict, reason: str) -> None:
@@ -75,6 +205,14 @@ def correct_submission_delivery(
             state,
             "Delivery-only reassessment cannot authorize a new Investigator call; public submission remains incomplete.",
         )
+    access = snapshot.access
+    contract = access.get("submission_contract")
+    operator_delivery = gap.get("authority") == "operator_delivery_structure_only"
+    if not operator_delivery and (not isinstance(contract, dict)
+            or contract.get("format", "json") not in ("json", "python")
+            or contract.get("sha256") != gap["validation"]["contract_sha256"]):
+        _stop(owner, state, "The frozen public submission contract does not authorize this correction format.")
+    submission_format = "operator" if operator_delivery else contract.get("format", "json")
     lock = state.get("hypothesis_lock") or {}
     if lock.get("status") != "locked" or not state.get("threads", {}).get(
         "investigator"
@@ -140,11 +278,23 @@ def correct_submission_delivery(
     feedback = {
         "thread_id": original_thread,
         "mode": "delivery_only",
-        "authority": "public_submission_structure_only",
+        "authority": "operator_delivery_structure_only" if operator_delivery else "public_submission_structure_only",
         "schema_mismatch": copy.deepcopy(gap["validation"]),
-        "frozen_material_access": snapshot.access,
-        "instruction": "Author a supplemental, formally registered JSON artifact satisfying the explicit public schema, using retained results. Preserve original scientific files, frozen H and verdict; do not perform new research or ask SDK/Reporter to create the scientific values.",
+        "frozen_material_access": access,
+        "instruction": (gap["validation"]["instructions"] if operator_delivery else
+            "Author a supplemental, formally registered JSON artifact satisfying the explicit public schema, using retained results. Preserve original scientific files, frozen H and verdict; do not perform new research or ask SDK/Reporter to create the scientific values."),
     }
+    if submission_format == "python":
+        feedback.update(
+            format="python",
+            instruction=(
+                f"Author and register one supplemental Python artifact named `{contract['filename']}` "
+                "using the retained results and the frozen callable signature and import allowlist. "
+                "If that filename already exists in the original materials, use a new supplemental directory. "
+                "Preserve original scientific files, frozen H and verdict. "
+                "Do not execute the artifact, rerun experiments, or make a new scientific claim."
+            ),
+        )
     owner._emit(
         state,
         "goal.submission_rework_requested",
@@ -163,6 +313,7 @@ def correct_submission_delivery(
             "hypothesis_lock": copy.deepcopy(lock),
             "branch": copy.deepcopy(lock),
             "submission_delivery": feedback,
+            **({"public_submission": contract} if submission_format == "python" else {}),
             "investigation_attempt": state.get("investigation_attempt"),
             "round": state.get("investigation_round_count"),
         },

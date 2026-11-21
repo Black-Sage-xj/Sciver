@@ -55,6 +55,9 @@ class CycleRunner:
         self.same_cycle_continuation = same_cycle_continuation
         self.startup._initialize()
         try:
+            if (getattr(self.owner, "_boot_resume_active", False)
+                    or getattr(self.owner, "_runtime_repair_resume_active", False)):
+                self.owner._check_recovery_control(self.state)
             self._qualify()
             self._checkpoint_and_execute()
         except NoQualifiedCandidate:
@@ -149,6 +152,7 @@ class CycleRunner:
                 code = str((self.state.get("attention") or {}).get("code") or "")
                 if (
                     code != "no_qualified_candidate"
+                    or self.state.get("supervisor_qualification")
                     or not self.owner.supervisor_enabled()
                 ):
                     raise
@@ -247,13 +251,14 @@ class CycleRunner:
     def _checkpoint_and_execute(self):
         if (self.resuming and self.state.get("goal_submission_gap")
                 and self.state.get("scientific_phase") == "committed"
-                and self.state.get("scientific_verdict") == "supported"):
+                and self.state.get("scientific_verdict") in {"supported", "rejected", "open"}):
             judge = (self.state.get("role_outputs") or {}).get("judge")
-            if not isinstance(judge, dict) or judge.get("verdict") != "supported":
-                raise ValueError("Submission recovery requires the original committed supported Judge output")
+            if not isinstance(judge, dict) or judge.get("verdict") != self.state["scientific_verdict"]:
+                raise ValueError("Submission recovery requires the original committed terminal Judge output")
             self.owner._emit(self.state, "recovery.submission_delivery_resumed", {"scientific_phase": "committed"})
             self.state.update(status="over", phase="complete")
-            self.owner._run_goal_completion(self.state, judge)
+            self.owner._run_goal_completion(
+                self.state, judge, allow_submission_rework=not self.owner._submission_goal_only_resume)
             return
         if self.owner.stop_before == "investigator":
             self.state.update(
@@ -281,6 +286,10 @@ class CycleRunner:
             raise RecoveryStop("post_hypothesis_lock checkpoint reached")
         if not self.resuming:
             self.owner._write_replay_checkpoint(self.state, "investigator_start")
+        if (self.state.get("supervisor_qualification") or {}).get("status") == "proposed":
+            from .supervisor_qualification_recovery import mark_selection_handed_back
+
+            mark_selection_handed_back(self.owner, self.state)
         judge, verdict = self.owner._investigate_and_judge(
             self.state, self.branch, self.finalized
         )
@@ -300,7 +309,7 @@ class CycleRunner:
                 self.active_hypothesis,
                 verdict,
             )
-            if verdict == "supported":
+            if verdict in {"supported", "rejected", "open"}:
                 self.owner._persist(self.state, project=True)
                 self.owner._run_goal_completion(self.state, judge)
             attention = (

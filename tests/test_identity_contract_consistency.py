@@ -85,7 +85,8 @@ class IdentityContractConsistencyTest(unittest.TestCase):
             STAGE_CONTEXT_FIELDS[("challenger", "candidate_review")],
             ("goal", "research_contract", "final_gate", "candidate",
              "recent_execution_limits", "recent_qualification_stops",
-             "agent_graph", "agent_graph_reuse", "science_graph_tools", "workspace_access"),
+             "agent_graph", "agent_graph_reuse", "science_graph_tools", "supplemental_research_inputs",
+             "registered_fixture_inputs", "prequalification_holdout", "workspace_access"),
         )
         self.assertIn("当前 Stage", identity)
         self.assertIn("不选择 winner", identity)

@@ -177,6 +177,7 @@ class CodexCycleBoundaryTest(unittest.TestCase):
         from theory_master.workflow import Workflow
         with tempfile.TemporaryDirectory() as temp:
             wf=Workflow.__new__(Workflow)
+            wf.backend = Mock(retained_goal_home=None)
             wf.cycle_dir=Path(temp)
             wf.routes=tier2()
             wf.route_resolver=lambda: tier2()

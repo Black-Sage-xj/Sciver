@@ -35,8 +35,13 @@ def validate_source_contributions(candidate: Mapping[str, Any], source_ids: list
         if required:
             raise ValueError("new proposal requires transition.source_contributions ({} for a root H)")
         return  # Historical checkpoints retain their recorded, possibly absent notes.
-    if set(contributions) != set(source_ids):
-        raise ValueError("transition.source_contributions keys must exactly match main and other source H IDs")
+    missing = sorted(set(source_ids) - set(contributions))
+    extra = sorted(set(contributions) - set(source_ids))
+    if missing or extra:
+        raise ValueError(
+            "transition.source_contributions keys must exactly match main and other source H IDs; "
+            f"missing explanations for {missing}; undeclared explanations for {extra}"
+        )
 
 
 def transition_record(candidate: Mapping[str, Any], sources: list[dict[str, Any]]) -> dict[str, Any] | None:

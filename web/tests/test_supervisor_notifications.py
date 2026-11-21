@@ -84,6 +84,40 @@ class SupervisorBellTests(unittest.TestCase):
         self.assertEqual(result["needs_attention"], 0)
         self.assertEqual(result["total"], 0)
 
+    def test_validated_spv_repair_stays_visible_after_later_cycles(self):
+        folder = self.root / "1" / "supervisor"
+        folder.mkdir(parents=True)
+        (folder / "recovery.json").write_text(json.dumps({
+            "schema": "theory-master/supervisor-recovery/v1",
+            "cycle": "1", "status": "activity_verified",
+            "last_verified_progress": {
+                "at": "2026-10-13T12:00:00+08:00",
+                "scope": "model_or_tool_activity_only",
+            },
+            "history": [{"validation": {"phase": "repair_validated"}}],
+        }), encoding="utf-8")
+        (self.root / "2").mkdir()
+        active = self.feed("ACTIVE")
+        self.assertEqual(active["total"], 0)
+        self.assertEqual(active["resolved_items"][0]["status_label"], "已修复")
+        stopped = self.feed("FAILED")
+        self.assertEqual(stopped["needs_attention"], 1)
+        self.assertEqual(stopped["resolved_items"][0]["cycle"], "1")
+
+    def test_current_stopped_cycle_does_not_claim_its_old_repair(self):
+        folder = self.root / "2" / "supervisor"
+        folder.mkdir(parents=True)
+        (folder / "recovery.json").write_text(json.dumps({
+            "schema": "theory-master/supervisor-recovery/v1",
+            "cycle": "2", "status": "activity_verified",
+            "last_verified_progress": {
+                "at": "2026-10-13T12:00:00+08:00",
+                "scope": "model_or_tool_activity_only",
+            },
+            "history": [{"validation": {"phase": "repair_validated"}}],
+        }), encoding="utf-8")
+        self.assertEqual(self.feed("FAILED")["resolved_items"], [])
+
     def test_no_supervisor_still_reports_current_stopped_task(self):
         data=self.feed()
         self.assertEqual(data["needs_attention"], 1)

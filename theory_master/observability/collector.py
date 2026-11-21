@@ -133,7 +133,11 @@ class Collector(CollectorRecoveryMixin, CollectorProjectionMixin):
 
 
 
-    def start_run(self, run_id: str, spec: Any | None = None, run_dir: Path | None = None, notes_dir: Path | None = None, branch_canvas: Path | None = None, cycle_workspace: Path | None = None, same_cycle_continuation: bool = False) -> None:
+    def start_run(self, run_id: str, spec: Any | None = None, run_dir: Path | None = None, notes_dir: Path | None = None, branch_canvas: Path | None = None, cycle_workspace: Path | None = None, same_cycle_continuation: bool = False, *, retained_cycle_index: int | None = None) -> None:
+        if retained_cycle_index is not None and (
+            type(retained_cycle_index) is not int or retained_cycle_index < 1 or same_cycle_continuation
+        ):
+            raise ValueError("Restoring a Collector requires one valid prior Cycle slot")
         if spec is not None:
             self._bind_spec(spec)
         previous_total_started_at = self.state.get("total_started_at")
@@ -149,6 +153,9 @@ class Collector(CollectorRecoveryMixin, CollectorProjectionMixin):
                 if current_cycle_index < 1:
                     raise ValueError("same-Cycle continuation has no Collector cycle slot")
                 self._cycle_count = max(self._cycle_count, current_cycle_index)
+            elif retained_cycle_index is not None:
+                current_cycle_index = retained_cycle_index
+                self._cycle_count = retained_cycle_index
             else:
                 self._cycle_count += 1
                 current_cycle_index = self._cycle_count
@@ -201,7 +208,7 @@ class Collector(CollectorRecoveryMixin, CollectorProjectionMixin):
             self.state["started_at"] = cycle_started_at
             self.state["cycle_started_at"] = persisted.get("cycle_started_at") or cycle_started_at
             # cycle_index is invocation-scoped observability, not durable Cycle identity.
-            # A resumed Cycle is slot 1 of the new invocation; never restore its old ordinal.
+            # Explicit Resume starts a new invocation. Boot recovery retains the old slot.
             self.state["cycle_index"] = current_cycle_index
             for item in previous_timeline:
                 if isinstance(item, dict) and item.get("active"):
@@ -266,7 +273,7 @@ class Collector(CollectorRecoveryMixin, CollectorProjectionMixin):
                     persisted_auxiliary_agents=persisted_auxiliary_agents,
                 )
                 self._restore_project_history(persisted)
-        if same_cycle_continuation:
+        if same_cycle_continuation or retained_cycle_index is not None:
             self._emit({"event": "RUN_CONTINUED", "run_id": run_id, "goal_id": self.state["goal_id"]})
             self._emit({"event": "CYCLE_CONTINUED", "cycle_index": current_cycle_index, "run_id": run_id})
             self.log("INFO", f"Cycle {current_cycle_index} continued ({run_id})")
@@ -422,7 +429,8 @@ class Collector(CollectorRecoveryMixin, CollectorProjectionMixin):
             self._sync_from_research(sci)
         self._flush_state()
 
-    def on_agent_input(self, *, role: str, stage: str, content: str, input_kind: str = "task") -> None:
+    def on_agent_input(self, *, role: str, stage: str, content: str, input_kind: str = "task",
+                       invocation_id: str | None = None, thread_id: str | None = None) -> None:
         """Record actual Agent input for audit; input_kind identifies SDK payload layer.
 
         Historical Investigator task/continuation events predating Native Goal
@@ -435,6 +443,7 @@ class Collector(CollectorRecoveryMixin, CollectorProjectionMixin):
             "stage": stage,
             "input_kind": input_kind,
             "content": content,
+            **({"invocation_id": invocation_id, "thread_id": thread_id} if invocation_id else {}),
         })
 
     def on_codex(self, mapped: dict[str, Any], *, role: str, thread_id: str) -> None:
@@ -475,6 +484,7 @@ class Collector(CollectorRecoveryMixin, CollectorProjectionMixin):
             "episode_id", "context_before", "context_after", "context_tokens", "context_window",
             "compact_threshold_tokens", "compact_scope", "duration_s", "compaction_usage", "compaction_cost",
             "inferred_from_completed", "provider", "thread_action", "native_compaction_enabled",
+            "prequalification_holdout_profile",
             "skill", "skill_path", "skill_scope", "load_index", "first_load_in_turn", "detection",
         }
         logged = {key: value for key, value in mapped.items() if key in event_fields}

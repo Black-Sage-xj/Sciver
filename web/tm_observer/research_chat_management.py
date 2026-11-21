@@ -77,7 +77,7 @@ def _metadata(state_dir: Path) -> dict[str, Any]:
         return {}
 
 
-def list_sessions(state_dir: Path, *, query: str = "", task_id: str = "", view: str = "active") -> list[dict]:
+def list_sessions(state_dir: Path, *, query: str = "", task_id: str = "", view: str = "active", channel: str = "") -> list[dict]:
     organization = _metadata(state_dir)
     needle = query.strip().casefold()[:500]
     result = []
@@ -87,6 +87,8 @@ def list_sessions(state_dir: Path, *, query: str = "", task_id: str = "", view: 
         try:
             record = chat._read(file.parent, file.stem)
         except (OSError, ValueError):
+            continue
+        if channel in {"research", "system"} and (record.get("mode") == "system") != (channel == "system"):
             continue
         meta = organization.get(file.stem) or {}
         if view == "trash":

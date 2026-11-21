@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Task-level Goal completion gate, triggered only by H-level support."""
+"""Task-level Goal completion after a committed scientific terminal result."""
 
 import json
 import hashlib
@@ -89,7 +89,25 @@ class GoalCompletionMixin:
             return None
         if terminal["source"] == "legacy_receipt":
             return terminal["state"]
-        return self._sealed_goal_state(terminal)
+        state = self._sealed_goal_state(terminal)
+        self._queue_final_report(state)
+        return state
+
+    def _queue_final_report(self, state: dict[str, Any], *, launch: bool = False) -> None:
+        """A separate publication job cannot invalidate scientific completion."""
+        try:
+            from .codex_backend import CodexBackend
+            from .final_report import ensure_final_report_job, launch_final_report_job
+            live_backend = isinstance(getattr(self, "backend", None), CodexBackend)
+            operation = launch_final_report_job if launch and live_backend else ensure_final_report_job
+            job = operation(self.spec, database=self._graph_database_path())
+            if job is not None:
+                state["final_report"] = {key: job[key] for key in ("job_id", "state", "attempt")}
+                if job.get("launch_status"):
+                    state["final_report"]["launch_status"] = job["launch_status"]
+        except Exception as error:
+            state["final_report"] = {"state": "unavailable", "retryable": True,
+                                     "error": f"{type(error).__name__}: {error}"}
 
     def _sealed_goal_state(self, terminal: dict[str, Any]) -> dict[str, Any]:
         """research_state of the sealing Cycle, or a minimal view of the SQLite seal."""
@@ -102,6 +120,7 @@ class GoalCompletionMixin:
             "source_cycle": str(terminal.get("source_cycle") or ""),
             "sealed_at": terminal.get("sealed_at"),
             "authority": "sqlite",
+            **({"source_verdict": detail["source_verdict"]} if "source_verdict" in detail else {}),
         }
         try:
             cycle = find_cycle(self.spec.research_root, completion["source_cycle"],
@@ -118,12 +137,20 @@ class GoalCompletionMixin:
         return state
 
     def _run_goal_completion(self, state: dict[str, Any], judge: dict[str, Any], *,
-                             delivery_repair: bool = False) -> dict[str, Any] | None:
+                             delivery_repair: bool = False,
+                             allow_submission_rework: bool = True,
+                             repair_assessment: dict[str, Any] | None = None) -> dict[str, Any] | None:
         """Assess a frozen authority snapshot without retaining the writer lock."""
-        if str(judge.get("verdict") or "") != "supported":
+        verdict = str(judge.get("verdict") or "")
+        if verdict not in {"supported", "rejected", "open"} or state.get("operational_only_closure"):
             return None
+        state["goal_source_verdict"] = verdict
         from .goal_gate import GoalGate
-        return GoalGate(self, state, delivery_repair=delivery_repair).run()
+        if repair_assessment is not None and not delivery_repair:
+            raise ValueError("Assessment-bound identity is only valid for explicit delivery repair")
+        return GoalGate(self, state, delivery_repair=delivery_repair,
+                        allow_submission_rework=allow_submission_rework,
+                        repair_assessment=repair_assessment).run()
 
     def _seal_goal_in_sqlite(self, plan_path: Path, graph_path: Path, receipt: Path,
                              rationale: str, *, assessment_metadata: dict[str, str] | None = None) -> dict[str, Any]:
@@ -137,12 +164,14 @@ class GoalCompletionMixin:
             receipt_ref = str(receipt)
         detail = {
             "rationale": rationale,
-            "trigger": "judge_supported",
+            "trigger": ("supervisor_reassessment" if (assessment_metadata or {}).get("reassessment_of")
+                        else "judge_terminal"),
             "worker_id": getattr(self, "worker_id", None),
         }
 
         def seal() -> dict[str, Any]:
             with ScienceGraphStore(graph_path) as store:
+                detail["source_verdict"] = store._goal_gate_outcome(str(self.cycle_dir.name))["verdict"]
                 return store.seal_goal(
                     goal_id=str(getattr(self.spec, "goal_id", "") or "goal"),
                     source_cycle=str(self.cycle_dir.name),
@@ -161,7 +190,8 @@ class GoalCompletionMixin:
                 self._canvas_write_locked = False
 
     def _apply_goal_completion(self, state: dict[str, Any], result: dict[str, Any], verdict: str,
-                               rationale: str, seal: dict[str, Any] | None) -> dict[str, Any]:
+                               rationale: str, seal: dict[str, Any] | None, *,
+                               trigger: str = "judge_terminal") -> dict[str, Any]:
         # `completed` is accepted only when reading a historical Cycle artifact.
         # Current Cycle persistence always normalizes the terminal spelling to `over`.
         cycle_terminal_status = "over"
@@ -169,8 +199,10 @@ class GoalCompletionMixin:
         state["goal_completion"] = {
             "verdict": verdict,
             "rationale": rationale,
-            "trigger": "judge_supported",
+            "trigger": trigger,
+            "source_verdict": state.get("goal_source_verdict", state.get("scientific_verdict")),
             "source_cycle": str(self.cycle_dir.name),
+            **({"gaps": result["gaps"]} if "gaps" in result else {}),
         }
         if verdict == "passed":
             assert seal is not None
@@ -196,10 +228,12 @@ class GoalCompletionMixin:
                 self._emit(state, "goal.projection_failed", warning)
             self._emit(state, "goal.completed", {
                 "source_cycle": str(self.cycle_dir.name),
-                "trigger": "judge_supported",
+                "trigger": trigger,
+                "source_verdict": state.get("goal_source_verdict", state.get("scientific_verdict")),
                 "closed_frontier_ids": closed_ids,
                 "goal_completed_stop_ids": list(seal.get("goal_completed_stop_ids") or []),
             })
+            self._queue_final_report(state, launch=True)
             return result
 
         # not_passed allows another Cycle. It does not write a planner gap.

@@ -619,6 +619,13 @@
             return;
           }
           if(present) {
+            const oldReport=present.querySelector('[data-final-report-entry="console"]');
+            const newReport=incoming.querySelector('[data-final-report-entry="console"]');
+            if(oldReport&&newReport&&oldReport.outerHTML!==newReport.outerHTML){
+              const hadFocus=oldReport.contains(document.activeElement);
+              oldReport.replaceWith(newReport);
+              if(hadFocus)newReport.querySelector('a')?.focus({preventScroll:true});
+            }
             const oldTabs=present.querySelector('.tm-worker-tabs');
             const newTabs=incoming.querySelector('.tm-worker-tabs');
             // Keep the status of *other* Agents current, even when the selected

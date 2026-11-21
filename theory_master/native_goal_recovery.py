@@ -79,13 +79,39 @@ def find_native_goal_origin(session: Any) -> dict | None:
     from .scientific_objective import serialize_frozen_science, frozen_science_digest
     cycle = session.owner.cycle_dir
     snapshots = session.invocation_ledger.snapshots()
+    from .operator_completed_delivery import completed_delivery_origins
+    from .operator_technical_recovery import technical_recovery_origins
+    retired = (completed_delivery_origins(session.state, session.identifier)
+               | technical_recovery_origins(session.state))
     candidates = [record for record in snapshots
                   if record.get("invocation_id") != session.invocation_id
+                  and record.get("invocation_id") not in retired
                   and record.get("role") == "investigator" and record.get("stage") == session.stage
                   and record.get("logical_key") == session.logical_key
                   and record.get("commit_state") == "not_committed"
                   and record.get("state") in {"running", "interrupted", "superseded"}
                   and not record.get("closure_hash")]
+    reentry = session.state.get("supervisor_technical_rescan_reentry") or {}
+    reference = session.state.get("supervisor_repair_receipt") or {}
+    if reentry and (reentry.get("thread_id") == session.identifier
+                    and reentry.get("receipt_sha256") == reference.get("sha256")
+                    and session.stage == "investigate"):
+        from .supervisor_repair_receipts import _digest, EXECUTION_LIMIT_PROTOCOL_VALIDATOR
+        path = Path(str(reference.get("path") or ""))
+        if (path.parent == cycle / "supervisor/repairs" and path.is_file()
+                and not path.is_symlink() and not path.parent.is_symlink()):
+            receipt = json.loads(path.read_text())
+            proof = json.loads(receipt.get("tests") or "{}")
+            if (_digest(receipt) == reference["sha256"]
+                    and receipt.get("validator") == EXECUTION_LIMIT_PROTOCOL_VALIDATOR
+                    and receipt.get("cycle") == str(cycle.resolve())
+                    and proof.get("resume_preparation") == "technical_rescan_new_goal"
+                    and proof.get("origin_invocation_id") == reentry.get("origin_invocation_id")
+                    and proof.get("blocked_thread_id") == session.identifier):
+                # Only the terminal, audited Goal is excluded. A later live
+                # invocation remains attachable under the ordinary rules.
+                candidates = [row for row in candidates
+                              if row.get("invocation_id") != reentry["origin_invocation_id"]]
     if not candidates:
         return None
     if any(record.get("thread_id") != session.identifier
@@ -113,10 +139,14 @@ def find_native_goal_origin(session: Any) -> dict | None:
     start = starts[0]["at"]
     later = [row["at"] for row in events if row.get("type") == "role.started" and row.get("at", "") > start]
     end = min(later) if later else None
-    inputs = [row for row in _rows(cycle / "runtime_events.jsonl")
-              if row.get("event") == "AGENT_INPUT" and row.get("role") == "investigator"
-              and row.get("stage") == session.stage and str(row.get("ts") or "") >= start
-              and (end is None or str(row.get("ts") or "") < end)]
+    stage_inputs = [row for row in _rows(cycle / "runtime_events.jsonl")
+                    if row.get("event") == "AGENT_INPUT" and row.get("role") == "investigator"
+                    and row.get("stage") == session.stage]
+    inputs = [row for row in stage_inputs if row.get("invocation_id") == origin_id]
+    if not inputs:
+        inputs = [row for row in stage_inputs if "invocation_id" not in row
+                  and str(row.get("ts") or "") >= start
+                  and (end is None or str(row.get("ts") or "") < end)]
     setups = [row for row in inputs if row.get("input_kind") == "native_goal_setup_turn"]
     objectives = [row for row in inputs if row.get("input_kind") == "native_goal_objective"]
     if len(setups) != 1 or len(objectives) != 1:
@@ -273,7 +303,9 @@ class GoalAttachment:
 
 
 def attach_existing_goal(thread: Any, origin: dict, *, check_control=None,
-                         start_timeout: float = 60.0) -> GoalAttachment:
+                         start_timeout: float = 60.0, on_attached=None, on_stop_confirmed=None,
+                         verified_quota_resume: dict[str, str] | None = None,
+                         verified_boot_resume: dict[str, str] | None = None) -> GoalAttachment:
     """Observe/resume the same persisted Goal, never start a replacement Goal.
 
     Registration precedes server reads so future Turn events cannot fall into
@@ -283,6 +315,11 @@ def attach_existing_goal(thread: Any, origin: dict, *, check_control=None,
     from .codex_sdk_compat import goal_client
     from openai_codex.generated.v2_all import ActiveThreadStatus, IdleThreadStatus, TurnStatus
     client = goal_client(thread)
+    if verified_boot_resume is not None and verified_quota_resume is not None:
+        raise NativeGoalRecoveryConflict("Boot Resume cannot authorize quota recovery")
+    recoverable = {"active"} if verified_boot_resume is not None else {"active", "paused"}
+    if verified_quota_resume:
+        recoverable.add("usageLimited")
     if check_control is not None:
         check_control()
     original = verify_existing_goal(client.get_goal(thread.id), origin, previous=origin.get("persistent_goal"))
@@ -292,11 +329,25 @@ def attach_existing_goal(thread: Any, origin: dict, *, check_control=None,
     try:
         goal = client.get_goal(thread.id)
         identity = verify_existing_goal(goal, origin, previous=original)
-        verified_owned = True
-        if identity["status"] not in {"active", "paused"}:
+        verified_owned = verified_boot_resume is None
+        if identity["status"] not in recoverable and verified_boot_resume is None:
             client.unregister_goal_operation(state)
             return GoalAttachment(None, None, None, identity, identity["status"])
         actual = client.thread_read(thread.id, include_turns=True).thread
+        if verified_boot_resume is not None or verified_quota_resume:
+            from .retained_goal_quota import retained_goal_rollout_matches
+            try:
+                matches = retained_goal_rollout_matches(
+                    actual.path, verified_boot_resume if verified_boot_resume is not None else verified_quota_resume
+                )
+            except (OSError, ValueError, TypeError, AttributeError, KeyError):
+                matches = False
+            if actual.id != thread.id or not matches:
+                raise NativeGoalRecoveryConflict("Resume could not verify the original native Goal transcript")
+        verified_owned = True
+        if identity["status"] not in recoverable:
+            client.unregister_goal_operation(state)
+            return GoalAttachment(None, None, None, identity, identity["status"])
         if actual.id != thread.id or not isinstance(actual.status.root, (ActiveThreadStatus, IdleThreadStatus)):
             raise NativeGoalRecoveryConflict("native Goal thread is not in a resumable operational state")
         active = [turn for turn in actual.turns if turn.status == TurnStatus.in_progress]
@@ -306,40 +357,49 @@ def attach_existing_goal(thread: Any, origin: dict, *, check_control=None,
         if check_control is not None:
             check_control()
         if not active:
-            # Recheck authority immediately before the status-only wakeup. A
-            # terminal Goal is never reactivated to manufacture more science.
+            # Recheck authority immediately before the status-only wakeup.
             goal = client.get_goal(thread.id)
             identity = verify_existing_goal(goal, origin, previous=identity)
-            if identity["status"] not in {"active", "paused"}:
+            if identity["status"] not in recoverable:
                 client.unregister_goal_operation(state)
                 return GoalAttachment(None, None, None, identity, identity["status"])
             goal = client.activate_existing_goal(thread.id)
             identity = verify_existing_goal(goal, origin, previous=identity)
+            if verified_quota_resume and identity["status"] == "usageLimited":
+                raise NativeGoalRecoveryConflict("original native Goal could not leave its quota stop")
             activated = True
             snapshot = client.seed_goal_snapshot(state, goal)
-        elif identity["status"] == "paused":
+        elif identity["status"] != "active":
             # An operator pause may still be settling an interrupted physical
             # Turn. Do not resume through that Turn or interrupt it implicitly.
-            raise NativeGoalRecoveryConflict("paused native Goal still has an active physical Turn")
+            raise NativeGoalRecoveryConflict("stopped native Goal still has an active physical Turn")
         deadline = time.monotonic() + start_timeout
         while state.logical_turn_id is None:
             if check_control is not None:
                 check_control()
             latest = client.get_goal(thread.id)
             identity = verify_existing_goal(latest, origin, previous=identity)
-            if identity["status"] not in {"active", "paused"}:
+            if identity["status"] not in recoverable or identity["status"] == "usageLimited":
                 client.unregister_goal_operation(state)
                 return GoalAttachment(None, None, None, identity, identity["status"])
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise NativeGoalRecoveryConflict("timed out waiting for the original native Goal Turn")
             state.wait_for_start(min(0.25, remaining))
-        return GoalAttachment(state, state.logical_turn_id, snapshot, identity)
+        attached = GoalAttachment(state, state.logical_turn_id, snapshot, identity)
+        if on_attached is not None:
+            on_attached(attached)
+        return attached
     except BaseException as exc:
         # Only a successful status-only activation is ours to cancel. Foreign
         # identity/read/provider failures never authorize clearing a Goal.
         from .workflow_support import RecoveryStop
-        if activated or (verified_owned and isinstance(exc, (RecoveryStop, KeyboardInterrupt))):
-            client.cancel_goal_operation(state)
-        client.unregister_goal_operation(state)
+        try:
+            if activated or (verified_owned and isinstance(exc, (RecoveryStop, KeyboardInterrupt))):
+                from .native_goal_stop import cancel_owned_goal
+                receipt = cancel_owned_goal(client, state, identity)
+                if on_stop_confirmed is not None:
+                    on_stop_confirmed(receipt)
+        finally:
+            client.unregister_goal_operation(state)
         raise

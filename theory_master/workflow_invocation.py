@@ -264,6 +264,13 @@ class InvocationMixin:
                 "role": role, "stage": stage, "artifact": str(artifact), "errors": errors,
             })
             raise ValueError("optional hypothesis display contract repair failed")
+        if role == "judge" and stage == "goal_completion" and getattr(self, "_delivery_reassessment_control", None):
+            invocation_ledger.transition(invocation_id, "failed", role=role, thread_id=thread_id,
+                                         error_type="ContractRepairFailed", error="delivery reassessment contract repair failed")
+            self._emit(state, "contract.repair_failed", {"role": role, "stage": stage, "thread_id": thread_id,
+                                                         "artifact": str(artifact), "errors": errors})
+            state["active_invocation_id"] = None
+            raise RecoveryStop("delivery reassessment contract repair failed")
         state.update({
             "status": "needs_attention",
             "phase": f"{role}:{stage}:contract_repair_failed", "closure_reason": "contract_repair_failed",
@@ -328,6 +335,7 @@ class InvocationMixin:
         self, state: dict[str, Any], *, invocation_ledger: InvocationLedger,
         logical_key: str, contract_ref: dict[str, Any], role: str, actual: str,
         stage: str, output_key: str | None, context: dict[str, Any] | None = None,
+        expected_goal_closure: tuple[str, str] | None = None,
     ) -> dict[str, Any] | None:
         snapshot = invocation_ledger.find_reusable(
             logical_key=logical_key, contract_ref=contract_ref, role=role, stage=stage,
@@ -338,6 +346,8 @@ class InvocationMixin:
         invocation_id = str(snapshot.get("invocation_id") or "")
         expected_path = self.cycle_dir / "semantic_closure" / f"{invocation_id}.json"
         expected_hash = str(snapshot.get("closure_hash") or "")
+        if expected_goal_closure is not None and (invocation_id, expected_hash) != expected_goal_closure:
+            raise RecoveryStop("The retained Goal Judge closure changed before reuse")
         if not invocation_id or not expected_hash or not expected_path.is_file():
             if scientific_review:
                 raise RecoveryStop("scientific review closure unavailable; explicit recovery required")
@@ -459,17 +469,54 @@ class InvocationMixin:
             if role == "judge":
                 return store.agent_goal_completion_view()
 
-    def _call(self, state: dict[str, Any], role: str, context: dict[str, Any], resume_role: str | None=None, *, fresh_thread: bool=False, contract_role: str | None=None, output_key: str | None=None) -> dict[str, Any]:
+    def _call(self, state: dict[str, Any], role: str, context: dict[str, Any], resume_role: str | None=None, *, fresh_thread: bool=False, contract_role: str | None=None, output_key: str | None=None,
+              delivery_recovery_pin: dict | None = None) -> dict[str, Any]:
         self._check_recovery_control(state)
         actual = resume_role or role
         stage = stage_for(role, state, context, contract_role=contract_role)
         contract = role_contract(role, phase=stage)
         invocation_ledger = InvocationLedger(self.cycle_dir / 'invocations.jsonl')
         logical_key = self._invocation_logical_key(state, role, actual, stage, context, output_key)
-        reused = self._reuse_committed_invocation(state, invocation_ledger=invocation_ledger, logical_key=logical_key, contract_ref=contract.descriptor(), role=role, actual=actual, stage=stage, output_key=output_key, context=context)
+        expected_goal_closure = None
+        if delivery_recovery_pin is not None:
+            from .goal_reassessment_recovery import goal_reassessment_invocation_pin, goal_reassessment_output_key
+            from .goal_snapshot import GoalAuthoritySnapshot
+
+            pin = delivery_recovery_pin
+            snapshot = context.get("goal_authority_snapshot")
+            if (role != "judge" or actual != role or stage != "goal_completion" or not fresh_thread
+                    or not isinstance(snapshot, GoalAuthoritySnapshot)
+                    or self.cycle_dir.name != pin.get("anchor_cycle")
+                    or str(snapshot.manifest_path) != pin.get("snapshot_manifest")
+                    or snapshot.manifest_sha256 != pin.get("snapshot_manifest_sha256")
+                    or output_key != goal_reassessment_output_key(pin.get("delivery_revision"), snapshot.manifest_sha256)):
+                raise RecoveryStop("Recovery did not reach the retained Goal Judge slot")
+            slot = goal_reassessment_invocation_pin(self.cycle_dir, state, logical_key, contract)
+            if slot is None or any(pin.get(key) != value for key, value in slot.items()):
+                raise RecoveryStop("The retained Goal Judge invocation changed before recovery")
+            if slot["mode"] == "reuse_closure":
+                expected_goal_closure = (slot["invocation_id"], slot["closure_hash"])
+        reused = None
+        if delivery_recovery_pin is None or expected_goal_closure is not None:
+            reused = self._reuse_committed_invocation(
+                state, invocation_ledger=invocation_ledger, logical_key=logical_key,
+                contract_ref=contract.descriptor(), role=role, actual=actual, stage=stage,
+                output_key=output_key, context=context, expected_goal_closure=expected_goal_closure,
+            )
+        if expected_goal_closure is not None and reused is None:
+            raise RecoveryStop("No verified original Goal Judge result remains available for reuse")
         if reused is not None:
             self._finish_skill_memory(state, actual, str(state.get('last_invocation_id') or ''))
             return reused
+        from .boot_native_goal import pending_boot_native_goal
+
+        if pin := pending_boot_native_goal(self.backend):
+            if (role != "investigator" or actual != role or fresh_thread or context.get("submission_delivery")
+                    or state.get("active_invocation_id") != pin["invocation_id"]
+                    or stage != pin["stage"] or logical_key != pin["logical_key"]
+                    or contract.descriptor() != pin["contract_ref"]):
+                from .native_goal_recovery import NativeGoalRecoveryConflict
+                raise NativeGoalRecoveryConflict("Boot Resume did not reach the original Investigator slot")
         from .goal_terminal import GoalSealedError, assert_goal_open
         try:
             graph = self._graph_database_path()

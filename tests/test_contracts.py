@@ -132,7 +132,7 @@ class RoleContractTest(unittest.TestCase):
 
     def test_frontier_maintenance_prompt_schema_matches_sqlite_validator(self):
         contract = role_contract("research_lead", phase="frontier_maintenance")
-        self.assertEqual(contract.version, 3)
+        self.assertEqual(contract.version, 4)
         self.assertIsNone(contract_by_id(contract.contract_id, 2))
         projection = contract.prompt_projection({})
         self.assertIn("hypothesis_id", projection)
@@ -140,7 +140,7 @@ class RoleContractTest(unittest.TestCase):
         self.assertIn("reason", projection)
         self.assertNotIn("current Canvas branch-tip node id", projection)
         contract.validate({"updates": [{
-            "hypothesis_id": "H-0001", "status": "parked", "reason": "No unmet Goal opportunity remains on this line."
+            "hypothesis_id": "H-0001", "status": "closed", "reason": "No unresolved question remains inside this H."
         }]}, {"_known_hypothesis_ids": ["H-0001"]})
         with self.assertRaisesRegex(ValueError, "unknown H id in canonical SQLite graph"):
             contract.validate({"updates": [{
@@ -247,12 +247,12 @@ class RoleContractTest(unittest.TestCase):
         self.assertIn("required for resolved:", repair.prompt_projection())
         self.assertIn("required only for cannot_repair:", repair.prompt_projection())
 
-        self.assertLess(len(frontier_projection), 2200)
-        self.assertLess(len(challenger.prompt_projection()), 450)
+        self.assertLess(len(frontier_projection), 3000)
+        self.assertLess(len(challenger.prompt_projection()), 900)
         self.assertLess(len(repair.prompt_projection()), 900)
         self.assertLess(len(role_contract("research_lead", phase="hypothesis_display").prompt_projection()), 700)
         self.assertLess(len(role_contract("research_lead", phase="cycle_synthesis").prompt_projection()), 1250)
-        self.assertLess(len(role_contract("research_lead", phase="frontier_maintenance").prompt_projection()), 300)
+        self.assertLess(len(role_contract("research_lead", phase="frontier_maintenance").prompt_projection()), 700)
         self.assertLess(len(role_contract("investigator", phase="investigate").prompt_projection()), 1700)
         # Current v8 baseline is 780 characters; keep a tight format-only budget.
         self.assertLess(len(role_contract("judge", phase="terminal_assessment").prompt_projection()), 800)
@@ -750,7 +750,7 @@ class RoleContractTest(unittest.TestCase):
 
     def test_challenger_prompt_and_validator_share_reviews_schema(self):
         contract = role_contract("challenger", phase="candidate_review")
-        self.assertEqual(contract.version, 5)
+        self.assertEqual(contract.version, 6)
         self.assertIn("candidate_id", contract.prompt_schema["reviews"][0])
         context = {"candidates": [{"id": "cand-1"}]}
         output = {"reviews": [{"candidate_id": "cand-1", "verdict": "qualified",
@@ -826,7 +826,7 @@ class RoleContractTest(unittest.TestCase):
             binding.config_path.write_text(json.dumps(cfg), encoding="utf-8")
             backend = CaptureBackend()
             Workflow(TaskSpec.from_config(binding.config_path), backend).run()
-            self.assertIn("Output contract: theory-master/role/challenger/candidate-review/v5", backend.challenger_prompt)
+            self.assertIn("Output contract: theory-master/role/challenger/candidate-review/v6", backend.challenger_prompt)
             self.assertIn('exact stage contract: {"reviews":[{"candidate_id":"exact SDK-provided candidate ID', backend.challenger_prompt)
             self.assertIn('"candidate_id":', backend.challenger_prompt)
 

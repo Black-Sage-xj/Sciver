@@ -7,6 +7,10 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from importlib.metadata import PackageNotFoundError, version
+import os
+from pathlib import Path
+import shutil
+import sys
 from typing import Any, Iterator
 
 SUPPORTED_SDK_VERSION = "0.155.1"
@@ -37,7 +41,7 @@ def verify_sdk() -> None:
             "Turn status": getattr(TurnStatus, "completed", None),
         }
         for name in ("start_goal_operation", "register_goal_operation", "thread_goal_set", "request", "next_goal_notification", "cancel_goal_operation",
-                     "unregister_goal_operation", "thread_goal_clear", "thread_read", "turn_interrupt"):
+                     "unregister_goal_operation", "thread_goal_clear", "thread_read", "turn_interrupt", "pause_goal", "turn_steer"):
             required[name] = getattr(CodexClient, name, None)
     except (ImportError, AttributeError) as exc:
         raise RuntimeError("Codex provider runtime is incompatible; missing supported SDK capabilities") from exc
@@ -48,6 +52,58 @@ def verify_sdk() -> None:
 
 def _inner(client: Any) -> Any:
     return getattr(client, "_client", None)
+
+
+def require_holdout_runtime(client: Any) -> None:
+    """Require the helper resolved by SDK 0.155.1 to be its own Linux binary."""
+    from openai_codex.client import _installed_codex_path_dirs, _resolve_codex_bin
+
+    config = _inner(client).config
+    if sys.platform != "linux" or config.launch_args_override is not None:
+        raise RuntimeError("Prequalification holdout requires the pinned Linux Codex launcher")
+    env = config.env or {}
+    path = env.get("PATH", os.environ.get("PATH", ""))
+    if config.codex_bin is None:
+        path = os.pathsep.join([*(str(p) for p in _installed_codex_path_dirs()), path])
+    helper = shutil.which("codex-linux-sandbox", path=path)
+    try:
+        matched = bool(helper) and Path(helper).samefile(_resolve_codex_bin(config))
+    except OSError:
+        matched = False
+    if not matched:
+        raise RuntimeError("Prequalification holdout requires codex-linux-sandbox from the same bundled Codex runtime on PATH")
+
+
+def open_holdout_thread(client: Any, *, profile_name: str,
+                        config: dict[str, Any], model: str,
+                        model_provider: str | None, thread_id: str | None = None,
+                        cwd: str | None = None, developer_instructions: str | None = None) -> Any:
+    """Use the named permission profile and confirm the effective profile before Turn."""
+    from openai_codex import Thread
+    from pydantic import BaseModel
+
+    class Identity(BaseModel):
+        id: str
+
+    class Reply(BaseModel):
+        thread: Identity
+        activePermissionProfile: Identity | None = None
+
+    inner = _inner(client)
+    params = {"config": config, "model": model, "approvalPolicy": "never"}
+    if model_provider is not None:
+        params["modelProvider"] = model_provider
+    if thread_id:
+        params["threadId"] = thread_id
+    else:
+        params["cwd"] = cwd
+        params["developerInstructions"] = developer_instructions
+    response = inner.request("thread/resume" if thread_id else "thread/start", params, response_model=Reply)
+    active = response.activePermissionProfile
+    if (active is None or active.id != profile_name
+            or (thread_id is not None and response.thread.id != thread_id)):
+        raise RuntimeError("Codex did not confirm the exact prequalification holdout permissions and thread identity")
+    return Thread(inner, response.thread.id)
 
 
 def install_approval_handler(client: Any, handler: Any) -> None:
@@ -158,6 +214,16 @@ class GoalClient:
 
     def turn_interrupt(self, thread_id: str, turn_id: str) -> Any:
         return self._client.turn_interrupt(thread_id, turn_id)
+
+    def turn_steer(self, thread_id: str, expected_turn_id: str, text: str) -> Any:
+        return self._client.turn_steer(thread_id, expected_turn_id, text)
+
+    @staticmethod
+    def queued_goal_notifications(state: Any) -> tuple[Any, ...]:
+        """Peek pending real notifications for pre-steer budget enforcement."""
+        queue = state._notifications
+        with queue.mutex:
+            return tuple(queue.queue)
 
 
 def goal_client(thread: Any) -> GoalClient:

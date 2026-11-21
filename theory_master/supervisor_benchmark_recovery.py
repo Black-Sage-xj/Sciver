@@ -328,6 +328,9 @@ def recheck_receipt_inputs(receipt: dict) -> None:
 
 def validate_existing_benchmark_provenance(cycle: Path, state: dict, *, engine: Path) -> dict | None:
     """Validate only the reviewed post-delivery alias fault, without model calls."""
+    from .supervisor_provenance_retry import ERROR as WORKSPACE_ERROR, validate_provenance_retry
+    if (state.get("recovery") or {}).get("message") == WORKSPACE_ERROR:
+        return validate_provenance_retry(cycle, state, engine=engine)
     from .runtime_supervisor_review import resume_blocker
     from .native_goal import NativeGoalDeliveryError
     from .supervisor_repair_receipts import failure_binding, source_manifest, _record_validation, _file_hash

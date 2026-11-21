@@ -44,7 +44,14 @@ def is_untouched_lineage_failure(cycle: Path, state: dict) -> bool:
         and state.get("qualification_status", "pending") == "pending"
         and not frontier.get("generated_candidates") and not frontier.get("reviews")
         and not frontier.get("selected_candidate_id")
-        and not state.get("active_invocation_id") and not state.get("last_invocation_id")
+        and not state.get("active_invocation_id")
+        and (not state.get("last_invocation_id") or (
+            state.get("last_invocation_id") == recovery.get("invocation_id")
+            and state.get("last_invocation_failure") == {
+                "invocation_id": recovery.get("invocation_id"), "role": "research_lead",
+                "stage": "frontier_proposal", "failure_phase": "validation",
+                "error_type": "RecoveryStop",
+            }))
         and attention.get("code") == "contract_repair_failed"
         and recovery.get("action") == "contract_repair_failed"
         and not any(recovery.get(key) for key in ("category", "kind", "message"))
@@ -257,20 +264,146 @@ print(json.dumps({'fresh_lineage_probe':'passed','legal_subsets_checked':checked
     return evidence
 
 
+def _contribution_failure_inputs(cycle: Path, state: dict, engine: Path) -> tuple[dict, dict[str, str]]:
+    """Prove an uncommitted proposal was stopped only by a repair paraphrase.
+
+    The initial Agent proposal is never installed here. Current contract
+    validation must accept it before a new Agent may own the proposal again.
+    """
+    from .contracts import role_contract
+    from .hypothesis_lineage import lineage_repair_snapshot, assert_repair_lineage_preserved
+    from .invocations import InvocationLedger, stable_hash
+    from .output_validation import validate_agent_output
+    from .task import effective_path_model
+    if not is_untouched_lineage_failure(cycle, state):
+        raise ValueError("Not an untouched Lead contract failure")
+    recovery = state["recovery"]
+    invocation, thread = recovery.get("invocation_id"), recovery.get("thread_id")
+    if (not isinstance(invocation, str) or not re.fullmatch(r"inv-[A-Za-z0-9_-]+", invocation)
+            or not isinstance(thread, str) or (state.get("threads") or {}).get("research_lead") != thread):
+        raise ValueError("Original Lead invocation identity is missing")
+    inputs: dict[str, str] = {}
+    artifact = cycle / "contract_repairs" / (invocation + ".json")
+    if recovery.get("artifact") != str(artifact):
+        raise ValueError("Foreign contract repair artifact")
+    saved = json.loads(_read(artifact, inputs))
+    if any(saved.get(key) != recovery.get(key) for key in
+           ("invocation_id", "role", "stage", "thread_id", "repair_prompt", "at")):
+        raise ValueError("Original failure and artifact differ")
+    if saved.get("validation_errors") != [{
+        "path": "/candidates", "code": "lineage_content_loss",
+        "expected": "preserved source decisions", "actual": "changed lineage",
+        "message": "candidates[0] repair must preserve valid source contribution explanations",
+    }]:
+        raise ValueError("Another contract violation remains")
+    ledger_path, events_path = cycle / "invocations.jsonl", cycle / "runtime_events.jsonl"
+    ledger_rows = [json.loads(line) for line in _read(ledger_path, inputs).splitlines() if line.strip()]
+    if {row.get("invocation_id") for row in ledger_rows} != {invocation}:
+        raise ValueError("Another Lead invocation exists")
+    folded = InvocationLedger(ledger_path).snapshot(invocation) or {}
+    contract = role_contract("research_lead", phase="frontier_proposal")
+    if (folded.get("state") != "failed" or folded.get("error_type") != "ContractRepairFailed"
+            or folded.get("commit_state") != "not_committed" or folded.get("role") != "research_lead"
+            or folded.get("stage") != "frontier_proposal" or folded.get("thread_id") != thread
+            or folded.get("contract_ref") != {
+                "contract_id": "theory-master/role/research-lead/frontier-proposal",
+                "contract_version": 14,
+                "schema_hash": "99a255b1a546b9ba835a4acdcbb193c0380a7075ad8b59a917cac895ff1fc601",
+            } or contract.version < 15):
+        raise ValueError("Original uncommitted invocation is not intact")
+    rows = [json.loads(line) for line in _read(events_path, inputs).splitlines() if line.strip()]
+    tasks = [r for r in rows if r.get("event") == "AGENT_INPUT" and r.get("role") == "research_lead"
+             and r.get("stage") == "frontier_proposal" and r.get("input_kind") == "task"]
+    repairs = [r for r in rows if r.get("event") == "AGENT_INPUT" and r.get("role") == "research_lead"
+               and r.get("stage") == "frontier_proposal" and r.get("input_kind") == "contract_repair"]
+    if (len(tasks) != 1 or len(repairs) != 3 or repairs[-1].get("content") != saved.get("repair_prompt")
+            or "reconsideration_trigger must be nonempty" not in str(repairs[0].get("content"))):
+        raise ValueError("Original bounded repair history is incomplete")
+    context = json.loads(str(tasks[0].get("content") or "").partition("Context:\n")[2])
+    if stable_hash(context) != folded.get("input_hash"):
+        raise ValueError("Original task context differs from the invocation")
+    graph = context.get("agent_graph") or {}
+    columns, hypotheses = graph.get("hypothesis_columns"), graph.get("hypotheses")
+    if not isinstance(columns, list) or "id" not in columns or not isinstance(hypotheses, list):
+        raise ValueError("Original graph H index is missing")
+    index = columns.index("id")
+    known = {row[index] for row in hypotheses if isinstance(row, list) and len(row) > index
+             and isinstance(row[index], str) and row[index]}
+    raw = saved.get("raw_outputs")
+    if not isinstance(raw, list) or len(raw) != 4 or any(not isinstance(item, str) for item in raw):
+        raise ValueError("Original bounded outputs are incomplete")
+    delivered = [r.get("content") for r in rows if r.get("event") == "LLM_MESSAGE"
+                 and r.get("role") == "research_lead" and r.get("message_role") == "assistant"
+                 and r.get("thread_id") == thread and r.get("content") in raw]
+    if delivered != raw:
+        raise ValueError("Original Agent delivery sequence changed")
+    outputs = [json.loads(item) for item in raw]
+    original, repaired = outputs[0], outputs[1]
+    if (not isinstance(original, dict) or not isinstance(repaired, dict)
+            or len(original.get("candidates") or []) != 1 or outputs[1:] != [repaired] * 3):
+        raise ValueError("Only one unchanged repair candidate is supported")
+    first, second = original["candidates"][0], repaired["candidates"][0]
+    if (not isinstance(first, dict) or not isinstance(second, dict)
+            or first.get("reconsideration_trigger") != ""
+            or not isinstance(second.get("reconsideration_trigger"), str)
+            or not second["reconsideration_trigger"].strip()):
+        raise ValueError("Original optional trigger mismatch is absent")
+    from .hypothesis_lineage import restore_protected_contributions
+    frozen = lineage_repair_snapshot(original, known)
+    corrected, restored = restore_protected_contributions(frozen, repaired)
+    if (len(frozen) != 1 or len(restored) != 1
+            or restored[0] != "candidates[0].transition.source_contributions[H-0002]"):
+        raise ValueError("Repair did not only paraphrase one protected explanation")
+    expected = copy.deepcopy(original)
+    expected["candidates"][0]["reconsideration_trigger"] = second["reconsideration_trigger"]
+    if corrected != expected:
+        raise ValueError("Repair changed another scientific field")
+    assert_repair_lineage_preserved(frozen, corrected)
+    validation = validate_agent_output("research_lead", "frontier_proposal", original, state,
+        {"_known_hypothesis_ids": sorted(known), "_require_explicit_lineage": True}, contract)
+    if not validation.valid:
+        raise ValueError("Current contract still rejects the original Agent proposal")
+    pointer = cycle.parent / ".theory-master" / "task.json"
+    config_path = Path(str(json.loads(_read(pointer, inputs)).get("config_path") or ""))
+    if not config_path.is_absolute():
+        raise ValueError("Canonical task configuration is missing")
+    config = json.loads(_read(config_path, inputs))
+    _, research, _ = effective_path_model(config)
+    if research != cycle.parent:
+        raise ValueError("Task configuration names another research root")
+    for name in ("science_graph.sqlite3", "science_graph.sqlite3-wal"):
+        path = cycle.parent / name
+        if path.exists() or path.is_symlink():
+            _read(path, inputs)
+    plan = Path(str(config.get("plan_path") or ""))
+    if not plan.is_absolute():
+        raise ValueError("Canonical plan is missing")
+    _read(plan, inputs)
+    return {"reentry_kind": "source-contribution-paraphrase", "fresh_lineage_probe": "passed",
+            "original_proposal_current_contract": "valid", "restored_paths": restored,
+            "invocation_id": invocation, "thread_id": thread}, inputs
+
+
 def validate_existing_lineage_structure(cycle: Path, state: dict, *, engine: Path) -> dict | None:
     if not is_untouched_lineage_failure(cycle, state):
         return None
     from .supervisor_repair_receipts import _digest, _record_validation, failure_binding, source_manifest
     manifest, binding = source_manifest(engine), failure_binding(cycle, state)
     try:
-        evidence, inputs = _failure_inputs(cycle, state, engine)
-        evidence.update(_probe(engine, evidence.pop("probe_input")))
+        try:
+            evidence, inputs = _failure_inputs(cycle, state, engine)
+            evidence.update(_probe(engine, evidence.pop("probe_input")))
+        except (OSError, ValueError, TypeError, KeyError, IndexError):
+            evidence, inputs = _contribution_failure_inputs(cycle, state, engine)
     except (OSError, ValueError, TypeError, KeyError, IndexError, subprocess.SubprocessError):
         return None
     if (source_manifest(engine) != manifest or failure_binding(cycle, state) != binding
             or any(hashlib.sha256(_read(Path(p), {})).hexdigest() != digest for p, digest in inputs.items())):
         raise ValueError("Lineage recovery inputs changed during validation")
-    evidence["resume_preparation"] = "agent_selects_legal_source_subset"
+    evidence["resume_preparation"] = (
+        "agent_reproposes_under_current_contract" if evidence.get("reentry_kind")
+        else "agent_selects_legal_source_subset"
+    )
     return _record_validation(cycle, state, engine, validator=VALIDATOR,
         module="hypothesis_lineage.py", change_id="existing-source:" + _digest(manifest),
         tests=json.dumps(evidence, sort_keys=True), manifest=manifest,
@@ -279,6 +412,14 @@ def validate_existing_lineage_structure(cycle: Path, state: dict, *, engine: Pat
 
 def recheck_receipt_inputs(receipt: dict) -> None:
     evidence = json.loads(receipt.get("tests") or "{}")
+    if (receipt.get("validator") == VALIDATOR
+            and evidence.get("reentry_kind") == "source-contribution-paraphrase"
+            and evidence.get("fresh_lineage_probe") == "passed"
+            and evidence.get("original_proposal_current_contract") == "valid"
+            and evidence.get("restored_paths") == ["candidates[0].transition.source_contributions[H-0002]"]
+            and evidence.get("resume_preparation") == "agent_reproposes_under_current_contract"
+            and evidence.get("invocation_id") and evidence.get("thread_id")):
+        return
     if (receipt.get("validator") != VALIDATOR or evidence.get("fresh_lineage_probe") != "passed"
             or evidence.get("legal_subsets_checked") != 7
             or evidence.get("resume_preparation") != "agent_selects_legal_source_subset"

@@ -10,20 +10,26 @@ from theory_master.prompt_stages import stage_context
 from theory_master.scientific_objective import frozen_science_digest
 
 
-def archive(root, number, *, verdict=None, assessment="not_adjudicated"):
+def archive(root, number, *, verdict=None, assessment="not_adjudicated",
+            kind="input_support_unavailable"):
     cycle = root / str(number)
     cycle.mkdir(parents=True)
     (cycle / ".theory-master-cycle").write_text("theory-master/v2\nfixture\n")
     science = {"hypothesis": "Response follows input", "scope": "Frozen source A",
                "decisive_test": "Fit only qualified observations"}
     report = {
-        "kind": "input_support_unavailable",
+        "kind": kind,
         "frozen_objective_sha256": frozen_science_digest(science),
         "reason": "No qualified observations in the authorized source.",
         "unexecuted_test": "The prescribed coefficient comparison was not executed.",
         "required_dependency": "Additional authorized qualified observations.",
     }
-    closure = {"kind": "input_support_unavailable", "reason": report["reason"],
+    if kind == "authorization_pending":
+        report.update(
+            authorization_clause="The numerical test requires separate operator authorization.",
+            deliverable_clause="Deliver a reviewable method plan before that authorization.",
+        )
+    closure = {"kind": kind, "reason": report["reason"],
                "execution_limit": report}
     state = {"status": "over", "scientific_verdict": verdict, "assessment_state": assessment,
              "hypothesis_lock": {"id": "H-1", **science}, "operational_only_closure": closure}
@@ -48,6 +54,14 @@ def test_recent_limits_reach_lead_with_source_and_without_verdict(tmp_path):
     assert "recent_execution_limits" not in stage_context("judge", "terminal_assessment", {
         "recent_execution_limits": rows,
     })
+
+
+def test_authorization_hold_reaches_next_lead_as_operational_context(tmp_path):
+    archive(tmp_path, 1, kind="authorization_pending")
+    rows = recent_execution_limits(tmp_path, current_cycle="2")
+    assert len(rows) == 1
+    assert rows[0]["kind"] == "authorization_pending"
+    assert "no scientific verdict" in rows[0]["evidence_status"]
 
 
 @pytest.mark.parametrize("defect", ["verdict", "assessment", "mismatch", "science", "symlink", "corrupt"])

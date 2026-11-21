@@ -128,9 +128,8 @@ def task_settings_body(run: dict[str, Any], *, task_selector: str = "", access: 
       <section id="settings-task" class="tm-task-settings-panel" data-settings-task="{ident}"
         data-cycle="{cycle}" data-status="{status}" data-launch="{launch}">
         <h2>科研后台设置</h2>
-        <p class="tm-task-settings-hint">自动审计设置保存到当前任务，
-          其开关在下一次 Run/Resume 后由新 Runner 采用；不会打断正在执行的 Cycle。
-          自动审计默认关闭，需要另行配置外部审计适配器，启用后会额外消耗模型额度。</p>
+        <p class="tm-task-settings-hint">额度自调和 Supervisor 开关作用于当前任务；Supervisor 审查模型只在明确保存后覆盖默认值。
+          自动审计在下一次 Run/Resume 后由新 Runner 采用，不会打断正在执行的 Cycle；启用后会额外消耗模型额度。</p>
         <details><summary>自动审计的环境准备</summary><p>在启动 Runner 的环境中配置
           <code>THEORY_MASTER_AUDIT_SKILL</code>（审计 Skill 文件）、
           <code>THEORY_MASTER_AUDIT_RELAY</code>（审计启动脚本）和
@@ -165,9 +164,19 @@ def task_settings_body(run: dict[str, Any], *, task_selector: str = "", access: 
             const caption=settings.querySelector('.tm-setting-gear-status');
             if(caption)caption.textContent='已配置'+(value.value?'开启':'关闭')+' · 下次 Run/Resume';
           }}
-          show(value.key==='skill_learning'
-            ? '已保存。Skill 自提升优化在后续安全科研调用生效；不启动额外模型或科研 Cycle。'
-            : '已保存。自动审计开关在下一次 Run/Resume 生效。');
+          if(action==='quota_auto_adjust'){{
+            const state=settings.querySelector('[data-setting-status="quota_auto_adjust"]');
+            if(state)state.textContent=value?'自动管理已开启':'已关闭';
+            show('已保存。额度自调在当前任务的下一次额度检查生效。');
+          }}else if(action==='supervisor'){{
+            show('已保存。Supervisor 将在下一次安全判定采用设置。');
+          }}else if(action==='set_operator_preference' && value.kind==='model' && value.key==='supervisor'){{
+            show('已保存。Supervisor 审查模型将在后续审查中采用。');
+          }}else if(value.key==='skill_learning'){{
+            show('已保存。Skill 自提升优化在后续安全科研调用生效；不启动额外模型或科研 Cycle。');
+          }}else{{
+            show('已保存。自动审计开关在下一次 Run/Resume 生效。');
+          }}
           return true;
         }}catch(error){{
           if(control&&rollback!==undefined)control.checked=rollback;
@@ -179,24 +188,27 @@ def task_settings_body(run: dict[str, Any], *, task_selector: str = "", access: 
       }}
       settings.addEventListener('change',event=>{{
         const input=event.target.closest('[data-setting-key]');
-        if(!input||!['cycle_audit','skill_learning'].includes(input.dataset.settingKey))return;
-        save('set_operator_preference',{{kind:'flag',key:input.dataset.settingKey,value:input.checked}},
-             input,!input.checked);
+        if(!input||!['cycle_audit','skill_learning','quota_auto_adjust'].includes(input.dataset.settingKey))return;
+        const key=input.dataset.settingKey;
+        const action=input.dataset.settingMode==='hot'?key:'set_operator_preference';
+        const value=action==='set_operator_preference'?{{kind:'flag',key,value:input.checked}}:input.checked;
+        save(action,value,input,!input.checked);
       }});
-      const model=settings.querySelector('[data-setting-model="cycle_audit"]');
-      let savedModel=model?.value;
+      const savedModels=new Map([...settings.querySelectorAll('[data-setting-model]')]
+        .map(select=>[select.dataset.settingModel,select.value]));
       settings.addEventListener('click',async event=>{{
-        const button=event.target.closest('[data-setting-save-model="cycle_audit"]');
-        if(!button)return;
-        const selected=settings.querySelector('[data-setting-model="cycle_audit"]');
+        const button=event.target.closest('[data-setting-save-model]');
+        if(!button||!['cycle_audit','supervisor'].includes(button.dataset.settingSaveModel))return;
+        const key=button.dataset.settingSaveModel;
+        const selected=settings.querySelector('[data-setting-model="'+key+'"]');
         if(!selected)return;
         const next=selected.value;
         selected.disabled=true;
         try{{
-          if(await save('set_operator_preference',{{kind:'model',key:'cycle_audit',value:next}},button)){{
-            savedModel=next;
+          if(await save('set_operator_preference',{{kind:'model',key,value:next}},button)){{
+            savedModels.set(key,next);
           }}else{{
-            selected.value=savedModel;
+            selected.value=savedModels.get(key)??selected.value;
           }}
         }}finally{{selected.disabled=false;}}
       }});

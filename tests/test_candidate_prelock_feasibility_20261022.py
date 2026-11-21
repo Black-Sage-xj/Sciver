@@ -161,7 +161,7 @@ class PrelockScientificFeasibilityOracle(unittest.TestCase):
 
         self.assertNotIn("lineage_anchor_node_ids", self.lead)
         self.assertNotIn("evolution_operator", self.lead)
-        self.assertEqual(role_contract("challenger", phase="candidate_review").version, 5)
+        self.assertEqual(role_contract("challenger", phase="candidate_review").version, 6)
         self.assertIn(("challenger", "repair_verification"), STAGE_CARDS)
         self.assertIn("procedure", STAGE_CARDS[("research_lead", "frontier_proposal")])
         self.assertIn("procedure", STAGE_CARDS[("challenger", "candidate_review")])

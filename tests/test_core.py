@@ -384,7 +384,7 @@ class TheoryMasterTest(unittest.TestCase):
             with ScienceGraphStore(database) as store:
                 store.add_hypothesis("H-0090", title="Frontier", summary="SQLite claim")
                 store.append_outcome(outcome_id="outcome-h90", hypothesis_id="H-0090", cycle_id="90", verdict="open")
-                store.set_frontiers_batch([{"hypothesis_id": "H-0090", "status": "active", "reason": "test"}])
+                store.set_frontiers_batch([{"hypothesis_id": "H-0090", "status": "active", "reason": "test", "remaining_question": "Does this fixture H retain the specified scientific opportunity?"}])
                 detail = store.agent_hypothesis_detail("H-0090")
                 self.assertEqual(detail["id"], "H-0090")
                 self.assertEqual(detail["claim"], "SQLite claim")
@@ -875,7 +875,7 @@ class TheoryMasterTest(unittest.TestCase):
                     store.append_outcome(outcome_id=f'outcome-{h}', hypothesis_id=h, cycle_id=h[-1], verdict='open')
                 store.set_frontiers_batch([
                     {'hypothesis_id':'H-0001','status':'closed','reason':'rejected path is terminal'},
-                    {'hypothesis_id':'H-0002','status':'active','reason':'explicitly selected by Research Lead'},
+                    {'hypothesis_id':'H-0002','status':'active','reason':'explicitly selected by Research Lead', "remaining_question": "Does this fixture H retain the specified scientific opportunity?"},
                 ])
             _, eligible = frontier_snapshot(db)
             self.assertEqual([row['hypothesis_id'] for row in eligible], ['H-0002'])
@@ -1046,7 +1046,9 @@ class TheoryMasterTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             spec, _ = self.make(Path(temp))
             backend = PersistentRepairBackend()
-            state = Workflow(spec, backend).run()
+            workflow = Workflow(spec, backend)
+            workflow.supervisor_enabled = lambda: False
+            state = workflow.run()
             self.assertEqual(state['qualification_status'], 'no_qualified_candidate')
             self.assertFalse(state['hypothesis_locked'])
             self.assertEqual(backend.repairs, 3)
@@ -1086,7 +1088,9 @@ class TheoryMasterTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             spec, _ = self.make(Path(temp))
             backend = CannotRepairBackend()
-            state = Workflow(spec, backend).run()
+            workflow = Workflow(spec, backend)
+            workflow.supervisor_enabled = lambda: False
+            state = workflow.run()
             self.assertEqual(state['status'], 'no_qualified_candidate')
             self.assertEqual(state['qualification_status'], 'no_qualified_candidate')
             self.assertFalse(state['hypothesis_locked'])

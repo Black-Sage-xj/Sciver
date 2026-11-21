@@ -31,8 +31,8 @@ def _setup(tmp_path: Path):
         store.append_outcome(outcome_id="outcome-h1", hypothesis_id="H-0001", cycle_id="1", verdict="open")
         store.append_outcome(outcome_id="outcome-h2", hypothesis_id="H-0002", cycle_id="2", verdict="open")
         store.set_frontiers_batch([
-            {"hypothesis_id":"H-0001", "status":"active", "reason":"still scientifically relevant"},
-            {"hypothesis_id":"H-0002", "status":"parked", "reason":"await a discriminating test"},
+            {"hypothesis_id":"H-0001", "status":"active", "reason":"a scoped mechanism is unresolved", "remaining_question":"Does the mechanism survive the source counterexample?"},
+            {"hypothesis_id":"H-0002", "status":"parked", "reason":"await a discriminating test", "remaining_question":"Which alternative explains the discrepancy?", "dependency":"An independent comparison is not yet available"},
         ])
         canvas.write_text(json.dumps(canvas_projection(store), ensure_ascii=False), encoding="utf-8")
     (tmp_path / "research_plan.md").write_text("# Goal\n", encoding="utf-8")
@@ -52,7 +52,7 @@ def test_frontier_transition_does_not_rewrite_scientific_outcome(tmp_path):
     _, db, _ = _setup(tmp_path)
     with ScienceGraphStore(db) as store:
         store.append_outcome(outcome_id="outcome-3", hypothesis_id="H-0001", cycle_id="3", verdict="supported")
-        store.set_frontiers_batch([{"hypothesis_id":"H-0001", "status":"parked", "reason":"supported claim may still be a useful origin"}])
+        store.set_frontiers_batch([{"hypothesis_id":"H-0001", "status":"parked", "reason":"a necessary scope boundary remains unresolved", "remaining_question":"Is the supported claim valid at the limiting scale?", "dependency":"Need a verified limiting-scale input"}])
     with ScienceGraphStore(db, readonly=True) as store:
         row = store.frontier_view()["H-0001"]
         assert row["frontier_status"] == "parked"
@@ -69,6 +69,49 @@ def test_invalid_frontier_batch_is_atomic(tmp_path):
             ])
     with ScienceGraphStore(db, readonly=True) as store:
         assert store.frontier_view()["H-0001"]["frontier_status"] == "active"
+
+
+def test_reopen_requires_basis_and_opportunity_survives_readonly_reopen(tmp_path):
+    _, db, _ = _setup(tmp_path)
+    update = {"hypothesis_id": "H-0001", "status": "active", "reason": "New source resolves the old blocker",
+              "remaining_question": "Does the limiting case satisfy the mechanism?"}
+    with ScienceGraphStore(db) as store:
+        store.set_frontiers_batch([{"hypothesis_id": "H-0001", "status": "closed", "reason": "Exact test is complete"}])
+        with pytest.raises(ValueError, match="reopen_basis"):
+            store.set_frontiers_batch([update])
+        update["reopen_basis"] = "The new source identifies an untested necessary limiting case"
+        store.set_frontiers_batch([update])
+    with ScienceGraphStore(db, readonly=True) as store:
+        node = next(n for n in store.graph_view()["nodes"] if n["id"] == "H-0001")
+        assert node["frontiers"][0]["remaining_question"] == update["remaining_question"]
+        assert node["frontiers"][0]["reopen_basis"] == update["reopen_basis"]
+
+
+def test_frontier_noop_and_annotation_do_not_create_state_changes(tmp_path):
+    _, db, _ = _setup(tmp_path)
+    update = {"hypothesis_id": "H-0001", "status": "active", "reason": "Mechanism question remains",
+              "remaining_question": "Does the limiting case satisfy the mechanism?"}
+    with ScienceGraphStore(db) as store:
+        store.set_frontiers_batch([update])
+        initial = store.db.execute("SELECT changed_at FROM frontier_branches WHERE hypothesis_id='H-0001'").fetchone()[0]
+        changes = store.db.execute("SELECT count(*) FROM graph_events WHERE action='frontier.changed'").fetchone()[0]
+        before = store.db.execute("SELECT count(*) FROM graph_events").fetchone()[0]
+        store.set_frontiers_batch([update])
+        assert store.db.execute("SELECT count(*) FROM graph_events").fetchone()[0] == before
+        store.set_frontiers_batch([{**update, "reason": "Updated source explanation"}])
+        assert store.db.execute("SELECT count(*) FROM graph_events WHERE action='frontier.changed'").fetchone()[0] == changes
+        assert store.db.execute("SELECT action FROM graph_events ORDER BY seq DESC LIMIT 1").fetchone()[0] == "frontier.annotated"
+        assert store.db.execute("SELECT changed_at FROM frontier_branches WHERE hypothesis_id='H-0001'").fetchone()[0] == initial
+
+
+def test_general_goal_relevance_is_not_an_opportunity(tmp_path):
+    _, db, _ = _setup(tmp_path)
+    with ScienceGraphStore(db) as store:
+        with pytest.raises(ValueError, match="remaining_question"):
+            store.set_frontiers_batch([{"hypothesis_id": "H-0001", "status": "parked", "reason": "Goal is not complete"}])
+        with pytest.raises(ValueError, match="dependency"):
+            store.set_frontiers_batch([{"hypothesis_id": "H-0001", "status": "parked", "reason": "A mechanism remains",
+                                        "remaining_question": "Which mechanism explains the result?"}])
 
 
 def test_same_h_reuse_requires_explicit_reconsideration_and_revision(tmp_path):

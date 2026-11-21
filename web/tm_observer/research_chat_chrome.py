@@ -1,6 +1,16 @@
 """Shared Codex-style Research Chat chrome, layered over the legacy shell."""
 
 CHROME_STYLE = """
+.tm-chat-agent-switch{display:flex;gap:4px;flex:0 0 auto;margin:0 0 8px;align-self:flex-start}
+.tm-chat-agent-switch a{display:block;padding:8px 14px;border-radius:8px;color:var(--chat-muted);text-decoration:none;font-size:13px}
+.tm-chat-agent-switch a:hover{color:var(--chat-text);background:var(--chat-panel)}
+.tm-chat-agent-switch a[aria-current="page"]{color:var(--chat-text);background:var(--chat-panel);font-weight:600}
+.tm-chat-agent-switch a:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+.tm-chat-system-intro{max-width:65ch;margin:12px auto 24px;color:var(--chat-muted);font-size:14px;line-height:1.7}
+.tm-chat-shared-skills{margin:0 auto 24px;max-width:65ch;color:var(--chat-muted);font-size:12px}
+.tm-chat-shared-skills summary{cursor:pointer;padding:6px 0}
+.tm-chat-shared-skills summary:focus-visible{outline:2px solid currentColor;outline-offset:2px}
+.tm-chat-shared-skills ul{display:flex;flex-wrap:wrap;gap:8px 18px;padding:0;list-style:none;max-height:120px;overflow:auto}
 .tm-research_chat-view .tm-content:has(.tm-chat-codex){padding:0 12px 12px;background:#191919}
 .tm-research-chat.tm-chat-codex{--chat-bg:#191919;--chat-panel:#292929;--chat-input:#333333;--chat-line:#404040;--chat-text:#ededed;--chat-muted:#a0a0a0;--chat-hover:#303030;--chat-effort:#b889f5;background:var(--chat-bg);color:var(--chat-text);position:relative;isolation:isolate}
 .tm-chat-codex button,.tm-chat-codex input,.tm-chat-codex select,.tm-chat-codex textarea{font-family:inherit}

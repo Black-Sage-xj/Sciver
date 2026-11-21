@@ -85,7 +85,22 @@ def material_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def resolve_material(spec: Any, reference: str) -> dict[str, str]:
+def published_materials(spec: Any) -> dict[str, str]:
+    """Verified publication targets grant file access, never a TaskHome root."""
+    from .delivery_publish import read_publications
+
+    return {
+        row["path"]: row["sha256"]
+        for publication in read_publications(spec)
+        if publication.get("status") == "available"
+        for row in publication.get("files", [])
+        if row.get("status") == "available"
+    }
+
+
+def resolve_material(
+    spec: Any, reference: str, *, _publications: dict[str, str] | None = None
+) -> dict[str, str]:
     """Describe access without granting access to inherited or unsafe paths."""
     parsed = urlsplit(reference)
     if parsed.scheme or parsed.netloc:
@@ -121,6 +136,7 @@ def resolve_material(spec: Any, reference: str) -> dict[str, str]:
     )
     safe: dict[str, Path] = {}
     rejected = "missing"
+    publication_hashes = _publications
     for candidate in candidates:
         # Registered Hypothesis dossiers use Obsidian's extensionless stems.
         if (
@@ -137,7 +153,17 @@ def resolve_material(spec: Any, reference: str) -> dict[str, str]:
         ):
             rejected = "benchmark_file_not_in_required_context"
         elif not any(resolved.is_relative_to(base) for base in roots):
-            rejected = "outside_registered_roots"
+            if publication_hashes is None:
+                publication_hashes = published_materials(spec)
+            expected = publication_hashes.get(str(resolved))
+            if expected is None:
+                rejected = "outside_registered_roots"
+            elif any(part.is_symlink() for part in (candidate, *candidate.parents)):
+                rejected = "symlink"
+            elif not resolved.is_file() or material_sha256(resolved) != expected:
+                rejected = "publication_drifted"
+            else:
+                safe[str(resolved)] = resolved
         elif any(part.is_symlink() for part in (candidate, *candidate.parents)):
             rejected = "symlink"
         elif (
@@ -180,7 +206,11 @@ def goal_material_sources(spec: Any, values: Iterable[Any]) -> list[dict[str, st
     for value in values:
         visit(value)
     references.update(required_benchmark_references(spec))
-    return [resolve_material(spec, ref) for ref in sorted(references)]
+    publications = published_materials(spec)
+    return [
+        resolve_material(spec, ref, _publications=publications)
+        for ref in sorted(references)
+    ]
 
 
 def rewrite_markdown_navigation(text: str, destination: Callable[[str], str]) -> str:

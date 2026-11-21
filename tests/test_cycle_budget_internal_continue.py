@@ -66,3 +66,24 @@ def test_collector_internal_continue_keeps_same_cycle_index_and_start_semantics(
         persisted = json.loads((next_cycle / "run_state.json").read_text(encoding="utf-8"))
         assert persisted["cycle_index"] == 2
         collector.finish()
+
+
+def test_fresh_collector_restores_checkpoint_slot_after_boot(tmp_path):
+    spec = _spec(tmp_path)
+    original = Collector(spec)
+    original.start_run("1", spec, run_dir=spec.research_root / "1")
+    original.finish()
+    cycle = spec.research_root / "2"
+    original.start_run("2", spec, run_dir=cycle)
+
+    restarted = Collector(spec)
+    restarted.start_run("2", spec, run_dir=cycle, retained_cycle_index=2)
+    assert restarted.snapshot()["cycle_index"] == 2
+    events = restarted.runtime_events(limit=0)
+    assert [row["event"] for row in events if row["event"] in {"CYCLE_STARTED", "CYCLE_CONTINUED"}] == [
+        "CYCLE_STARTED", "CYCLE_CONTINUED",
+    ]
+    restarted.finish()
+    restarted.start_run("3", spec, run_dir=spec.research_root / "3")
+    assert restarted.snapshot()["cycle_index"] == 3
+    restarted.finish()

@@ -855,7 +855,7 @@ class EvidenceRegistry:
             and (record.get("integrity_current") or {}).get("status") == "verified"
         )
 
-    def rebuild(self) -> dict[str, Any]:
+    def rebuild(self, *, write: bool = True) -> dict[str, Any]:
         records = [
             self._canonical_evidence_record(record)
             for record in self._committed_evidence_records()
@@ -994,8 +994,9 @@ class EvidenceRegistry:
             "scope_limitations": scope_limitations,
             "active_evidence_ids": [str(record["evidence_id"]) for record in adjudicable_records],
         }
-        _atomic_json(self.manifest_path, manifest)
-        _atomic_json(self.coverage_path, coverage)
+        if write:
+            _atomic_json(self.manifest_path, manifest)
+            _atomic_json(self.coverage_path, coverage)
         return {"manifest": manifest, "coverage": coverage}
 
     def context(self) -> dict[str, Any]:

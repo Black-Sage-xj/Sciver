@@ -71,6 +71,9 @@ class QualificationSession:
         self.proposal._load_model_and_feedback()
         self.proposal._recover_legacy_checkpoint()
         self.proposal._propose_frontier()
+        if "blocking_reason" in self.frontier_output:
+            self.frontier_by_id, self.reviews_by_id = {}, {}
+            self.review.stop_unqualified(self.frontier_output["blocking_reason"], [], allow_retry=False)
         self.recovery._restore_working_set()
         self.recovery._migrate_repair_verification()
         self.recovery._exclude_repeated_stops()

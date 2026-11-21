@@ -1,7 +1,9 @@
 """InvocationTransport: a single explicit phase owner for InvocationSession."""
 
 from __future__ import annotations
+
 import json
+from .native_goal_guidance import PausedGoalGuidanceError
 from .observability.incident_registry import register_cycle_incident
 from .workflow_support import RecoveryStop
 from .native_goal import (
@@ -36,9 +38,22 @@ class InvocationTransport:
             "status": identity["status"], "thread_id": identity["thread_id"],
             "origin_identity": identity,
         }
+        if getattr(self.session, "native_goal_origin", None) is None:
+            backend = getattr(self.session.owner, "backend", None)
+            account = getattr(backend, "goal_account_origin", None)
+            rollout = getattr(backend, "goal_rollout_origin", None)
+            if isinstance(account, dict) and isinstance(rollout, dict):
+                self.session.state["native_goal_quota_origin"] = {
+                    **account, **rollout, "thread_id": identity["thread_id"], "provider": self.session.route.provider,
+                    "objective_sha256": identity["objective_sha256"], "created_at": identity["created_at"],
+                }
+            else:
+                self.session.state.pop("native_goal_quota_origin", None)
         self.session.owner._persist(self.session.state)
 
     def _prepare_native_delivery(self):
+        from .boot_native_goal import pending_boot_native_goal
+
         investigator_goal_stage = (
             self.session.role == "investigator"
             and self.session.stage in NATIVE_INVESTIGATOR_STAGES
@@ -53,6 +68,10 @@ class InvocationTransport:
         self.session.use_native_goal = investigator_goal_stage and (
             not deterministic_backend
         )
+        boot_pin = pending_boot_native_goal(self.session.owner.backend)
+        if boot_pin is not None and not self.session.use_native_goal:
+            from .native_goal_recovery import NativeGoalRecoveryConflict
+            raise NativeGoalRecoveryConflict("Boot Resume requires the original native Investigator Goal")
         if self.session.use_native_goal and (
             not callable(getattr(self.session.owner.backend, "invoke_goal", None))
         ):
@@ -81,11 +100,20 @@ class InvocationTransport:
                 "workspace_path": str(self.session.handoff_path.parent.parent),
                 "handoff_path": str(self.session.handoff_path),
             }
+            continuation = self.session.state.get("supervisor_fixture_conflict_continuation") or {}
+            available_again = (
+                continuation.get("available_fixture_pins")
+                if (continuation.get("frozen_objective_sha256") == self.session.limit_binding["frozen_objective_sha256"]
+                    and continuation.get("invocation_id") == self.session.state.get("last_invocation_id")
+                    and self.session.stage == "investigate" and (self.session.state.get("recovery") or {}).get("action") == "resume")
+                else None
+            )
             self.session.setup_context = (
                 json.dumps(
                     {
                         **self.session.prompt_context,
                         "sdk_execution_limit_handoff": self.session.limit_binding,
+                        **({"sdk_fixture_availability_correction": available_again} if available_again else {}),
                     },
                     ensure_ascii=False,
                     default=str,
@@ -101,28 +129,71 @@ class InvocationTransport:
                 + "Put detailed proofs, scripts, numbers and other material in arbitrary research files, "
                 + "but make each submitted claim scientifically self-contained. "
                 + "Do not submit Findings while blocked, paused or unfinished. "
-                + "NARROW EXECUTION-LIMIT DELIVERY: If an indispensable frozen-test input or eligible "
-                + "support remains unavailable after a bounded audit of authorized local source/recovery "
-                + "alternatives, use this same invocation's handoff path for a separate JSON object "
-                + "{execution_limit:{kind:'input_support_unavailable',invocation_id:string,"
+                + "For an authorized source audit, resolve each indispensable fixture reference from "
+                + "Required Context against workspace_access.benchmark_root and the exact registered fixture manifest. "
+                + "Use registered_fixture_inputs for the declared paths, sizes, hashes and current availability. "
+                + "Check the exact path directly, for example with stat, and match its SHA-256 to the manifest. "
+                + "A directory listing filtered by ignore rules is insufficient evidence of absence. "
+                + ("The previous missing-file report contradicted SDK-verified canonical files listed in "
+                   "sdk_fixture_availability_correction. Continue the same frozen decisive_test in this workspace. "
+                   if available_again else "")
+                + "The inventory verifies file identity only. Apply the frozen task restrictions for eligibility, "
+                + "independence and permitted read timing before using source values. "
+                + "NARROW EXECUTION-LIMIT DELIVERY: Use this same invocation's handoff path "
+                + "for a separate JSON object only if (a) an indispensable frozen-test input or "
+                + "eligible support remains unavailable after a bounded authorized source audit, or "
+                + "(b) the reviewed Research Contract explicitly withholds authorization for the "
+                + "remaining numerical test, no approval has been given, and the complete currently "
+                + "authorized method deliverable has been preserved for operator review. Use kind "
+                + "input_support_unavailable for (a), authorization_pending for (b): "
+                + "{execution_limit:{kind:'input_support_unavailable'|'authorization_pending',invocation_id:string,"
                 + "frozen_objective_sha256:string,reason:string,checked_alternatives:[string],"
                 + "unexecuted_test:string,required_dependency:string,evidence:[{path:string,sha256:string}]}}. "
+                + ("When using input_support_unavailable, add "
+                   "input_support_audit:{mode:'missing_fixture_files'|'insufficient_eligible_support',fixture_references:[string]}. "
+                   "Use a nonempty list of unique exact references from registered_fixture_inputs. "
+                   "For missing_fixture_files, name only indispensable files whose canonical bytes are unavailable. "
+                   "For insufficient_eligible_support, name the available inputs inspected and explain the distinct "
+                   "eligibility or scientific-support gap in reason and checked_alternatives. "
+                   if self.session.prompt_context.get("registered_fixture_inputs") else "")
+                + "For authorization_pending, add authorization_clause and deliverable_clause as "
+                + "exact verbatim clauses of at least 20 characters from the reviewed Research Contract "
+                + "and Final Gate in Setup Context; the SDK checks both against those exact texts. "
                 + "Copy invocation_id and frozen_objective_sha256 exactly from sdk_execution_limit_handoff. "
-                + "Describe the completed source-recovery audit in checked_alternatives. Cite nonempty "
+                + "For (a), describe the source-recovery audit in checked_alternatives. For (b), "
+                + "describe completed authorized work and why the remaining test requires separate "
+                + "approval; name that approval in required_dependency. Cite nonempty "
                 + "existing regular evidence files by canonical workspace-relative path and actual SHA-256; "
                 + "no symlinks, outside paths, or more than 16 MiB per file / 32 MiB total. "
-                + "Do not mix this object with findings. Only this input limitation permits ending the "
+                + "Do not mix this object with findings. Only these verified limits permit ending the "
                 + "native operation after administrative delivery while the test remains unexecuted. "
                 + "It is not scientific completion, an inconclusive result or a Judge verdict. "
-                + "Method failure, scientific difficulty or cost alone do not qualify. Preserve frozen "
+                + "Method failure, scientific difficulty, cost alone, or unfinished authorized work "
+                + "do not qualify. Preserve frozen "
                 + "science, lawful inputs and resource guards; do not repeatedly audit unchanged sources."
                 + self.session.skill_addendum
             )
         if self.session.use_native_goal:
             from .native_goal import native_goal_setup_turn
-            from .native_goal_recovery import find_native_goal_origin, bind_origin_context
+            from .native_goal_recovery import NativeGoalRecoveryConflict, bind_origin_context, find_native_goal_origin
 
             origin = find_native_goal_origin(self.session)
+            backend = self.session.owner.backend
+            retained = getattr(backend, "retained_goal_home", None)
+            if boot_pin is not None:
+                from .boot_native_goal import require_boot_native_origin
+                require_boot_native_origin(
+                    boot_pin, origin, role=self.session.role, stage=self.session.stage,
+                    logical_key=self.session.logical_key, thread_id=self.session.identifier,
+                    provider=self.session.route.provider, model=self.session.route.model,
+                )
+            elif retained is not None and not backend.retained_goal_delivered:
+                original_goal = (origin or {}).get("persistent_goal") or {}
+                if (origin is None or origin["thread_id"] != retained.thread_id
+                        or self.session.route.provider != retained.provider
+                        or origin["objective_sha256"] != retained.binding["objective_sha256"]
+                        or str(original_goal.get("created_at")) != retained.binding["created_at"]):
+                    raise NativeGoalRecoveryConflict("Quota Resume cannot establish the original Investigator Goal")
             if origin is not None:
                 from pathlib import Path
                 from .native_goal import execution_limit_setup_binding
@@ -177,6 +248,8 @@ class InvocationTransport:
                     record_input(
                         role=self.session.role,
                         stage=self.session.stage,
+                        invocation_id=self.session.invocation_id,
+                        thread_id=self.session.identifier,
                         content=native_goal_setup_turn(
                             self.session.setup_context, self.session.native_objective
                         ),
@@ -186,6 +259,8 @@ class InvocationTransport:
                     record_input(
                         role=self.session.role,
                         stage=self.session.stage,
+                        invocation_id=self.session.invocation_id,
+                        thread_id=self.session.identifier,
                         content=self.session.native_objective,
                         input_kind="native_goal_objective",
                     )
@@ -247,6 +322,9 @@ class InvocationTransport:
                 from .native_delivery_journal import record_native_delivery
 
                 record_native_delivery(self.session)
+                backend = self.session.owner.backend
+                if getattr(backend, "retained_goal_home", None) is not None:
+                    backend.retained_goal_delivered = True
             if self.session.skill_binding:
                 self.session.skill_versions[self.session.identifier] = (
                     self.session.skill_binding["catalogue_version"]
@@ -259,7 +337,9 @@ class InvocationTransport:
                     and self.session.identifier not in self.session.skill_protocols
                 ):
                     self.session.skill_protocols.append(self.session.identifier)
-            if self.session.pending_guidance is not None:
+            # Reattachment binds the original Setup without sending a new Agent input.
+            if (self.session.pending_guidance is not None
+                    and getattr(self.session, "native_goal_origin", None) is None):
                 from .attention_guidance import mark_guidance_consumed
 
                 consumed = mark_guidance_consumed(
@@ -282,6 +362,8 @@ class InvocationTransport:
                     },
                 )
                 self.session.owner._persist(self.session.state)
+        except PausedGoalGuidanceError as exc:
+            return self._handle_paused_guidance_failure(exc)
         except NativeGoalBudgetExceeded as exc:
             return self._handle_live_budget(exc)
         except NativeGoalExecutionLimit as exc:
@@ -290,6 +372,26 @@ class InvocationTransport:
             return self._handle_invalid_delivery(exc)
         except NativeGoalIncomplete as exc:
             return self._handle_incomplete_goal(exc)
+
+    def _handle_paused_guidance_failure(self, exc):
+        """Retain pending correction without entering a generic repair retry."""
+        from .workflow_support import RecoveryStop
+
+        native = dict(getattr(self.session.owner.backend, "last_native_goal", {}) or {})
+        self.session.state["native_goal"] = {
+            **(self.session.state.get("native_goal") or {}), **native,
+        }
+        self.session.state.update(status="paused", phase="paused", resumable=True,
+                                  execution_active=False, next_executor="investigator")
+        self.session.invocation_ledger.transition(
+            self.session.invocation_id, "interrupted", role=self.session.role,
+            thread_id=self.session.identifier, reason="paused Goal correction remains unconfirmed",
+        )
+        if self.session.artifact_tracker is not None:
+            self.session.artifact_tracker.finalize(status="interrupted")
+        self.session.owner._emit(self.session.state, "native_goal.guidance_pending", {"reason": str(exc)})
+        self.session.owner._persist(self.session.state)
+        raise RecoveryStop("paused Goal correction requires explicit recovery") from exc
 
     def _handle_live_budget(self, exc):
         live_budget = budget_status(
@@ -436,6 +538,8 @@ class InvocationTransport:
             raise RuntimeError(
                 "execution-limit exception is not bound to this invocation"
             ) from exc
+        if "input_support_audit" in exc.execution_limit and not exc.fixture_audit_pins:
+            raise ValueError("execution-limit fixture audit has no SDK boundary verification") from exc
         self.session.state["native_goal"] = dict(
             getattr(self.session.owner.backend, "last_native_goal", {}) or {}
         )
@@ -445,6 +549,7 @@ class InvocationTransport:
             "invocation_id": delivery_id,
             "monitor_invocation_id": self.session.invocation_id,
             "thread_id": exc.thread_id,
+            **({"fixture_audit_pins": exc.fixture_audit_pins} if exc.fixture_audit_pins else {}),
             **({"origin_binding": {
                 key: value for key, value in self.session.native_goal_origin.items()
                 if key not in {"objective", "setup_context"}
@@ -462,7 +567,7 @@ class InvocationTransport:
             "interrupted",
             role=self.session.role,
             thread_id=exc.thread_id,
-            reason="validated input-support execution limitation",
+            reason="validated invocation-bound execution limitation",
             execution_limit=exc.execution_limit,
             handoff_path=exc.handoff_path,
             delivery_origin_invocation_id=delivery_id,

@@ -55,7 +55,7 @@ def session_panel(session: dict) -> str:
 <dialog class="tm-prep-dialog" data-preparation-dialog aria-labelledby="tm-prep-review-title">
 <form data-prep-form><h2 id="tm-prep-review-title">审阅研究计划</h2>
 <p>可以先保存未完成的草稿，回到对话继续讨论。准备立项时，确认下面的目标、研究约束与完成标准。</p>
-<label for="tm-prep-title">项目名称</label><input id="tm-prep-title" data-prep-title maxlength="120" value="{escape(preparation.get('title'))}">
+<label for="tm-prep-title">项目名称（最多 48 字符）</label><input id="tm-prep-title" data-prep-title maxlength="48" value="{escape(preparation.get('title'))}">
 <label for="tm-prep-intent">研究意图</label><textarea id="tm-prep-intent" data-prep-intent rows="3" maxlength="12000">{escape(preparation.get('intent'))}</textarea>
 <label for="tm-prep-draft">Research Plan 草稿（Markdown）</label>
 <p>正式创建需要四个一级标题：<code># Goal</code>、<code># Research Contract</code>、<code># Final Gate</code>、<code># Required Context</code>。草稿可暂时留空；Scientific Model 将在正式研究中逐步建立。</p>

@@ -53,7 +53,7 @@ def canvas_ts(iso: str | None = None) -> str:
     return value.strftime("%m-%d-%H:%M")
 
 
-def atomic(path: Path, value: str) -> None:
+def atomic(path: Path, value: str, *, sync_directory: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
@@ -62,13 +62,19 @@ def atomic(path: Path, value: str) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
+        if sync_directory:
+            directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
 
 
-def write_json(path: Path, value: Any) -> None:
-    atomic(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+def write_json(path: Path, value: Any, *, sync_directory: bool = False) -> None:
+    atomic(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n", sync_directory=sync_directory)
 
 
 def bound_json_value(

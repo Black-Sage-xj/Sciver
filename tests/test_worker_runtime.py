@@ -24,7 +24,7 @@ def canvas(root: Path, count=5):
     with ScienceGraphStore(database) as store:
         for i in range(1, count + 1):
             store.add_hypothesis(f'H-{i:04d}', title=f'Branch {i}')
-            store.set_frontiers_batch([{"hypothesis_id": f"H-{i:04d}", "status": "active", "reason": "test fixture"}])
+            store.set_frontiers_batch([{"hypothesis_id": f"H-{i:04d}", "status": "active", "reason": "test fixture", "remaining_question": "Does the fixture H satisfy its remaining scientific requirement?"}])
     return path
 
 
@@ -56,8 +56,8 @@ def test_frontier_claim_uses_hypothesis_identity_not_projection_nodes(tmp_path):
         store.add_hypothesis("H-0002", title="Second")
         store.add_evolution(edge_id="e1", source="H-0001", target="H-0002", operator="derive")
         store.set_frontiers_batch([
-            {"hypothesis_id":"H-0001","status":"active","reason":"parent remains a valid origin"},
-            {"hypothesis_id":"H-0002","status":"active","reason":"child is also eligible"},
+            {"hypothesis_id":"H-0001","status":"active","reason":"parent remains a valid origin", "remaining_question": "Does the fixture H satisfy its remaining scientific requirement?"},
+            {"hypothesis_id":"H-0002","status":"active","reason":"child is also eligible", "remaining_question": "Does the fixture H satisfy its remaining scientific requirement?"},
         ])
     found = frontier_snapshot(db)[1]
     assert {r['hypothesis_id'] for r in found} == {'H-0001','H-0002'}
@@ -158,6 +158,34 @@ def test_failed_child_start_releases_claim(tmp_path, monkeypatch):
     assert list_workers(tmp_path)[0]['status'] == 'FAILED_START'
 
 
+def test_prelaunch_auth_failure_releases_new_claim_without_rewriting_old_cycle(tmp_path, monkeypatch):
+    cv = canvas(tmp_path, 1)
+    save_worker(tmp_path, 'worker-1', status='OVER', account='1',
+                current_cycle='3', pid=999999, pid_start_ticks=1,
+                claim_id='historical-claim', epoch=4)
+    monkeypatch.setattr('theory_master.worker_routes._route_capacity',
+                        lambda spec, slots: (slots, ['1']))
+    def bad_auth(*args):
+        raise RuntimeError('pinned Worker Codex auth points to another identity')
+    monkeypatch.setattr('theory_master.worker_routes._pinned_codex_home', bad_auth)
+    spec = SimpleNamespace(research_root=tmp_path, branch_canvas=cv)
+
+    with pytest.raises(RuntimeError, match='another identity'):
+        schedule_once(spec, resource_slots=1)
+    assert CycleClaims(tmp_path).list_claims() == []
+    retained = list_workers(tmp_path)[0]
+    assert (retained['status'], retained['current_cycle'], retained['claim_id']) == (
+        'OVER', '3', 'historical-claim')
+
+    monkeypatch.setattr('theory_master.worker_routes._pinned_codex_home',
+                        lambda *args: tmp_path)
+    monkeypatch.setattr('theory_master.worker_launch._launch_detached_service',
+                        lambda *args, **kwargs: None)
+    result = schedule_once(spec, resource_slots=1)
+    assert len(result['started']) == 1
+    assert len(CycleClaims(tmp_path).list_claims()) == 1
+
+
 def test_fast_child_does_not_rewind_runtime(tmp_path, monkeypatch):
     from theory_master import worker_runtime as wr
     cv = canvas(tmp_path, 1)
@@ -222,7 +250,7 @@ def test_paused_claim_owner_reserves_account_and_parallel_agent_slot(tmp_path):
     with ScienceGraphStore(database) as store:
         for h in ("H-0001", "H-0002"):
             store.add_hypothesis(h, title=h)
-            store.set_frontiers_batch([{"hypothesis_id":h,"status":"active","reason":"fixture"}])
+            store.set_frontiers_batch([{"hypothesis_id":h,"status":"active","reason":"fixture", "remaining_question": "Does the fixture H satisfy its remaining scientific requirement?"}])
     claims = CycleClaims(research)
     claim = claims.claim_cycle('worker-1')
     claims.update('worker-1', claim['claim_id'], claim['fencing_epoch'], action='pause')

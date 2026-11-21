@@ -1,5 +1,6 @@
 import hashlib
 import json
+import shutil
 import tempfile
 import unittest
 from contextlib import redirect_stderr
@@ -160,6 +161,86 @@ class ReplayCheckpointTest(unittest.TestCase):
             data.write_bytes(b"changed-dataset")
             with self.assertRaisesRegex(ValueError, "external scientific input has changed"):
                 replay_cycle(spec, cycle, "start", dry_run=True)
+
+    def test_replay_keeps_historical_holdout_and_overlays_current_pins(self):
+        from theory_master.backends import FakeBackend
+        from theory_master.cycle_replay import replay_cycle
+        from theory_master.prequalification_holdout import holdout_files
+        from theory_master.specification import TaskSpec
+        from theory_master.task import bootstrap
+        from theory_master.workflow import Workflow
+
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = Path(tmp) / "source" / "research_plan.md"
+            plan.parent.mkdir()
+            plan.write_text("# Goal\n\nCheck the local fixture.\n\n# Research Contract\n\nUse the fixture.\n\n"
+                            "# Final Gate\n\nRecord a result.\n\n# Required Context\n\n- fixture\n")
+            binding = bootstrap(plan)
+            config_path = binding.config_path
+            config = json.loads(config_path.read_text())
+            benchmark = Path(config["benchmark_root"])
+            (benchmark / "inputs").mkdir(parents=True, exist_ok=True)
+            pins = []
+            fixture_rows = []
+            for name in ("old-cohort", "new-cohort"):
+                data = f"synthetic {name}\n".encode()
+                (benchmark / "inputs" / f"{name}.csv").write_bytes(data)
+                pin = {"reference": f"benchmark/inputs/{name}.csv", "sha256": hashlib.sha256(data).hexdigest()}
+                pins.append(pin)
+                fixture_rows.append({"path": pin["reference"], "sha256": pin["sha256"], "size": len(data)})
+            (benchmark / "fixture_manifest.json").write_text(json.dumps({
+                "schema": "sciver/private-scientific-fixture-manifest/v1", "files": fixture_rows,
+            }))
+            spec = TaskSpec.from_config(config_path)
+
+            def checkpoint(number):
+                cycle = spec.research_root / str(number)
+                wf = Workflow(spec, FakeBackend())
+                wf._bind_cycle(cycle, create=True)
+                wf._write_replay_checkpoint({"cycle_number": number, "attempt_id": "historical"}, "cycle_start")
+                frozen = cycle / "replay_checkpoints/cycle_start.inputs/task_config.json"
+                return cycle, frozen.read_bytes()
+
+            before_opt_in = checkpoint(1)
+            config["prequalification_holdout"] = {"files": [pins[0]]}
+            config_path.write_text(json.dumps(config))
+            historical_policy = checkpoint(2)
+            config["prequalification_holdout"] = {"files": [pins[1]]}
+            config_path.write_text(json.dumps(config))
+            current_config = config_path.read_bytes()
+
+            for (cycle, frozen_bytes), expected in ((before_opt_in, pins[1:]), (historical_policy, pins)):
+                with self.subTest(cycle=cycle.name):
+                    def backend(private_spec, _routes):
+                        files = holdout_files(private_spec.config_path)
+                        self.assertEqual({(file.reference, file.sha256) for file in files},
+                                         {(pin["reference"], pin["sha256"]) for pin in expected})
+                        self.assertTrue(all(file.path.is_relative_to(benchmark) for file in files))
+                        return FakeBackend(reworks=0)
+
+                    outcome = replay_cycle(spec, cycle, "start", backend_factory=backend)
+                    attempt = Path(outcome["execution_root"])
+                    self.assertEqual(outcome["status"], "over")
+                    self.assertEqual((attempt / "frozen_inputs/task_config.json").read_bytes(), frozen_bytes)
+                    self.assertEqual(config_path.read_bytes(), current_config)
+
+            other_benchmark = benchmark.with_name("other-benchmark")
+            shutil.copytree(benchmark, other_benchmark)
+            config["benchmark_root"] = str(other_benchmark)
+            config_path.write_text(json.dumps(config))
+            with self.assertRaisesRegex(ValueError, "holdout benchmark roots differ"):
+                replay_cycle(TaskSpec.from_config(config_path), before_opt_in[0], "start", dry_run=True)
+
+            config["benchmark_root"] = str(benchmark)
+            config["prequalification_holdout"]["files"] = [{**pins[1], "sha256": "0" * 64}]
+            config_path.write_text(json.dumps(config))
+            with self.assertRaisesRegex(ValueError, "matching fixture pin"):
+                replay_cycle(spec, before_opt_in[0], "start", backend_factory=lambda *_: self.fail("backend started"))
+
+            config_path.write_bytes(current_config)
+            (before_opt_in[0] / "replay_checkpoints/cycle_start.inputs/benchmark").mkdir()
+            with self.assertRaisesRegex(ValueError, "single verified external benchmark"):
+                replay_cycle(spec, before_opt_in[0], "start", dry_run=True)
 
     def test_large_optional_snapshot_is_unavailable_without_interrupting_workflow(self):
         with tempfile.TemporaryDirectory() as tmp:

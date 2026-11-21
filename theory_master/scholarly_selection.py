@@ -30,6 +30,11 @@ _SEARCH_STOPWORDS = _TARGET_STOPWORDS | {
 def _compact_query(value: str, *, max_terms: int = 14) -> str:
     """Remove task prose while retaining terms, names and non-English queries."""
     text = re.sub(r"\s+", " ", str(value or "")).strip()
+    # ASCII token extraction cannot distinguish prose from scientific terms in
+    # other languages. Keep those queries intact instead of retaining only an
+    # incidental Latin identifier and silently changing their subject.
+    if any(char.isalpha() and not char.isascii() for char in text):
+        return text[:300]
     terms = [token for token in _ascii_focus(text).split()
              if token.casefold() not in _SEARCH_STOPWORDS]
     if terms:
@@ -194,14 +199,41 @@ def _precise_search_anchors(value: str) -> list[str]:
     return values
 
 
+def _source_identifier_queries(value: str) -> list[str]:
+    """Keep explicit source identifiers intact before prose query compaction."""
+    identity = _identity_helpers()
+    identifiers: list[str] = []
+    for raw in re.findall(r"\b10\.\d{4,9}/[-._;()/:A-Za-z0-9]+", str(value or "")):
+        raw = raw.rstrip(".,;:")
+        while raw.endswith(")") and raw.count(")") > raw.count("("):
+            raw = raw[:-1]
+        doi = identity.doi_key(raw)
+        if doi and doi not in identifiers:
+            identifiers.append(doi)
+    # A DOI already gives exact provider endpoints. Avoid redundant arXiv
+    # discovery for the same hint; an arXiv-only hint must still survive.
+    if identifiers:
+        return identifiers[:2]
+    for raw in re.findall(
+        r"(?:\barxiv\s*:?\s*|https?://(?:(?:www|export)\.)?arxiv\.org/(?:abs|pdf|html)/)"
+        r"((?:\d{4}\.\d{4,5}|[a-z.-]+/\d{7})(?:v\d+)?)",
+        str(value or ""), flags=re.I,
+    ):
+        arxiv = identity.arxiv_key(raw)
+        if arxiv and arxiv not in identifiers:
+            identifiers.append(arxiv)
+    return identifiers[:2]
+
+
 def _query_variants(
     task_type: str, source_gap_id: str, search_target: str, new_lead: str, domain_context: str = "",
     search_queries: list[Any] | None = None,
 ) -> list[str]:
     raw = f"{search_target} {new_lead}".strip()
+    source_queries = _source_identifier_queries(raw) if task_type == "targeted_source" else []
     planned = _planned_queries(search_queries)
     if planned:
-        return planned
+        return _planned_queries([*source_queries, *planned])
     if task_type != "targeted_source":
         primary = _compact_query(domain_context.split(",", 1)[0]) if domain_context else ""
         broad = _compact_query(search_target or new_lead)
@@ -242,6 +274,7 @@ def _query_variants(
         candidates = [
             expand_domain(specific),
             expand_domain(anchored_target),
+            *([expand_domain(anchored_lead)] if lead_focus else []),
         ]
     else:
         candidates = [
@@ -250,7 +283,7 @@ def _query_variants(
             expand_domain(combined_focus),
             raw,
         ]
-    return list(dict.fromkeys(value for value in candidates if value)) or [source_gap_id]
+    return _planned_queries([*source_queries, *candidates]) or [source_gap_id]
 
 
 def _paper_key(record: dict[str, Any]) -> str:

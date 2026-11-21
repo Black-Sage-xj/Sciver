@@ -78,6 +78,10 @@ class QualificationProposal:
             item["lineage_main_node_id"], item["lineage_other_node_ids"] = explicit
             item["lineage_anchor_node_ids"] = [explicit[0], *explicit[1]]
             item["lineage_anchor_node_id"] = explicit[0]
+        if "evaluation_materials" in raw:
+            from .evaluation_history import validate_materials
+            validate_materials(raw["evaluation_materials"])
+            item["evaluation_materials"] = json.loads(json.dumps(raw["evaluation_materials"]))
         if "estimand" in raw:
             item["estimand"] = raw.get("estimand")
         parent_candidate_id = str(raw.get("parent_candidate_id") or "").strip()
@@ -217,6 +221,7 @@ class QualificationProposal:
                                 "scope",
                                 "goal_advance",
                                 "estimand",
+                                "evaluation_materials",
                                 "transition",
                             )
                         )
@@ -319,6 +324,9 @@ class QualificationProposal:
         self.session.frontier_output = self.session.state["role_outputs"].get(
             "research_lead_frontier"
         )
+        from .goal_gaps import stop_without_candidate
+        if isinstance(self.session.frontier_output, dict):
+            stop_without_candidate(self.session)
         working_checkpoint = self.session.state.get("qualification_working_set")
         if (
             self.session.state.get("qualification_status") == "pending"
@@ -422,7 +430,22 @@ class QualificationProposal:
                     self.session.state
                 )
             )
-            if resumed_literature is not None:
+            from .supervisor_qualification_recovery import (
+                preceding_qualification_stop,
+                review_exhausted_frontier,
+            )
+
+            previous_stop = (
+                preceding_qualification_stop(self.session)
+                if not direction and resumed_literature is None else None
+            )
+            supervisor_frontier = (
+                review_exhausted_frontier(self.session, previous_stop)
+                if previous_stop is not None else None
+            )
+            if supervisor_frontier is not None:
+                self.session.frontier_output = supervisor_frontier
+            elif resumed_literature is not None:
                 self.session.lead_context["lead_literature_result"] = resumed_literature
                 self.session.frontier_output = self.session.owner._call(
                     self.session.state,
@@ -434,6 +457,7 @@ class QualificationProposal:
                 self.session.frontier_output = self.session.owner._call(
                     self.session.state, "research_lead", self.session.lead_context
                 )
+            stop_without_candidate(self.session)
             literature_used = self.session.state.get(
                 "qualification_literature_used"
             ) or (self.session.state.get("lead_literature_detours") or {}).get(
@@ -455,6 +479,7 @@ class QualificationProposal:
                     self.session.lead_context,
                     output_key="research_lead_frontier_after_literature",
                 )
+            stop_without_candidate(self.session)
             if self.session.frontier_output.get("needs_literature") is True:
                 literature_result = dict(
                     self.session.lead_context.get("lead_literature_result") or {}
@@ -462,7 +487,7 @@ class QualificationProposal:
                 self.session.lead_context["lead_literature_result"] = {
                     **literature_result,
                     "status": "detour_limit_reached",
-                    "reason": "The one authorized Literature detour has been used. Use the available external sources and task evidence to produce 1–3 defensible candidates. Do not request another Literature call or invent missing scientific prerequisites.",
+                    "reason": "The one authorized Literature detour has been used. Use the available external sources and task evidence for defensible candidates, return no_new_science for a source-grounded delivery/input-only gap, or return candidates=[] with blocking_reason if no in-scope route is available. Do not request another Literature call or invent missing scientific prerequisites.",
                 }
                 self.session.owner._emit(
                     self.session.state,
@@ -482,6 +507,7 @@ class QualificationProposal:
             self.session.state["role_outputs"][
                 "research_lead_frontier"
             ] = self.session.frontier_output
+        stop_without_candidate(self.session)
         claimed = self.session.state.get("human_direction")
         if isinstance(claimed, dict) and claimed.get("status") == "claimed":
             from .operator_direction import consume_conjecture

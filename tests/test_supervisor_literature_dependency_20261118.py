@@ -11,6 +11,7 @@ from theory_master import supervisor
 from theory_master import supervisor_recovery as jobs
 from theory_master.observability.incident_routing import classify_incident
 from theory_master.runtime import write_json
+from theory_master.runtime_manager import load_registry, registry_path, update_registry
 from theory_master.runtime_supervisor_review import resume_blocker
 from theory_master.supervisor_attention_review import review_supervisor_attention
 from theory_master.supervisor_continuity import engineering_skill_eligible
@@ -145,6 +146,9 @@ def test_real_handler_records_engineering_dependency_without_repeating_paid_turn
 def test_startup_keeps_owner_waiting_then_resumes_same_cycle(literature_dependency):
     root, cycle, state = literature_dependency
     original = (cycle / "research_state.json").read_bytes()
+    # A prior qualification waiter may have exited before clearing its field.
+    update_registry(root, state="RECOVERY_WAIT", current_cycle=cycle.name, launch_id="offline",
+                    qualification_wait={"cycle": cycle.name, "launch_id": "offline"})
     stop = MagicMock()
     stop.is_set.return_value = False
     reviews = []
@@ -172,12 +176,25 @@ def test_startup_keeps_owner_waiting_then_resumes_same_cycle(literature_dependen
         import fcntl
         with (root / ".theory-master/scheduler.lock").open("a+") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        assert jobs.projection(cycle)["dependency_wait"]
+        registry = load_registry(root)
+        assert registry["state"] == "RECOVERY_WAIT" and registry["current_cycle"] == cycle.name
+        assert registry["recovery_job"] == jobs.projection(cycle)
+        assert registry["recovery_job"]["dependency_wait"]
         assert not jobs.due(cycle, state, at=10**12)
-        write_json(cycle / "recovery_control.json", {"dependency_revision": "restored"})
+        write_json(root / ".theory-master/web-role-routes.json", {})
         assert jobs.due(cycle, state)
 
     def runner_exit(**kwargs):
+        registry = load_registry(root)
+        assert "recovery_job" not in registry
+        if child.wait.call_count == 1:
+            assert registry["state"] == "RECOVERING"
+            (cycle / "supervisor/session.jsonl").touch()
+            (cycle / "runtime_events.jsonl").write_text(json.dumps({
+                "event": "LLM_MESSAGE", "ts": "2026-11-21T11:00:01+08:00", "thread_id": "fresh-thread",
+            }) + "\n")
+            raise supervisor.subprocess.TimeoutExpired("fake-runner", kwargs["timeout"])
+        assert registry["state"] == "RUNNING"
         if len(reviews) == 2:
             # Fake the next Runner's normal completion; no task is launched.
             write_json(cycle / "research_state.json", {**state, "status": "over"})
@@ -188,14 +205,15 @@ def test_startup_keeps_owner_waiting_then_resumes_same_cycle(literature_dependen
     with patch.dict("os.environ", {KEY: "1"}), \
          patch.object(supervisor.threading, "Thread"), \
          patch.object(supervisor.threading, "Event", return_value=stop), \
-         patch.object(supervisor, "load_registry", return_value={"launch_id": "offline"}), \
-         patch.object(supervisor, "update_registry") as registry, \
+         patch.object(supervisor, "update_registry", wraps=update_registry) as registry, \
+         patch.object(supervisor, "_stamp", return_value="2026-11-21T11:00:00+08:00"), \
+         patch.object(supervisor, "process_identity_alive", side_effect=lambda pid, *args: pid == child.pid), \
          patch.object(supervisor, "_quota_pause_context", return_value=None), \
          patch.object(supervisor, "_runtime_env", return_value={}), \
          patch.object(supervisor, "_runner_command", return_value=["fake-runner"]) as command, \
          patch.object(supervisor.subprocess, "Popen", return_value=child) as spawn, \
          patch.object(supervisor, "_handle_failed_state", side_effect=review), \
-         patch.object(supervisor, "_runtime_supervisor_receipt", return_value=None), \
+         patch.object(supervisor, "_runtime_supervisor_receipt", return_value=(cycle.name, "SUP-repaired")), \
          patch.object(supervisor, "_notify_supervisor_terminal"):
         assert supervisor.main([
             "--task-root", str(root), "--operation", "run", "--launch-id", "offline",
@@ -206,8 +224,40 @@ def test_startup_keeps_owner_waiting_then_resumes_same_cycle(literature_dependen
     assert len(waits) == 1
     assert waits[0]["recovery_job"]["recovery_owner"] == "sdk:runtime_supervisor"
     assert waits[0]["recovery_job"]["dependency_wait"]
-    assert jobs.read_job(cycle)["status"] == "resume_authorized"
-    assert jobs.read_job(cycle)["last_verified_progress"] is None
+    job = jobs.read_job(cycle)
+    assert job["status"] == "activity_verified"
+    assert job["last_verified_progress"]["scope"] == "model_or_tool_activity_only"
+    assert len(job["history"]) == 2
+
+
+@pytest.mark.parametrize("transition", [
+    {"state": "LAUNCHING"},
+    {"current_cycle": "3"},
+    {"state": "RECOVERY_WAIT", "qualification_wait": {"cycle": "2", "launch_id": "test"}},
+])
+def test_recovery_projection_lifetime_is_bound_to_operational_wait(tmp_path, transition):
+    wait = {"status": "waiting", "dependency_wait": True}
+    update_registry(tmp_path, state="RECOVERY_WAIT", current_cycle="2", recovery_job=wait)
+    update_registry(tmp_path, current_cycle="2", heartbeat_at="2026-11-21T11:00:00+08:00")
+    assert load_registry(tmp_path)["recovery_job"] == wait
+
+    update_registry(tmp_path, **transition)
+
+    persisted = json.loads(registry_path(tmp_path).read_text())
+    assert "recovery_job" not in persisted
+    assert all(persisted[key] == value for key, value in transition.items())
+
+
+def test_existing_active_registry_drops_stale_recovery_projection(tmp_path):
+    registry = update_registry(tmp_path, state="RUNNING", current_cycle="14")
+    stale = {**registry, "recovery_job": {"status": "waiting", "dependency_wait": True}}
+    path = registry_path(tmp_path)
+    write_json(path, stale)
+
+    assert load_registry(tmp_path) == registry
+    assert json.loads(path.read_text()) == stale
+    update_registry(tmp_path, heartbeat_at="2026-11-21T11:00:00+08:00")
+    assert "recovery_job" not in json.loads(path.read_text())
 
 
 @pytest.mark.parametrize("code", [

@@ -1541,7 +1541,7 @@ class StagePromptAndRepairTest(unittest.TestCase):
         self.assertNotIn("next_frontier_recommendation", projected["scientific_synthesis"])
         contract = role_contract("research_lead", phase="frontier_maintenance")
         self.assertEqual(set(contract.prompt_schema), {"updates"})
-        valid = {"updates": [{"hypothesis_id": "H-0001", "status": "parked", "reason": "mechanism line is paused"}]}
+        valid = {"updates": [{"hypothesis_id": "H-0001", "status": "parked", "reason": "mechanism line is paused", "remaining_question": "Does the mechanism explain the discrepancy?", "dependency": "Missing independent comparison"}]}
         contract.validate(valid, {"_known_hypothesis_ids": ["H-0001"]})
         prompt = build_initial_prompt(
             prefix="", role="research_lead", stage="frontier_maintenance",

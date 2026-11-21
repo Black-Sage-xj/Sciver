@@ -6,9 +6,11 @@ from typing import Any
 from urllib.parse import quote
 
 def _title(record: dict[str, Any]) -> str:
-    cycle = str(record.get("cycle_id") or "Cycle ?")
-    trigger = str(record.get("trigger_event") or "Supervisor 通知")
-    return f"{cycle} · {trigger[:72]}"
+    from .supervisor_notifications import OPERATIONAL_ATTENTION
+    cycle = str(record.get("cycle_id") or "?")
+    code = str(record.get("trigger_event") or "").partition(":")[0].strip()
+    system = record.get("trigger_type") in {"runtime_failure", "protocol_violation"} or code in OPERATIONAL_ATTENTION
+    return f"Cycle {cycle} · {'系统错误' if system else '科研需关注'}"
 
 
 def snapshot(run: dict[str, Any], selected: str | None = None) -> dict[str, Any]:
@@ -53,6 +55,31 @@ def snapshot(run: dict[str, Any], selected: str | None = None) -> dict[str, Any]
             "updated_at": str((messages[-1] if messages else {}).get("at") or record.get("created_at") or ""),
             "messages": messages,
         }
+        from .supervisor_notifications import notification_feed, OPERATIONAL_ATTENTION
+        feed = notification_feed([run])
+        audit = record.get("audit") if isinstance(record.get("audit"), dict) else {}
+        reference = str(audit.get("notification_id") or "")
+        notice = next((item for item in feed["items"]
+                       if item["cycle"] == selected_row["cycle_id"]
+                       and str(item.get("session_id") or item.get("id") or item.get("code") or "") == reference), None)
+        if notice is None:
+            notice = next((item for item in feed["resolved_items"]
+                           if item["cycle"] == selected_row["cycle_id"]), None)
+        if notice is None:
+            code = selected_row["trigger_event"].partition(":")[0].strip()
+            category = ("system" if record.get("trigger_type") in {"runtime_failure", "protocol_violation"}
+                        or code in OPERATIONAL_ATTENTION else "scientific")
+            notice = {
+                "category": category,
+                "category_label": "系统错误" if category == "system" else "科研需关注",
+                "status_label": "历史记录", "handling_status": "historical",
+                "summary": selected_row["trigger_event"],
+            }
+        selected_row["notice"] = {key: notice.get(key) for key in (
+            "category", "category_label", "status", "status_label", "handling_status",
+            "handling_label", "summary", "blocking_dependency", "at")}
+        selected_row["task_label"] = str(run.get("task_name") or "")
+        selected_row["task_url"] = f"/run/{quote(observer_id, safe='')}/"
     return {
         "tasks": [], "sessions": sessions, "session": selected_row,
         "available_models": [], "available_reasoning_efforts": [],

@@ -16,12 +16,11 @@ from urllib.parse import urlencode
 from . import run_monitor
 from .run_console_client import script as run_console_script
 from .onboarding_ui import first_use_panel
-from .run_controls_ui import control_panel, quota_auto_switch, settings_panel, can_resume_state
+from .run_controls_ui import control_panel, can_resume_state
 from .important_events import read_important_events, is_milestone, incident_cases
 from .important_review_ui import script as important_review_script
 from .budget_review_ui import read_budget_reviews, render_budget_review_template
 from .budget_review_trace_ui import script as budget_trace_script
-from .quota_auto_ui import quota_auto_card
 from .run_events_ui import ROLE_NAMES
 from .run_stage_ui import shell as stage_shell, script as stage_script
 from .goal_ui import trigger as native_goal_trigger, modal as native_goal_modal
@@ -82,6 +81,7 @@ def _state_label(status: Any) -> str:
         "FAILED_RECOVERY": "恢复失败", "ORPHANED": "运行进程失联",
         "UNRESPONSIVE": "运行无响应", "OVER": "本轮已结束",
         "COMPLETE": "已完成", "COMPLETED": "已完成", "STOPPED": "已停止",
+        "GOAL_PASSED": "Goal 已通过",
         "UNKNOWN": "未知状态",
     }.get(key, key)
 
@@ -105,24 +105,33 @@ def _index_url(query: str, status: str, page: int) -> str:
     return "/run/" + ("?" + urlencode(data) if data else "")
 
 
+def _index_state(row: dict[str, Any]) -> str:
+    if row.get("sealed_goal_cycle"):
+        return "GOAL_PASSED"
+    return str(row.get("state") or "UNKNOWN").upper()
+
+
 def run_index_body(state: dict[str, Any], *, query: str = "", status: str = "", page: int = 1) -> str:
-    """Render a bounded tm-ls-like page, without scanning task files again."""
+    """Render a bounded task page with read-only registered report entries."""
+    from .final_report_entry_ui import REPORT_ENTRY_CSS, render_report_entry
+
+    report_cache: dict[str, Any] = {}
     query = str(query or "")[:160].strip()
     status = str(status or "")[:48].strip().upper()
     all_runs = [row for row in state.get("runs", []) if isinstance(row, dict) and _task_url(row)]
-    live_runs = [row for row in all_runs if str(row.get("state") or "").upper() == "LIVE"]
+    live_runs = [row for row in all_runs if _index_state(row) == "LIVE"]
     live_href = (_task_url(live_runs[0]) if len(live_runs) == 1
                  else "/run/?status=LIVE" if live_runs else "")
     live_link = (f'<a class="tm-run-refresh tm-run-live-link" href="{html.escape(live_href, quote=True)}">'
                  + ("● 打开正在运行的任务" if len(live_runs) == 1
                     else f"● 查看 {len(live_runs)} 个正在运行的任务") + '</a>') if live_href else ""
-    statuses = sorted({str(row.get("state") or "UNKNOWN").upper() for row in all_runs})
+    statuses = sorted({_index_state(row) for row in all_runs})
     if status not in statuses:
         status = ""
     filtered = [
         row for row in all_runs
         if (not query or query.casefold() in " ".join(str(row.get(key) or "") for key in ("run_id", "task_name", "cycle")).casefold())
-        and (not status or str(row.get("state") or "UNKNOWN").upper() == status)
+        and (not status or _index_state(row) == status)
     ]
     total_pages = max(1, math.ceil(len(filtered) / PAGE_SIZE))
     page = min(_safe_page(page), total_pages)
@@ -136,19 +145,20 @@ def run_index_body(state: dict[str, Any], *, query: str = "", status: str = "", 
         f'<td data-label="任务"><a class="tm-run-task-link" href="{_task_url(row)}">{_e(row.get("task_name"))}</a>'
         f'<div class="tm-run-secondary">Master {_e(row.get("run_id"))}</div></td>'
         f'<td data-label="轮次">{_e(row.get("cycle"))}</td>'
-        f'<td data-label="状态"><span class="tm-run-state tm-run-state-{_state_class(row.get("state"))}" title="{_e(row.get("state") or "UNKNOWN")}">{_e(_state_label(row.get("state")))}</span>{supervisor_index_chip(row)}</td>'
+        f'<td data-label="状态">{_index_state_badge(row)}</td>'
         f'<td data-label="Agent">{_e(row.get("active_agent"))}</td>'
+        f'<td data-label="最终总报告">{render_report_entry(row, placement="list", cache=report_cache)}</td>'
         f'<td data-label="最近活动">{_e(_relative_time(row.get("last_activity_at")))}</td>'
         '</tr>'
         for row in visible
-    ) or '<tr><td colspan="5" class="tm-run-empty">没有符合条件的任务。</td></tr>'
+    ) or '<tr><td colspan="6" class="tm-run-empty">没有符合条件的任务。</td></tr>'
     pages = (
         f'<a href="{html.escape(_index_url(query, status, page - 1), quote=True)}" rel="prev">上一页</a>' if page > 1 else '<span>上一页</span>'
     ) + f'<span>{page} / {total_pages}</span>' + (
         f'<a href="{html.escape(_index_url(query, status, page + 1), quote=True)}" rel="next">下一页</a>' if page < total_pages else '<span>下一页</span>'
     )
     return f'''
-<style>{SUPERVISOR_STYLE}</style>
+<style>{SUPERVISOR_STYLE}{REPORT_ENTRY_CSS}</style>
 {first_use_panel() if not all_runs else ""}
 <section class="tm-run-workspace" aria-label="Sciver tasks">
   <div class="tm-run-heading"><div><strong>任务清单</strong><p>{len(filtered)} 个任务 · 每页 {PAGE_SIZE} 个 · 只读监控</p></div>{live_link}<a class="tm-run-refresh" href="/research-chat/?new=1">＋ 建立科研项目</a><a class="tm-run-refresh" href="{html.escape(_index_url(query, status, page), quote=True)}">⟳ 刷新</a></div>
@@ -159,7 +169,7 @@ def run_index_body(state: dict[str, Any], *, query: str = "", status: str = "", 
     <a href="/run/">清除</a>
   </form>
   <div class="tm-run-table-wrap"><table class="tm-run-table">
-    <thead><tr><th>Task / Master</th><th>Cycle ID</th><th>State</th><th>Agent</th><th>最近活动</th></tr></thead>
+    <thead><tr><th>Task / Master</th><th>Cycle ID</th><th>State</th><th>Agent</th><th>最终总报告</th><th>最近活动</th></tr></thead>
     <tbody>{rows}</tbody>
   </table></div>
   <nav class="tm-run-pagination" aria-label="任务分页">{pages}</nav>
@@ -174,12 +184,22 @@ def run_index_body(state: dict[str, Any], *, query: str = "", status: str = "", 
     if(row)window.location.assign(row.dataset.taskUrl);
   }});
   table.addEventListener('keydown',event=>{{
+    if(event.target.closest('a,button,input,select,textarea'))return;
     const row=event.target.closest('tr[data-task-url]');
     if(row&&['Enter',' '].includes(event.key)){{event.preventDefault();window.location.assign(row.dataset.taskUrl);}}
   }});
 }})();
 </script>
 '''
+
+
+def _index_state_badge(row: dict[str, Any]) -> str:
+    status = _index_state(row)
+    goal_cycle = row.get("sealed_goal_cycle")
+    title = f"Goal 通过于 Cycle {goal_cycle}" if goal_cycle else row.get("state") or "UNKNOWN"
+    chip = "" if goal_cycle else supervisor_index_chip(row)
+    return (f'<span class="tm-run-state tm-run-state-{_state_class(status)}" title="{_e(title)}">'
+            f'{_e(_state_label(status))}</span>{chip}')
 
 
 def _read_run_state(run: dict[str, Any]) -> dict[str, Any]:
@@ -1638,6 +1658,7 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
                                  worker_batch_cycle_progress, STYLE as WORKER_STYLE)
     from .worker_settings_ui import top_bar, script as multi_script, STYLE as MULTI_STYLE
     from .model_preset_ui import dialog_html as preset_dialog, script as preset_script, CSS as PRESET_STYLE
+    from .final_report_entry_ui import REPORT_ENTRY_CSS, render_report_entry
     master_run = run
     run, workers, selected_worker = select_worker(run, worker_id)
     worker_cycle_progress = worker_batch_cycle_progress(master_run, selected_worker)
@@ -1714,12 +1735,13 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
     short_identity = (str(parts.get("identity") or "").split("Supervisor:", 1)[0]
                       .split("错误排查:", 1)[0].strip())
     ident = str(run.get("observer_id") or "")
-    titlebar = f'''<div class="tm-tui-titlebar">
+    titlebar = f'''<div class="tm-tui-titlebar tm-titlebar-report">
         <div class="tm-tui-title-main">
             <span class="tm-tui-eyebrow">TASK CONSOLE</span>
             <strong>{_e(run.get("task_name"))}</strong>
             <span class="tm-tui-identity">{_e(short_identity)}</span>
         </div>
+        {render_report_entry(master_run, placement="console")}
         <div class="tm-tui-title-actions">
           <span class="tm-run-freshness" data-run-freshness role="status" aria-live="polite">初始只读快照 · 8 秒自动检查</span>
           <a class="tm-plan-header-link" href="/research-plan/?observer_id={_e(ident)}" title="查看或编辑当前任务的 Research Plan" style="font-size:12px;white-space:nowrap;color:var(--tm-link)">Research Plan ↗</a>
@@ -1782,9 +1804,6 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
                               effective_status=status_key,
                               worker_state_actions=bool(selected_worker and worker_actions),
                               worker_cycle_progress=worker_cycle_progress)}
-                {quota_auto_card(projection.get("quota_auto_adjust"),
-                                 settings_html=settings_panel(run),
-                                 quota_switch_html=quota_auto_switch(run))}
                 <div class="tm-tui-section-title tm-tui-workflow-title">Agent 状态 <span>六个科研阶段</span></div>
                 {_tui_workflow_table(parts.get("workflow", "(none)"),
                                      hot_route_capable=bool((run_monitor.data(run).get("sdk_runtime_capabilities") or {}).get("hot_role_route_v1")),
@@ -1851,6 +1870,7 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
     {WORKER_STYLE}
     {MULTI_STYLE}
     {PRESET_STYLE}
+    {REPORT_ENTRY_CSS}
     /* Inline Cycle limit: editing lives inside the Cycle metric card. */
     [data-cycle-max-form][hidden] {{display:none !important;}}
     [data-cycle-max-form]:not([hidden]) {{display:inline-flex;align-items:center;flex-wrap:wrap;gap:6px;margin:7px 0 0;}}

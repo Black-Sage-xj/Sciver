@@ -9,7 +9,7 @@ from typing import Any
 def recent_execution_limits(root: Path, *, current_cycle: str, limit: int = 6) -> list[dict[str, Any]]:
     """Expose recorded prerequisites to a new Lead without inventing an Outcome."""
     from .specification import list_cycle_dirs
-    from .scientific_objective import frozen_science_digest, frozen_science_view
+    from .scientific_objective import complete_science, frozen_science_digest, frozen_science_view
 
     records = []
     if limit <= 0:
@@ -28,9 +28,10 @@ def recent_execution_limits(root: Path, *, current_cycle: str, limit: int = 6) -
             if not isinstance(closure, dict) or not isinstance(state, dict):
                 continue
             report = closure.get("execution_limit")
-            if (closure.get("kind") != "input_support_unavailable"
+            kind = closure.get("kind")
+            if (kind not in {"input_support_unavailable", "authorization_pending"}
                     or not isinstance(report, dict)
-                    or report.get("kind") != "input_support_unavailable"
+                    or report.get("kind") != kind
                     or state.get("status") != "over"
                     or state.get("assessment_state") != "not_adjudicated"
                     or state.get("scientific_verdict") is not None
@@ -38,7 +39,7 @@ def recent_execution_limits(root: Path, *, current_cycle: str, limit: int = 6) -
                 continue
             lock = state.get("hypothesis_lock") or {}
             science = frozen_science_view(lock)
-            if (len(science) != 3
+            if (not complete_science(science)
                     or report.get("frozen_objective_sha256") != frozen_science_digest(science)):
                 continue
             records.append({
@@ -51,7 +52,10 @@ def recent_execution_limits(root: Path, *, current_cycle: str, limit: int = 6) -
                 "required_dependency": str(report.get("required_dependency") or "")[:2000],
                 "source_path": str(closure_path.resolve()),
                 "assessment_state": "not_adjudicated",
-                "evidence_status": "Investigator-authored execution limitation; no scientific verdict",
+                "kind": kind,
+                "evidence_status": ("Investigator-authored authorization hold; no scientific verdict"
+                                    if kind == "authorization_pending" else
+                                    "Investigator-authored input limitation; no scientific verdict"),
             })
             if len(records) >= limit:
                 break

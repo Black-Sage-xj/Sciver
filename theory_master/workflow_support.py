@@ -35,7 +35,8 @@ def prequalification_restart_allowed(state: dict[str, Any]) -> bool:
     if not isinstance(state, dict):
         return False
     from .supervisor_lineage_recovery import has_verified_lineage_reentry
-    if has_verified_lineage_reentry(state):
+    from .supervisor_json_array_recovery import has_verified_json_array_reentry
+    if has_verified_lineage_reentry(state) or has_verified_json_array_reentry(state):
         return True
     if str(state.get("phase") or "").lower() != "runtime_failure:no_recoverable_checkpoint":
         return False

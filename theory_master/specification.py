@@ -302,6 +302,8 @@ class TaskSpec:
             declared_root = Path(config["benchmark_root"]).expanduser().absolute()
             if any(part.is_symlink() for part in (declared_root, *declared_root.parents)):
                 raise ValueError("submission_contract benchmark_root cannot traverse symlinks")
+        from .compute_environment import task_compute_python
+        task_compute_python(config)
         document = absolute(config["plan_path"], "plan_path")
         task_home, root, legacy_research_root = effective_path_model(config)
         root.mkdir(parents=True, exist_ok=True)

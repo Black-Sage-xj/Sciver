@@ -167,7 +167,7 @@ class StaticReviewFixesTest(unittest.TestCase):
         lead = stage_card_text("research_lead", "frontier_proposal")
         procedure = procedure_card_text("research_lead", "frontier_proposal")
         challenger = stage_card_text("challenger", "candidate_review")
-        self.assertLess(len(lead) + len(procedure), 10500)
+        self.assertLess(len(lead) + len(procedure), 12500)
         for phrase in ("consequential unmet Goal", "necessary prerequisite",
                        "scientifically distinct", "claim can advance the Goal without completing it",
                        "new source of uncertainty", "novelty_check"):

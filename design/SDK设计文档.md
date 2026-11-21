@@ -119,6 +119,8 @@ PDF 转换通过共享 `document_conversion` 组件执行，新安装默认关�
 
 ### 资格审查与锁定
 
+Lead 无法提出可辩护的范围内候选时，可以返回 `candidates=[]` 与非空 `blocking_reason`，说明缺少的前提或输入；该互斥出口立即进入既有 `no_qualified_candidate` 本地资格停止，不强迫格式重试，不冻结 H、产生科学 verdict 或证明新数据不存在。后续 Task 推进仍受原预算与操作控制约束。已记录的旧合同故障只能在 SDK 验证原始空候选输出、失败身份和已修源码后获得一次正常 Lead 交付机会；原输出不追认为合格候选。
+
 候选携带科学命题、范围、选题理由、Goal 推进和 `decisive_test`；候选 ID、H ID 和工作流字段由 SDK 管理。新派生 H 必须有合法科学来源和有类型的 H→H 谱系，首个 root H 除外。科学身份不依赖文本相似度。
 
 Lead 在生成新候选时提交 `transition.prior_gap` 与 `transition.current_change` 两段短说明，分别解释来源研究已知什么、留下什么关键问题，以及本候选针对该问题具体改变什么；复用 `why_now` 和 `goal_advance` 说明现在研究的理由与 Goal 推进。根 H 从任务原题的未知出发；前序已支持、被反驳、已裁决但未决或尚未裁决，须如实区分。来源取决于科学谱系，不按 Cycle 编号相邻推断。即使仅有一个合格候选，也不能以“唯一合格”替代科学动机。说明只解释选题，不增补或替代冻结科学正文、资格结论和 Judge 裁决。
@@ -149,21 +151,35 @@ Judge 的 objection 必须是冻结命题内的最小可执行增量；SDK 验�
 
 Judge 在现有 rationale/requested_resolution 中说明所缺的必要冻结前提、现有结果为何不足和剩余可执行的科学比较。SDK 自动绑定的 `C-1` 仅是路由锚点；结构授权不声称证明异议内容的科学必要性。SDK 不按 holdout 关键词替代科学裁决，也不直接改写旧 Judge 决定。
 
+### 评价材料身份与资格核验
+
+经验候选使用 `evaluation_materials` 声明稳定数据单元/分区身份、用途、独立性要求、既往反馈及来源依据；理论候选可给空数组。科学限制同时写进冻结的 decisive_test。SDK 在资格审查绑定及 H Lock 中保留声明，在 SQLite 追加冻结，并向 Lead、Challenger、Goal 注入跨 H 历史及科学终局标记。已知终局使用或既往反馈不能再次获 protected_final 资格；重新锁定、改名和无标签处理不恢复独立性。普通任务允许的预设校准仍合法。该记录是声明与已知历史，不能证明访问隔离，也不能把旧任务未记录的使用认作未暴露；需核对原始报告、数据边界和实际来源。
+
+Challenger 的 scientific_checks 分别记录来源忠实性、定义/公式一致性、检验区分力和证据身份及其具体依据；声明评价材料的新候选必须携带这些检查，qualified 不得保留 blocker。判据须适配科学问题，不能统一要求 p 值或样本数。来源的有/无标签方法、权重和 verdict 以原始材料为准。资格修复不得用不同 estimand 替换冻结目标。
+
 ### 综合、前沿和任务完成
 
-终局 Judge 之后，Lead 的 fresh `cycle_synthesis` 直接取得上一版 Model 完整正文和版本，只综合认识并给出 Scientific Model `keep|replace`；`replace` 提交完整新正文。不同人群、响应量或模型的新结果不自动取代旧认识，仍有效且与 Goal 有关的比较和限制须合并保留。SDK 校验、预览并原子提交版本。同一 episode 的 `frontier_maintenance` 只维护现有分支的 `active / parked / closed`，不创建下一轮 H。
+普通显式 `repair-delivery` 重建可复用绑定当前 canonical assessment 的严格行政等价核对：后续已结束且没有 H/Evidence 的资格空轮及其他字段完全一致的 frontier 投影时间戳，不单独构成科学权威变化。该分支核对原快照、原源文件及 Model；真实 Plan、冻结命题、Outcome、Evidence 或其他 frontier 字段变化仍拒绝。等价绑定只传入本次显式修复及其 Goal 冻结/CAS，不为普通材料读取添加回退，不扩大 Goal 可评资格或自动触发评委。相同交付修订复用原评估。
+
+终局 Judge 之后，Lead 的 fresh `cycle_synthesis` 直接取得上一版 Model 完整正文和版本，只综合认识并给出 Scientific Model `keep|replace`；`replace` 提交完整新正文。不同人群、响应量或模型的新结果不自动取代旧认识，仍有效且与 Goal 有关的比较和限制须合并保留。SDK 校验、预览并原子提交版本。同一 episode 的 `frontier_maintenance` 只维护现有分支的 `active / parked / closed`，不创建下一轮 H。active/parked 必须说明 H 自身可执行的 remaining_question；parked 另需 dependency；closed 重开必须给 source-grounded reopen_basis。整体 Goal 未完不构成 H 重开理由。完全相同的更新不写事件，状态不变但机会描述改变记 frontier.annotated，不刷新状态 changed_at。旧数据只读兼容，不回填科学含义。
+
+Lead 可用互斥的 `no_new_science(kind, requirement, basis)` 表明仅剩交付修复或不可用必要材料；SDK 保持 H 未锁定并进入 needs_attention，不伪造 Candidate 或科学 open。交付修复由现有 terminal Cycle 的 repair-delivery 路径承担，不自动启动额外科研 Cycle。
 
 Reporter 通过 `title/summary` 交付报告标题与完整 Markdown 正文，`summary` 承载全文。SDK 将同一科学叙事保存为报告笔记和对应 Cycle Outcome 的标题、正文，不创建独立 Decision 图节点。SQLite 的 H / External、H→H 谱系与 Cycle Outcome 由 SDK 持久化；Canvas 是确定性展示投影。
 
-Reporter 的当前 Cycle 素材视图与 Goal Judge 的跨 Cycle 任务索引复用同一材料解析器；执行文件的 `same_invocation` 关联只说明同次执行来源，不声明逐 Finding 支持或科学独立性。Goal 调用前冻结包含材料状态和已登记报告版本 SHA 的内容修订；评估以独立 assessment ID 和 delivery revision 追加保存，旧回执和 not_passed 理由保留。`repair-delivery TASK [--cycle N]` 只在未封存 Goal 的已结束、supported 原 Cycle 内重建索引；`--reassess` 才显式调用 Goal Judge。修复不得改变计划、Model、冻结命题、Outcome 或 Evidence 权威，不新增 H/Cycle；相同修订复用原评估，新修订可在同 Cycle 重评。已 sealed 的 Goal 拒绝重开。
+Reporter 的当前 Cycle 素材视图与 Goal Judge 的跨 Cycle 任务索引复用同一材料解析器；执行文件的 `same_invocation` 关联只说明同次执行来源，不声明逐 Finding 支持或科学独立性。Goal 调用前冻结包含材料状态和已登记报告版本 SHA 的内容修订；评估以独立 assessment ID 和 delivery revision 追加保存，旧回执和 not_passed 理由保留。`repair-delivery TASK [--cycle N]` 只在未封存 Goal 的已结束且有 supported / rejected / open 科学终局的原 Cycle 内重建索引；`--reassess` 才显式调用 Goal Judge。修复不得改变计划、Model、冻结命题、Outcome 或 Evidence 权威，不新增 H/Cycle；相同修订复用原评估，新修订可在同 Cycle 重评。已 sealed 的 Goal 拒绝重开。
+
+已获操作员明确授权的公开接口交付缺口，可使用 `repair-delivery TASK --cycle N --author-request PATH [--reassess]` 补交。请求文件须在任务 SDK 私有 `.theory-master/` 中，使用 `theory-master/operator-delivery-request/v1`，绑定 `cycle_id`、当前 `not_passed` 的 `assessment_id`、已登记公开要求的 `required_material_ref` 及有限 `instructions`。这不是从自由理由自动推断工程修复，也不适用于补造科学证据。入口持有任务启动和运行独占锁并拒绝活跃 Runner/Supervisor；原 Investigator 以原线程普通 Turn、原累计预算和剩余返工次数补充文件，不新开 Native Goal 或 H。补交调用的文件单独保留 SDK 执行来源，不新增或改写科学 Evidence；原文件、冻结命题、裁决及 Model 必须保持。后续闭合且没有锁定命题/Evidence 的资格空轮可与原评估绑定；只有其他前沿字段完全相同的投影时间戳可按原快照对齐，真实科学变化仍拒绝。新交付修订可显式交正常 Goal Judge 追加评估，原失败记录保留；未完成补交不能先触发复评。
 
 Reporter 的 `report` v5 正文依次组织为问题与必要条件、主要结果、解释与限制。SDK 在唯一主报告开头先呈现冻结的研究承接说明，再复用 `graph_summary`，加入折叠的正式 Judge 记录与复现索引，不再生成第二份人类阅读报告。主要结果按科学问题组织，相关已有图片嵌入对应论证位置并附解释性图注，已确认的数值可整理为精简对照表。补充 Markdown/章节可使用 `![[path.md#Section|Label]]`；SDK 保存来源哈希与所选文本，正文保持必要论证。纯理论结果无需装饰性图片或空表格。必要限定保留在影响解读的位置，完整限制集中说明。
 
-SDK 仅向 Reporter 提供从可用于本轮报告的 Evidence 投影出的 `report_materials`，列明原始引用、文件类型、可用状态和图片入口；范围与限制继续由 `evidence_scope_digest` 承载。只读查看这些素材用于理解已有图片或转录已确立数值，不授予重新分析数据、增加证据或改变裁决的权限。SDK 不读取原始数组来推导新结果，不依据文件名决定科学相关性。
+SDK 从可用于本轮报告的 Evidence 生成完整素材目录，保存在 Cycle 的 `report_material_catalog.json`，不把逐文件路径与哈希校验清单注入 Reporter。初始 `report_materials` 只提供去重后的文件数量、空文件/日志/可用状态统计、有限的目录概览及只读 CLI 入口；范围与限制继续由 `evidence_scope_digest` 承载。Reporter 使用 `list` 按目录、查询和类型分页发现素材，再用 `read` 分页读取具体内容；大目录概览也可分页。默认目录列表隐藏空文件与日志，可用 `--include-auxiliary` 查看，缺失、歧义和变化状态保留。这些清洗规则仅影响导航，不改变 Evidence 准入、科学相关性或完整复现索引。
+
+目录入口固定目录内容哈希，读取具体文件时再次检查其登记身份和内容哈希，拒绝已变化、未登记或有歧义的内容；图片返回可用图片入口，二进制材料交由原生查看器。Reporter 根据已建立的科学问题和实际内容判断是否需要某个素材，不因名称、文件非空或同次执行来源断言它支持某个 Finding。只读查看用于理解已有图片或转录已确立数值，不授予重新分析数据、增加证据或改变裁决的权限。完整素材身份和校验记录继续由 SDK 持有；SDK 不读取原始数组来推导新结果。
 
 SDK 将已登记图片绑定到真实文件，报告笔记使用相对自身位置的图片路径，图谱 Outcome 正文使用不依赖笔记位置的图片路径；缺失、歧义和未登记引用明确标记。原始大表、数据文件、脚本和日志留在原处，复现索引只列路径与可用状态，机器审计记录折叠显示。历史报告不自动重写。
 
-Cycle 完成与 Task Goal 完成独立。仅由本轮 `supported` 事件触发 fresh `goal_completion`；其结果为 `passed|not_passed` 与理由，不生成规划状态。Goal Gate 评审以独立记录关联触发它的 Cycle Outcome；Outcome 的科学 verdict 不变。Lead 的精简图谱保留完整 H 索引，并显式展示历次 `not_passed` 的原文理由，即使来源 H 的 frontier 已关闭。Lead 对照 Final Gate 和已交付成果判断下一候选的必要性；Challenger 独立核对其 Goal 优先级。失败理由是历史任务裁决，不自动指定下一 H，也不因下一次理由未重述而自动解决。下一 Cycle 重新选题并审查，不能把收口时的临时 synthesis 当作新的长期科学权威。
+Cycle 完成与 Task Goal 完成独立。本轮 `supported / rejected / open` 科学终局均触发 fresh `goal_completion`；`milestone_advanced`、未执行完测试和操作性保全不触发。候选耗尽后，Supervisor 可以把新增的已登记 Cycle Outcome 或新增、变更的可访问交付材料交给 Goal Judge。复评核对最近的 `not_passed`、原冻结交付及当前停点，沿原受支持 Cycle 追加一条 Goal 评审，不分配新 Cycle。其结果为 `passed|not_passed` 与理由；`not_passed` 附仅针对实际未满足要求的 `gaps(kind, requirement, basis)`，区分 scientific / delivery / unavailable_material，不选择下一 H。Goal Gate 评审以独立记录关联触发它的 Cycle Outcome；Outcome 的科学 verdict 不变。Lead 的精简图谱保留完整 H 索引，并显式展示历次 `not_passed` 的原文理由，即使来源 H 的 frontier 已关闭。Lead 对照 Final Gate 和已交付成果判断下一候选的必要性；Challenger 独立核对其 Goal 优先级。失败理由是历史任务裁决，不自动指定下一 H，也不因下一次理由未重述而自动解决。下一 Cycle 重新选题并审查，不能把收口时的临时 synthesis 当作新的长期科学权威。
 
 任务可在配置中显式声明 `submission_contract: "benchmark/submission_contract.json"`，由显式 `benchmark_root` 解析公开 JSON Schema 合同。SDK 不按题名、目录或历史任务推断合同，也不把答案与私有评估器加入材料。合同原始字节、SHA 与已登记交付共同进入冻结修订；Goal Judge 调用前及封存事务内均检查唯一合规的正式 JSON 产物。机器格式校验不代替科学裁决，SDK 不从数组或其他字段生成科学提交值。
 
@@ -227,6 +243,10 @@ transport timeout、inactivity watchdog 和进程异常属于调用恢复。中�
 
 运行恢复、工程修复和科学审计独立登记。恢复继续累计真实活动和调用计量，离线等待不算科研执行时间。观测序号和 UI 状态不得反向决定身份、资源预算或科学结论。
 
+原生 Goal 在 SDK 预算审批后复接时，应把已落账的 Reviewer 批准作为资源状态更新投送到原线程，使用同一实际 Turn 的确认机制；旧累计用量与审批账本继续有效，资源通知本身不授予额度、算法或科学裁决。明确诊断为“等待已完成审批”的失败 blocked Goal，可通过 `resolve_approved_budget_dependency` 核对原审批、当前失败、未提交调用、Goal 代际和真实停止状态后转为操作暂停，保留原故障与全部预算历史，再经正常 Resume 继续；未批准、已耗尽、身份冲突或仍有外部所有者时不得这样恢复。
+
+已安全暂停且保留原生 Goal 的 Investigator 可通过 `submit_paused_goal_guidance` 显式提交技术纠正，无需伪装为 NEEDS_ATTENTION。纠正绑定原线程、Goal 代际、冻结科学对象和既有累计预算；恢复只激活原 Goal，在实际最新活动 Turn 上调用带 `expectedTurnId` 的正式 `turn/steer`，确认返回同一 Turn 后才记为消费。安装 SDK 无原子“暂停中投送”接口，不能承诺激活与投送之间没有执行竞态；预算、Turn 或所有权变化优先处理，投送失败保留未消费记录并确认原操作停稳，不新增普通模型 Turn、不重建 Goal 或清零预算。无待投送纠正时沿用原恢复路径；实际模型是否正确采纳技术事实须由后续正常轨迹验证。
+
 资格审查以 `no_qualified_candidate` 停止时，监控投影为 `NEEDS_ATTENTION`，保留科学状态、停止原因与原有恢复权限。读取历史任务时，已停止的科学状态优先于残留的 `run_state.RUNNING`；Task Console 的 Agent 页签与 State 卡片使用一致的生命周期和进程核验结果。
 
 历史记录只读保留。缺少 `science_graph.sqlite3` 的 legacy workspace 必须显式迁移后执行；runtime 不以旧 Canvas 路径回退。迁移不静默重解释历史 Evidence、Outcome 或 Judge verdict。
@@ -271,3 +291,16 @@ SDK 按编排、角色调用、合同、Registry、状态恢复、transport、�
 
 
 独立 Literature 作业的新检索规划、证据分层和 Research Chat 后台等待见 [Literature 工作流](../docs/literature-workflow.zh-CN.md)。正式 Cycle 继续使用现有 Stage/Contract；独立规划记录不构成科学 Evidence。
+
+
+JSON 规范化在顶层数组漏写结束符、随后出现当前 Schema 已知根字段时，可在唯一可解析位置只插入一个 `]`，保留全部字面值；重复键、未知根字段、嵌套歧义和内容损失不走此修复。首次 Lead 交付若尚无科学检查点，仅在原失败/实际输出/未提交调用、旧源码及新解析器的离线逐字修复探针全部绑定后，才能取得一次受控新交付；不创建虚假科学检查点或 H 锁定。运行源码指纹包含 output_normalization 依赖；旧快照若未记录该依赖哈希，须核对仍固定在原提交的运行树和已记录导入方，明示此证据不等于历史依赖加载哈希。
+
+已完成 Native Goal 未写指定交接时，原 Goal 不重新激活，也不由操作员将研究原文合成 Findings。显式操作员重交付授权须绑定冻结 H、原未提交调用、SDK 捕获原文哈希、GET 核验的 complete Goal 身份和一次性源码凭据；同一线程、同一 Cycle 在原预算内开启一次正常受管交付，由 Investigator 核查原文并自行撰写交接。原 Goal、原失败调用与原文保留；只排除该终局操作作为新调用的活跃 Goal 来源，新调用若中断仍按其自身来源正常恢复。该凭据不认证科学结论或绕过暂停、预算与并发约束。
+
+完成 Goal 的清理必须在有效 Findings 或明确行政交付已读出后执行；交接缺失/无效时保留服务端 complete Goal。兼容旧 SDK 提前清理的历史故障时，只有 GET 明确返回空、原运行源码哈希证明提前清理顺序，且原 Codex 运行日志中的精确 update_goal(complete) 调用与正式工具响应、会话和原 Goal 身份全部吻合，才能以该历史完成响应验证原终局身份；助手自述、人工重建对象或其他调用输出无效。恢复前再次检查当前 Goal 槽位，发现外来/活跃身份即拒绝。
+
+若同一冻结步骤在旧 SDK 中发生过正式 Token 续批，早代预算中断调用仅在原始中断事件、随后 SDK 批准事件、同线程/目标身份及后代完成时间相互吻合时，才与已完成终局代一并排除来源重附着。关闭时追加的普通 interrupted 时间戳不能代替原始预算边界。重交付准备若因该旧来源冲突在创建新 Goal/任何 Investigator Turn 之前失败，可以按已消费的原授权重新验证工程准备；不能掩盖已执行 Turn 或再发科学额度。原日志允许仅追加同线程设置事件，完成证据仍按原长度与哈希逐字核对；后续 Goal/模型活动会使该归档准备失效。
+
+### 终局 Native Goal 后的操作员技术产物恢复
+
+当原 Investigator 调用因 Native Goal blocked 失败且没有提交科研交付时，操作员可在该 Cycle 的 `attention/technical-recovery-authorization.json` 明确登记一次已完成的技术产物恢复。该授权位于 Agent 可写工作区之外，绑定原失败调用、线程、冻结科学对象、原脚本/恢复脚本和已恢复产物的 SHA-256，并记录必要的资源例外；必须同时向原 Investigator 提供待消费的操作员说明。SDK验证原 Goal 的终局身份、既有停机/预算/协议约束及全部文件身份，才生成一次性修复凭据并允许新 Goal 检查已恢复产物。旧失败、已花额度、原 Goal 身份和所有科学判据保留；凭据不代替 Investigator 交付或 Judge 裁决，不自行增加科研 Cycle 或额度，也不授权后续额外计算。没有完整操作员授权及产物证明时维持原有 hold。

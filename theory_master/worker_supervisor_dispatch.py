@@ -81,24 +81,27 @@ def _worker_cycle_claim(root: Path, worker: dict[str, Any]) -> dict[str, Any] | 
 
 
 def _eligible(root: Path, worker: dict[str, Any]) -> tuple[Path, dict[str, Any]] | None:
-    from .supervisor_recovery import operational_incident
+    from .supervisor_activation import stopped_recovery
     if worker.get('close_requested') or worker.get('dismissed'):
         return None
     if worker.get('status') not in {'FAILED', 'NEEDS_ATTENTION'} or worker.get('process_alive'):
         return None
+    claim = _worker_cycle_claim(root, worker)
     cycle = str(worker.get('current_cycle') or '')
-    if not cycle.isdigit() or not cycle:
-        return None
+    if not cycle.isascii() or not cycle.isdecimal():
+        from .worker_store import _recover_failed_cycle_pointer
+        cycle = _recover_failed_cycle_pointer(root, worker, claim)
+        if cycle is None:
+            return None
     directory = root / cycle
     if not directory.is_dir() or directory.is_symlink():
         return None
     state = _read_json(directory / 'research_state.json')
     # Recovery resumes the SAME Cycle/H via reissue_for_resume (I-10): only a
     # live Cycle Claim for this exact Cycle justifies a Supervisor model call.
-    if (not operational_incident(state)
-            or state.get('abandoned_cycle') or state.get('phase') == 'abandon_requested'
+    if (stopped_recovery(directory, state) != 'runtime'
             or not _checkpoint_matches_claim(state, str(worker.get('worker_id') or ''),
-                                             _worker_cycle_claim(root, worker), cycle)):
+                                             claim, cycle)):
         return None
     from .supervisor_recovery import failure_details
     recovery = failure_details(state)
@@ -177,6 +180,15 @@ def _defer_engineering_for_live_peer(root: Path, worker: dict[str, Any],
                        "failure_signature": fingerprint,
                        "status": "deferred_peers_active",
                        "reason": reason[:600], "updated_at": _stamp()})
+
+
+def has_pending_recovery(root: Path) -> bool:
+    """Keep a stopped-task owner until recovery work and verification settle."""
+    return any(
+        _eligible(root, worker) is not None
+        or _read_json(_receipt_path(root, worker["worker_id"])).get("status") == "resume_launched"
+        for worker in list_workers(root)
+    )
 
 
 def dispatch_pending(root: Path) -> bool:
@@ -398,7 +410,8 @@ def review_worker(root: Path, worker_id: str, cycle_name: str, fingerprint: str)
             # worker_action rechecks claim fencing, checkpoint identity, account
             # allocation and no-live-owner before launching a new child.
             requested_at = _stamp()
-            launched = worker_action(TaskSpec.from_task_root(root), worker_id, 'resume')
+            launched = worker_action(TaskSpec.from_task_root(root), worker_id, 'resume',
+                                     supervisor_cycle=cycle_name)
             result = {'status': 'resume_launched', 'resume_requested_at': requested_at,
                       'worker_pid': launched.get('pid'), 'reason': 'Awaiting real model/tool activity'}
         except (OSError, ValueError, RuntimeError) as exc:

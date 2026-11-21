@@ -118,6 +118,67 @@ html[data-sciver-theme="white"] .tm-research-chat .tm-research-start[aria-presse
 @media(max-width:760px){.tm-research_chat-view .tm-content{padding:6px 10px 8px}.tm-research-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) auto;gap:8px}.tm-research-main{grid-row:1;min-height:0}.tm-research-history{grid-row:2;position:relative;height:auto;min-height:0;border-left:0;border-top:1px solid #303038;padding:8px 0 0;max-height:112px}.tm-research-history-head{gap:8px}.tm-research-history-list{flex-direction:row;max-height:68px;overflow-x:auto;overflow-y:hidden}.tm-research-history-list a{flex:0 0 170px}.tm-research-toolbar{gap:7px}.tm-research-model{max-width:135px}.tm-research-secondary-starts{grid-template-columns:1fr}.tm-research-start.primary{min-height:140px;padding:16px}.tm-research-start strong{font-size:15px}.tm-research-start-description{font-size:12px}.tm-research-start-icon{margin-bottom:12px}.tm-research-secondary-starts .tm-research-start{min-height:0;padding:12px 14px}.tm-research-entry{padding:14px 0;gap:12px}.tm-research-direct{padding:11px;border-radius:14px}.tm-research-direct textarea{min-height:68px}.tm-research-direct-settings{gap:6px}.tm-research-direct select{max-width:135px}.tm-research-direct-send{min-width:70px}.tm-research-title-form{flex-wrap:wrap}.tm-research-title-form input{width:130px}.tm-research-toolbar h2{font-size:14px}.tm-research-chat.history-collapsed .tm-research-layout{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) 36px;gap:6px}.tm-research-chat.history-collapsed .tm-research-history{display:flex;flex-direction:row;justify-content:flex-end;max-height:36px;padding:0;border:0}.tm-research-chat.history-collapsed .tm-research-history-head{flex-direction:row;gap:8px}.tm-research-chat.history-collapsed .tm-research-new{width:auto;min-height:32px;height:32px;padding:0 10px;font-size:12px}.tm-research-chat.history-collapsed .tm-research-new::before{content:none}}
 """
 
+_SUPERVISOR_NOTICE_STYLE = """
+.tm-supervisor-notice {flex:0 0 auto;margin:0 0 12px;padding:14px 16px;border:1px solid #a65c67;border-radius:11px;background:#2b2024;color:#f4e9ec;max-height:30vh;overflow:auto}
+.tm-supervisor-notice[data-category="scientific"] {border-color:#ac864b;background:#30291f;color:#f5e9d7}
+.tm-supervisor-notice[data-category="system"][data-status="repaired"],.tm-supervisor-notice[data-category="system"][data-status="recovered"] {border-color:#4b9873;background:#1e3027;color:#e2f3e8}
+.tm-supervisor-notice-head {display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.tm-supervisor-notice-head strong {font-size:15px;line-height:1.35;margin-right:auto}
+.tm-supervisor-notice-type,.tm-supervisor-notice-state {display:inline-flex;padding:4px 8px;border:1px solid;border-radius:5px;font-size:11px;font-weight:650;line-height:1.25}
+.tm-supervisor-notice-type {background:#3e242a;border-color:#a65c67;color:#ffd5dc}
+.tm-supervisor-notice[data-category="scientific"] .tm-supervisor-notice-type {background:#443620;border-color:#ac864b;color:#ffe3ae}
+.tm-supervisor-notice-state {background:#282f3c;border-color:#607caa;color:#d8e6ff}
+.tm-supervisor-notice[data-status="repaired"] .tm-supervisor-notice-state,.tm-supervisor-notice[data-status="recovered"] .tm-supervisor-notice-state {background:#1d382c;border-color:#4b9873;color:#bdf1d2}
+.tm-supervisor-notice p {margin:8px 0 0;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.tm-supervisor-notice-meta {color:#d4c9cd;font-size:11px!important}
+.tm-supervisor-notice[data-category="scientific"] .tm-supervisor-notice-meta {color:#e1d2b8}
+.tm-supervisor-notice a {color:inherit;text-underline-offset:3px}
+.tm-supervisor-notice details {margin-top:8px;font-size:11px;color:#d9d0d3}
+.tm-supervisor-notice details summary {cursor:pointer;width:max-content;max-width:100%}
+.tm-supervisor-notice details p {font-size:11px}
+@media(max-width:760px){.tm-supervisor-notice{padding:12px;max-height:32vh}}
+"""
+
+
+def _supervisor_notice(session: dict[str, Any]) -> str:
+    notice = session.get("notice") if isinstance(session.get("notice"), dict) else {}
+    category = "scientific" if notice.get("category") == "scientific" else "system"
+    status = str(notice.get("handling_status") or notice.get("status") or "historical")
+    status_label = str(notice.get("status_label") or notice.get("handling_label") or "历史记录")
+    headline = "科研流程需要判断" if category == "scientific" else "任务运行被中断"
+    if status == "repaired":
+        headline = "故障已修复，任务已恢复"
+    elif status == "recovered":
+        headline = "任务已恢复运行"
+    guidance = {
+        "repaired": "修复经过验证，且已确认模型或工具重新活动。",
+        "recovered": "已确认模型或工具重新活动；这次恢复没有登记工程修复。",
+        "resuming": "已获受控恢复授权，仍在等待实际运行活动验证。",
+        "diagnosing": "Supervisor 正在诊断，恢复尚未验证。",
+        "waiting": "Supervisor 正在等待恢复条件变化，任务尚未恢复。",
+        "attention": "需核查证据或下一步方案；Supervisor 不会改写科研结论。",
+        "disabled": "Supervisor 当前未开启；该任务不会自动修复或恢复。",
+        "historical": "这是历史对话；当前任务状态请以任务控制台为准。",
+    }.get(status, "Supervisor 尚未验证恢复。")
+    dependency = str(notice.get("blocking_dependency") or "").strip()
+    if "Codex executable unavailable" in dependency:
+        dependency = "自动修复工具不可用，Supervisor 暂时无法完成工程修复。"
+    detail = str(notice.get("summary") or session.get("trigger_event") or "").strip()
+    task_url = str(session.get("task_url") or "")
+    task_link = f'<a href="{_e(task_url)}">打开任务控制台</a>' if task_url.startswith("/run/") else ""
+    return (
+        f'<section class="tm-supervisor-notice" data-category="{category}" data-status="{_e(status)}" aria-label="异常处理状态">'
+        '<div class="tm-supervisor-notice-head">'
+        f'<strong>{headline}</strong>'
+        f'<span class="tm-supervisor-notice-type">{_e(notice.get("category_label") or ("科研需关注" if category == "scientific" else "系统错误"))}</span>'
+        f'<span class="tm-supervisor-notice-state">{_e(status_label)}</span></div>'
+        f'<p class="tm-supervisor-notice-meta">{_e(session.get("task_label") or session.get("task_id") or "任务")} · Cycle {_e(session.get("cycle_id") or "?")} · {task_link}</p>'
+        f'<p>{_e(guidance)}</p>'
+        + (f'<p>当前阻碍：{_e(dependency)}</p>' if dependency else '')
+        + (f'<details><summary>查看原始诊断</summary><p>{_e(detail)}</p></details>' if detail else '')
+        + '</section>'
+    )
+
 _SCRIPT = """<script>
 (() => {
   const root = document.querySelector('.tm-research-chat');
@@ -220,6 +281,7 @@ _SCRIPT = """<script>
     });
   }
   const taskSelect = root.querySelector('[data-research-task]');
+  const isSystem = root.dataset.channel === 'system';
   const modeKey = 'tm-research-chat-selected-mode-v1';
   const skillKey = 'tm-research-chat-selected-skill-v1';
   const newModelKey = 'tm-research-chat-new-model-v1';
@@ -234,7 +296,7 @@ _SCRIPT = """<script>
   const defaultSkill = mode => mode === 'frontier' ? 'research-progress' : 'research-discussion';
   try {
     const savedMode = localStorage.getItem(modeKey);
-    if (savedMode === 'project' || savedMode === 'frontier') root.dataset.nextChatMode = savedMode;
+    if (!isSystem && (savedMode === 'project' || savedMode === 'frontier')) root.dataset.nextChatMode = savedMode;
     const savedSkill = localStorage.getItem(skillKey);
     root.dataset.nextChatSkill = starters[savedSkill]?.mode === root.dataset.nextChatMode ? savedSkill : defaultSkill(root.dataset.nextChatMode);
   } catch (_err) { root.dataset.nextChatSkill = defaultSkill(root.dataset.nextChatMode); }
@@ -319,7 +381,7 @@ _SCRIPT = """<script>
     } catch (_err) {}
   });
   const draftKeyForCurrentContext = () => 'tm-research-chat-draft-v1:' + encodeURIComponent(JSON.stringify([
-    taskSelect ? taskSelect.value : '', taskSelect?.value ? root.dataset.nextChatMode || 'project' : 'preparation',
+    taskSelect ? taskSelect.value : '', isSystem ? 'system' : taskSelect?.value ? root.dataset.nextChatMode || 'project' : 'preparation',
     newModelSelect ? newModelSelect.value : 'gpt-6-sol',
     newEffortSelect ? newEffortSelect.value : 'medium',
   ])) + (!taskSelect?.value || selectedSkill() === defaultSkill(root.dataset.nextChatMode) ? '' : ':skill:' + selectedSkill());
@@ -406,7 +468,7 @@ _SCRIPT = """<script>
       const content = directInput.value.trim();
       const submittedSources = directSources.slice();
       const taskId = taskSelect ? taskSelect.value : '';
-      const mode = taskId ? root.dataset.nextChatMode || 'project' : 'preparation';
+      const mode = isSystem ? 'system' : taskId ? root.dataset.nextChatMode || 'project' : 'preparation';
       if (!content) { directInput.focus(); return; }
       if (content.length > 120000) { if (error) error.textContent = '消息不能超过 120000 字符。'; return; }
       if (pendingSessionId && taskId !== pendingTaskId) {
@@ -423,7 +485,7 @@ _SCRIPT = """<script>
       root.querySelectorAll('[data-new-chat-model],[data-new-chat-effort]').forEach(control => { control.disabled = true; });
       try {
         if (!pendingSessionId) {
-          const created = await request('/api/research-chat/session', taskId
+          const created = await request('/api/research-chat/session', isSystem ? {mode:'system', task_id:taskId || undefined} : taskId
             ? {mode, task_id:taskId, skill:selectedSkill()}
             : {mode:'preparation', entry:'exploratory'});
           pendingSessionId = String(created.session_id || '');
@@ -442,7 +504,7 @@ _SCRIPT = """<script>
           configuredEffort = desiredEffort;
         }
         await request('/api/research-chat/' + encodeURIComponent(pendingSessionId) + '/message', {
-          content, ...(taskId ? {skill:selectedSkill()} : {}), sources:submittedSources,
+          content, ...(!isSystem && taskId ? {skill:selectedSkill()} : {}), sources:submittedSources,
         });
         finishDirectSources(submittedSources, pendingSessionId);
         clearActiveDraft();
@@ -593,6 +655,10 @@ def page_body(snapshot: dict[str, Any], *, mode: str = "research", embedded: boo
     tasks = snapshot.get("tasks") or []
     sessions = snapshot.get("sessions") or []
     session = snapshot.get("session") if isinstance(snapshot.get("session"), dict) else None
+    is_system = not is_supervisor and (session.get("mode") == "system" if session else snapshot.get("channel") == "system")
+    channel = "system" if is_system else "research"
+    if not is_supervisor:
+        sessions = [item for item in sessions if (item.get("mode") == "system") == is_system]
     sid = str(session.get("id") or "") if session else ""
     valid_tasks = {str(task.get("id")): str(task.get("label") or task.get("id")) for task in tasks if isinstance(task, dict)}
     task_id = str(session.get("task_id") or "") if session else (task_id if task_id in valid_tasks else "")
@@ -602,6 +668,8 @@ def page_body(snapshot: dict[str, Any], *, mode: str = "research", embedded: boo
     task_options = '<option value="">新想法 · 不关联已有项目</option>' + "".join(
         f'<option value="{_e(task.get("id"))}">{_e(task.get("label") or task.get("id"))}</option>'
         for task in tasks if isinstance(task, dict) and task.get("id"))
+    if is_system:
+        task_options = task_options.replace("新想法 · 不关联已有项目", "系统整体 · 不关联项目")
     history = "".join(
         f'<a href="{_e(item.get("href") or ("/research-chat/?session=" + str(item.get("id") or "")))}" '
         f'class="{"active" if item.get("id") == sid else ""}"'
@@ -612,6 +680,7 @@ def page_body(snapshot: dict[str, Any], *, mode: str = "research", embedded: boo
     if session:
         if is_supervisor:
             body = (
+                _supervisor_notice(session) +
                 f'<div id="tm-research-chat-app" data-session-id="{_e(sid)}" data-mode="supervisor" '
                 f'aria-label="Supervisor 接管对话"></div>'
             )
@@ -696,6 +765,21 @@ def page_body(snapshot: dict[str, Any], *, mode: str = "research", embedded: boo
             '</div>'
         )
     streaming = bool(session and session.get("streaming"))
+    if is_system and not session:
+        from theory_master.codex_shared_skills import shared_skills
+        import theory_master
+        refs = shared_skills(Path(theory_master.__file__).resolve().parent.parent,
+                             *([Path(snapshot["workspace"])] if snapshot.get("workspace") else []))
+        skill_details = ('<details class="tm-chat-shared-skills"><summary>共享 Codex skills · '
+                         + str(len(refs)) + ' 项</summary><p>直接读取本机 Codex 的原始 skill 文件，按需加载。</p><ul>'
+                         + ''.join(f'<li title="{_e(ref.description)}">{_e(ref.name)}</li>' for ref in refs)
+                         + '</ul></details>')
+        body = body.replace("有什么想一起研究的？", "系统哪里需要帮助？")
+        start = body.index('<section class="tm-chat-entry-tools"')
+        end = body.index('</section>', start) + len('</section>')
+        body = body[:start] + ('<p class="tm-chat-system-intro">描述报错或没有跑通的步骤，系统助手会结合配置、日志和源码排查。</p>' + skill_details) + body[end:]
+        body = body.replace('aria-label="科研问题"', 'aria-label="系统问题"').replace('placeholder="随心输入"', 'placeholder="例如：任务启动失败，帮我看看原因"')
+        body = body.replace('aria-label="直接开始科研聊天"', 'aria-label="开始系统排障"')
     history_controls = ('' if is_supervisor else
         '<div class="tm-chat-history-controls"><input type="search" data-chat-history-query aria-label="搜索全部对话" placeholder="搜索标题或消息…">'
         '<details class="tm-chat-history-filter" data-chat-popover><summary>筛选 <span>⌄</span></summary>'
@@ -740,15 +824,33 @@ def page_body(snapshot: dict[str, Any], *, mode: str = "research", embedded: boo
                                f'{_e(valid_tasks.get(task_id, task_id))}</span>')
     if not session and not is_supervisor and not embedded:
         toolbar_control = ""
+    from urllib.parse import urlencode
+    def channel_href(target: str) -> str:
+        params = {"channel": target}
+        if embedded:
+            params["embed"] = "1"
+        if task_id:
+            params["task_id"] = task_id
+        return "/research-chat/?" + urlencode(params)
+    new_href = (("/research-chat/?new=1" + ("&embed=1" if embedded else "")) if channel == "research"
+                else channel_href(channel) + "&new=1")
+    history_action = history_action.replace('/research-chat/?new=1', _e(new_href))
+    toolbar_control = toolbar_control.replace('/research-chat/?new=1', _e(new_href))
+    channel_switch = ('' if is_supervisor else '<nav class="tm-chat-agent-switch" aria-label="对话助手">' + ''.join(
+        f'<a href="{_e(channel_href(target))}"' + (' aria-current="page"' if channel == target else '') + f'>{label}</a>'
+        for target, label in (("research", "科研讨论"), ("system", "系统助手"))) + '</nav>')
+    if is_system and session:
+        body = body.replace('aria-label="Sciver 科研对话"', 'aria-label="Sciver 系统助手"')
     return (
-        f'{asset_tags}<style>{_STYLE}</style>{PREPARATION_STYLE if not is_supervisor else ""}<style>{CHROME_STYLE}</style><section class="tm-research-chat tm-chat-codex{" supervisor-mode" if is_supervisor else ""}" '
+        f'{asset_tags}<style>{_STYLE}</style>{PREPARATION_STYLE if not is_supervisor else ""}<style>{CHROME_STYLE}{_SUPERVISOR_NOTICE_STYLE if is_supervisor else ""}</style><section class="tm-research-chat tm-chat-codex{" supervisor-mode" if is_supervisor else ""}" '
         f'data-chat-shell="codex" data-chat-state="{"active" if session else "new"}" data-project-label="{_e(valid_tasks.get(task_id, ""))}" '
         f'data-embedded="{str(embedded).lower()}" data-task-id="{_e(task_id)}" '
         f'data-session="{_e(sid)}" data-mode="{"supervisor" if is_supervisor else "research"}" '
+        f'data-channel="{channel}" '
         f'data-session-mode="{_e(session.get("mode") or "") if session else ""}" '
         f'data-streaming="{str(streaming).lower()}" data-next-chat-mode="project" '
         f'aria-label="{"Supervisor 接管对话" if is_supervisor else "Workspace Research Chat"}">'
-        '<header class="tm-research-toolbar">'
+        f'{channel_switch}<header class="tm-research-toolbar">'
         f'{toolbar_title}'
         f'{project_control}{export_menu}{toolbar_control}'
         '</header>'

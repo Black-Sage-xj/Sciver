@@ -159,6 +159,24 @@ class SupervisorReliabilityTests(unittest.TestCase):
             self.assertEqual(rows[-1]["status"], "verified")
             self.assertEqual(rows[-1]["session_id"], "SUP-1111111111111111")
 
+    def test_runtime_verification_requires_bound_whole_task_decision(self):
+        with tempfile.TemporaryDirectory() as td:
+            cycle = Path(td)
+            traces = cycle / "supervisor"
+            traces.mkdir()
+            start = "2026-11-21T10:36:00+08:00"
+            session = "SUP-1111111111111111"
+            turn = {"session_id": session, "kind": "model_output",
+                    "code": "no_qualified_candidate", "thread_id": "real-thread",
+                    "at": "2026-11-21T10:36:10+08:00"}
+            (traces / "session.jsonl").write_text(json.dumps(turn) + "\n")
+            self.assertEqual(_verified_model_activity(cycle, start), "")
+            decision = {"type": "supervisor.qualification_decided", "at": "2026-11-21T10:36:10+08:00",
+                        "payload": {"session_id": session, "status": "waiting"}}
+            (cycle / "events.jsonl").write_text(json.dumps(decision) + "\n")
+            self.assertIn("qualification decision waiting", _verified_model_activity(cycle, start))
+            self.assertEqual(_verified_model_activity(cycle, "2026-11-21T10:36:12+08:00"), "")
+
     def test_runtime_resume_fails_closed_on_bad_checkpoint_protocol_budget(self):
         from theory_master.runtime_supervisor_review import resume_blocker
         safe = {"status": "failed", "resumable": True,

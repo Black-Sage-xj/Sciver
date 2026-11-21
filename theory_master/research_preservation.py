@@ -235,6 +235,10 @@ def _check_preservation_authorization(cycle_dir: Path, authorization: str,
     if authorization == "operator_approved":
         # The CLI must require its own explicit --approve-preservation flag.
         return
+    from .budget_auto_preservation import SINGLE_BUDGET_AUTHORITY, require_single_budget_preservation_authorization
+    if authorization == SINGLE_BUDGET_AUTHORITY:
+        require_single_budget_preservation_authorization(cycle_dir, hypothesis_id)
+        return
     if authorization != "supervisor_approved":
         raise PreservationGuard("explicit Supervisor or operator preservation authorization required")
     from .supervisor_intervention import supervisor_enabled
@@ -382,6 +386,19 @@ def _cached_preservation_model_output(cycle_dir: Path, path: Path) -> str | None
     return None
 
 
+def normalize_preservation_display(output: dict) -> dict:
+    """Use neutral display text when the model's Stage B exceeds its bounds."""
+    normalized = dict(output)
+    for field, limit, fallback in (
+        ("canvas_title", 48, "Unadjudicated research preserved"),
+        ("canvas_summary", 160, "The Cycle report records the preserved observations, method limitations, and unexecuted test."),
+    ):
+        value = output.get(field)
+        if isinstance(value, str) and len(value.strip()) > limit:
+            normalized[field] = fallback
+    return normalized
+
+
 def run_preservation_stage(*, cycle_dir: Path, canvas_path: Path, backend: Any,
                            model: str, provider: str, authorization: str,
                            dry_run: bool = False) -> dict[str, Any]:
@@ -460,6 +477,7 @@ def run_preservation_stage(*, cycle_dir: Path, canvas_path: Path, backend: Any,
         raise PreservationGuard("preservation stage returned invalid JSON") from exc
     if not isinstance(output, dict):
         raise PreservationGuard("preservation stage output must be an object")
+    output = normalize_preservation_display(output)
     contract.structural_validator(output, context)
     return preserve_blocked_cycle(
         cycle_dir=cycle_dir, canvas_path=canvas_path,
@@ -480,7 +498,8 @@ def finalize_preserved_cycle(*, cycle_dir: Path, authorization: str,
     from .runtime import now
 
     cycle_dir = Path(cycle_dir).resolve()
-    if authorization not in {"operator_approved", "supervisor_approved"}:
+    from .budget_auto_preservation import SINGLE_BUDGET_AUTHORITY
+    if authorization not in {"operator_approved", "supervisor_approved", SINGLE_BUDGET_AUTHORITY}:
         raise PreservationGuard("explicit Operator/Supervisor closure authorization required")
     folder = cycle_dir / "preservation"
     status_path = folder / "status.json"

@@ -14,6 +14,7 @@ from typing import Any
 from urllib.parse import quote
 
 from .collector import _ACTIVE_WORKER_STATES, _verified_active_worker
+from .run_controls_ui import supervisor_worker_control
 
 WORKER_ID = re.compile(r"worker-([1-9][0-9]*)\Z")
 CYCLE_ID = re.compile(r"[1-9][0-9]*\Z")
@@ -155,6 +156,7 @@ def tab_bar(run: dict[str, Any], workers: list[dict[str, Any]], selected: str | 
     plus = ('<button type="button" class="tm-worker-add" data-worker-add '
             'aria-label="新增 Agent" title="新增独立科研 Agent">'
             '<span aria-hidden="true">+</span> 新增 Agent</button>')
+    supervisor = supervisor_worker_control(run)
     def close(worker: dict[str, Any], number: str) -> str:
         worker_id = worker["worker_id"]
         if worker_id == "worker-1":
@@ -232,12 +234,14 @@ def tab_bar(run: dict[str, Any], workers: list[dict[str, Any]], selected: str | 
                 'role="status" aria-live="polite"></span>')
     return ('<nav class="tm-worker-tabs" aria-label="Parallel Research Workers">'
             '<div class="tm-worker-list" role="group" aria-label="Agent 列表">'
-            + "".join(links) + '</div>' + plus + runner_link + feedback + '</nav>')
+            + "".join(links) + '</div><div class="tm-worker-actions">'
+            + plus + supervisor + '</div>' + runner_link + feedback + '</nav>')
 
 
 STYLE = '''
 .tm-worker-tabs{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;
  gap:8px;padding:8px 0 12px}
+.tm-worker-actions{grid-column:2;display:flex;align-items:center;justify-content:flex-end;gap:8px}
 .tm-worker-list{display:flex;align-items:center;gap:8px;min-width:0;overflow-x:auto;
  scrollbar-width:thin;padding:0 0 3px;scroll-snap-type:x proximity}
 .tm-task-runner-link{grid-column:1/-1;display:flex;align-items:center;gap:7px;
@@ -263,6 +267,15 @@ button.tm-worker-tab{font-family:inherit;cursor:pointer}
  border-radius:9px;font-size:12px;font-weight:650;cursor:pointer;white-space:nowrap}
 .tm-worker-add span{font-size:20px;line-height:12px;color:#64d69d}
 .tm-worker-add:hover{background:#2e445b;border-color:#93b8dd}
+.tm-worker-supervisor{display:flex;align-items:center;justify-content:space-between;gap:9px;
+ min-width:168px;min-height:38px;padding:5px 9px;border:1px solid #435269;
+ border-radius:9px;background:#202b3c;color:#e6edf7}
+.tm-worker-supervisor-copy{display:flex;flex-direction:column;gap:3px;min-width:0}
+.tm-worker-supervisor-title{display:flex;align-items:center;gap:6px;font-size:12px;line-height:1.3}
+.tm-worker-supervisor-title strong{font-weight:650}
+.tm-worker-supervisor-title .tm-setting-tooltip{left:auto;right:0}
+.tm-worker-supervisor-copy small{color:#aebaca;font-size:10px;line-height:1.3;white-space:nowrap}
+.tm-worker-supervisor .tm-setting-switch-control{flex:0 0 36px}
 .tm-worker-card:has(.tm-worker-dismiss)>.tm-worker-tab,
 .tm-worker-card:has(.tm-worker-cancel)>.tm-worker-tab{padding-right:34px}
 .tm-worker-dismiss,.tm-worker-cancel{position:absolute;right:6px;top:50%;transform:translateY(-50%);
@@ -291,4 +304,8 @@ button.tm-worker-tab{font-family:inherit;cursor:pointer}
 .tm-worker-controls button{padding:7px 13px;border-radius:8px;border:1px solid #63748b;
  background:#2a374a;color:#e6edf7;cursor:pointer}
 .tm-worker-controls button:disabled{opacity:.5;cursor:default}
+@media(max-width:700px){
+ .tm-worker-tabs{grid-template-columns:minmax(0,1fr)}
+ .tm-worker-actions{grid-column:1;justify-content:flex-start;flex-wrap:wrap}
+}
 '''

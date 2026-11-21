@@ -8,7 +8,7 @@ from typing import Any
 
 def worker_action(
     spec: Any, worker_id: str, action: str, *, account: str | None = None,
-    provider_fallback: str | None = None,
+    provider_fallback: str | None = None, supervisor_cycle: str | None = None,
 ) -> dict[str, Any]:
     """Exact Worker-specific checkpoint control; never use Master-wide kill."""
     from . import goal_terminal, multi_worker, runtime_manager, worker_direction, worker_launch, worker_preservation, worker_quota, worker_routes, worker_state, worker_store
@@ -23,6 +23,8 @@ def worker_action(
         return worker_preservation.request_preserve_release(spec, worker_id)
     if action not in {"pause", "kill", "resume", "release", "dismiss", "retry_direction"}:
         raise ValueError("unknown Worker action")
+    if supervisor_cycle is not None and action not in {"resume", "retry_direction"}:
+        raise ValueError("Supervisor authorization applies only to recovery actions")
     if provider_fallback not in {None, "Codex"} or (provider_fallback and action != "resume"):
         raise ValueError("provider fallback is valid only for a bounded Worker resume")
     root = Path(spec.research_root).resolve()
@@ -37,6 +39,22 @@ def worker_action(
             raise ValueError("Worker does not exist")
         if w.get("close_requested") or w.get("dismissed"):
             raise ValueError("Worker is closing or closed; automatic resume is disabled")
+        if supervisor_cycle is not None:
+            from .supervisor_intervention import supervisor_enabled
+            if not supervisor_enabled(root) or worker_store._master_complete(root, spec=spec):
+                raise ValueError("Supervisor recovery is disabled or the Goal is complete")
+            if action == "retry_direction":
+                from .supervisor_activation import dormant_qualification_cycle
+                target_cycle = dormant_qualification_cycle(root, w)
+                if worker_direction._pending_retry_direction(root, worker_id):
+                    # Preserve a pending operator-authorized request and its owner.
+                    return {"worker_id": worker_id, "action": action, "status": "RETRY_REQUESTED"}
+            else:
+                from .worker_supervisor_dispatch import _eligible
+                identity = _eligible(root, w)
+                target_cycle = identity[0].name if identity is not None else None
+            if target_cycle != supervisor_cycle:
+                raise ValueError("Supervisor authorization no longer matches the stopped Cycle")
         if action == "retry_direction":
             if w.get("status") != worker_state.WAITING_RESEARCH_DIRECTION:
                 raise ValueError("retry_direction applies only to a Worker waiting for research direction")
@@ -44,7 +62,7 @@ def worker_action(
                 raise ValueError("Worker is still live; wait for it to finish")
             request = {"schema": worker_state.RETRY_DIRECTION_SCHEMA, "status": "pending",
                        "worker_id": worker_id, "requested_at": multi_worker.utcnow().isoformat(),
-                       "source": "operator",
+                       "source": "supervisor" if supervisor_cycle is not None else "operator",
                        "waiting_cycle": w.get("current_cycle"),
                        "wake_fingerprint_at_request": w.get("wake_fingerprint")}
             multi_worker._save_json(worker_direction._retry_direction_path(root, worker_id), request)
@@ -201,6 +219,8 @@ def worker_action(
             raise ValueError("Cycle abandonment forbids Worker Resume")
         from .resume_preparation import snapshot_resume_control, consume_resume_control
         pending_resume_control = snapshot_resume_control(root / str(cycle))
+        if supervisor_cycle is not None and pending_resume_control is not None:
+            raise ValueError("Operator control forbids Supervisor Resume")
         if (provider_fallback == "Codex" and str(old.get("status") or "").lower() == "paused"
                 and (old.get("recovery") or {}).get("reason") == "multi_worker_operator"):
             from .service_provider_switch import selected_service_preference

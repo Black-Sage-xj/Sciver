@@ -292,7 +292,9 @@ class InvocationOutputValidation:
         repair_prompt,
         json_repair_used,
     ):
-        from .hypothesis_lineage import assert_repair_lineage_preserved
+        from .hypothesis_lineage import (
+            assert_repair_lineage_preserved, restore_protected_contributions,
+        )
 
         errors = [item.as_dict() for item in validation.errors]
         self.session.owner._emit(
@@ -348,6 +350,8 @@ class InvocationOutputValidation:
             separators=(",", ":"),
         )
         repaired_output = None
+        previous_output = self.session.output
+        unchanged_replies = 0
         for repair_attempt in range(1, CONTRACT_REPAIR_LIMIT + 1):
             self.session.state["contract_repair_count"] = (
                 int(self.session.state.get("contract_repair_count") or 0) + 1
@@ -377,6 +381,36 @@ class InvocationOutputValidation:
                     "If repairable_other_sources is present, its over-capacity list is invalid: you must choose a legal subset of up to two from that declared pool yourself. "
                     "Keep the valid main source and the original contribution explanations for retained sources; remove explanations for omitted sources. The SDK does not select the subset.\n"
                     + json.dumps(protected_lineage, ensure_ascii=False)
+                )
+                candidates = previous_output.get("candidates") if isinstance(previous_output, dict) else None
+                gaps = []
+                for frozen in protected_lineage:
+                    if not frozen.get("exact"):
+                        continue
+                    index = frozen["index"]
+                    candidate = candidates[index] if isinstance(candidates, list) and index < len(candidates) else None
+                    transition = candidate.get("transition") if isinstance(candidate, dict) else None
+                    notes = transition.get("source_contributions") if isinstance(transition, dict) else None
+                    authored = set(notes) if isinstance(notes, dict) else set()
+                    missing = sorted(set(frozen["roles"]) - authored)
+                    if missing:
+                        gaps.append({"candidate_index": index, "missing_source_ids": missing})
+                if gaps:
+                    repair_prompt += (
+                        "\nThe protected contributions above freeze only explanations already authored; "
+                        "they do not make an omitted source explanation valid. Complete the following "
+                        "missing transition.source_contributions entries yourself, explaining what each "
+                        "declared H actually contributes to this new candidate. Inspect the source record "
+                        "if its contribution is unclear; do not use a placeholder or fabricate a result. "
+                        "Completing an explanation for your already-declared source is part of this "
+                        "proposal, not a new source choice or Judge verdict. "
+                        "Keep the declared source IDs, main/other roles, and existing valid explanations.\n"
+                        + json.dumps(gaps, ensure_ascii=False)
+                    )
+            if unchanged_replies:
+                repair_prompt += (
+                    f"\nThe previous {unchanged_replies} repair response(s) repeated the same invalid "
+                    "stage object. Change the specific invalid field identified above before returning JSON."
                 )
             self.session.owner._record_cycle_anomaly(
                 self.session.state,
@@ -490,6 +524,15 @@ class InvocationOutputValidation:
                         invocation_ledger=self.session.invocation_ledger,
                         artifact_tracker=self.session.artifact_tracker,
                     )
+            if protected_lineage:
+                repaired_output, restored = restore_protected_contributions(
+                    protected_lineage, repaired_output
+                )
+                if restored:
+                    self.session.owner._emit(self.session.state, "json.protected_lineage_restored", {
+                        "role": self.session.role, "stage": self.session.stage,
+                        "paths": restored, "input_kind": "contract_repair",
+                    })
             repaired_validation = self.validate_output(repaired_output)
             if protected_body is not None:
                 repaired_body = self._provenance_repair_identity(
@@ -537,6 +580,8 @@ class InvocationOutputValidation:
             if repaired_validation.valid:
                 self.session.output = repaired_output
                 break
+            unchanged_replies = unchanged_replies + 1 if repaired_output == previous_output else 0
+            previous_output = repaired_output
             errors = [item.as_dict() for item in repaired_validation.errors]
             self.session.owner._emit(
                 self.session.state,

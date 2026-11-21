@@ -12,7 +12,7 @@ Supervisor 是一个运行保障角色，而非 Runtime / Incident 两个独立 
 | --- | --- | --- |
 | Runtime triage | Worker FAILED、provider 中断、线程繁忙 | 只读诊断；输出受控 resume/hold JSON；SDK 负责安全启动 |
 | Engineering repair | 需要修改系统配置或工程代码 | 已授权工程环境中读写、离线回归、记录变更；不得篡改科学状态 |
-| Attention adjudication | `NEEDS_ATTENTION` 中科研/资格判定无法推进 | 有界诊断与一次合规 retry 建议，不越过 Challenger / Judge |
+| Attention adjudication | 资格耗尽或现有检查点的科研阻断 | 全任务审查、选定一项候选交 Challenger、核对 Goal 复评条件或记录等待依赖 |
 | Quota control | Codex/provider 真实额度耗尽 | 检查其他可用账号，全部无额度时等待 reset 并自动重试 |
 | Recovery verification | 自动 Resume 后 | 必须检查**后续模型/工具真实活动**，不能仅凭 PID 判断成功 |
 
@@ -34,7 +34,7 @@ Worker FAILED / 白名单工程依赖 NEEDS_ATTENTION
 
 进入 Engineering repair 的前提：无活跃同任务 Worker、锁定相同故障 fingerprint、存在安全 checkpoint 或已提交角色边界、未弃用 Cycle、未触发科学预算 guard；provider capacity 不能触发源码修改。工程动作和“真实科研恢复”必须分开记账，只有后续真实活动才能标记恢复。
 
-原生 Goal 没有终端 Provider 错误而返回 blocked 时，保留原线程、工作区、Goal 摘要哈希与其公开原因，交 SDK 做依赖/合同诊断；不对未变条件 clear/restart 两次。此中断不是 Finding、Judge verdict、预算续批或科研保全授权。历史 `repeated_unexpected_block` 同样禁止无已验证修复的 plain resume；Provider 容量、额度和预算路径保留各自守卫。
+原生 Goal 没有终端 Provider 错误而返回 blocked 时，SDK 记录原线程、工作区、Goal 摘要哈希和公开原因。若阻断来自可修复的计算，恢复回执核对原 Goal 的终态、检查点、修复材料或有界计算计划、调度锁及预算余量。回执只可消费一次，恢复使用同一 Cycle 的冻结 H 和剩余预算，保留原线程供核对。缺授权输入、锁未释放或回执校验失败时记录等待依赖。Provider 容量、账号额度和预算按各自规则处理。
 
 ### 冻结输入不可恢复的正式移交
 
@@ -48,11 +48,13 @@ Investigator 完成有界输入核查、确认冻结来源内没有可行恢复�
 
 ### 资格耗尽的接管边界
 
-三轮资格提议耗尽会抛出 `NoQualifiedCandidate`；它与资格阶段的 `RecoveryStop` 都进入已有的一次 Supervisor 复核。只有复核明确授权后才清理被拒的工作集并请求一个新提议，拒绝历史保留，新候选仍须通过 Challenger。再次被拒时 SDK 记录确定性 Supervisor hold，不增加该 Cycle 的模型调用；Supervisor 关闭或复核 hold 时结束该 Cycle 的资格尝试。显式恢复旧 Cycle 仍保留该边界，不重置资格次数。
+三轮资格提议被退回，或 Lead 明确报告没有可行候选时，自动接管使用 Attention 的全任务资格恢复审查。SPV 读取规范 SQLite 科研图谱、Scientific Model、Goal 裁决、相邻资格失败记录和正在调查的 H。它可以选定一个可执行、结果有判别价值的候选，提交已有 Challenger 资格审查。通过后由 SDK 冻结并交给 Investigator。没有合规检验时，SPV 记录具体缺失依赖和可观察的唤醒条件。候选被 Challenger 否决后，本次 SPV 审查停止。历史候选和 Judge 裁决继续保留。
 
-资格耗尽只证明本轮未提出合格候选，冻结输入限制只约束该次未执行的检验；二者都不能代替任务 Goal Completion。规范状态的这两类局部失败，在 Goal 尚未完成且本次调用有剩余额度时交回新的 Lead；任务级 Resume 同样创建新 Cycle，不重开旧记录。Worker 释放旧 claim，再通过正常分配建立下一 Cycle，计入既有每 Worker 调用额度。其他 Attention、运行/合同错误、未验证的行政关闭、人工停止、资源预算与 Goal 完成均保留原停止路径。
+如果此前已经有受支持的科学结果，Goal 只缺可从已登记结果复现的表格，SPV 可以提交交付计划。SDK 核对冻结输入、已裁决预测、行身份和输出列，保存可重放的补充交付回执，再沿原 Goal Judge 路径复评。该路径保留原 H 和裁决，使用既有预测数据，验收依赖原 Goal Judge。轨迹观察参见 TMA-20261121-0179。
 
-新 Lead 与 Challenger 获得有界、绑定已提交 invocation 的资格失败历史与原科学三元组。SDK 拦截与失败候选科学三元组完全相同的重提，记录行政去重并使用本轮既有的有界重提额度，不伪造 Challenger 拒绝或科学结论。语义等价性与新候选是否确实解决旧阻断仍由 Lead、Challenger 判断；SDK 不代选模型、阈值、校准或科研方向，不放宽原 Research Contract。跨 Cycle 的选路质量继续由 `TMA-20261119-0146` 观察。
+对已停任务打开 Supervisor 会启动有唯一运行所有者的接管请求。恢复前再次核对源 Cycle、任务级 Goal 封存、人工停止命令及 Worker claim。工程故障继续从经过验证的检查点恢复。旧 Cycle 合法耗尽后的接管在新 Cycle 中进行，复用任务图谱和既有证据。明确报告缺失依赖，或 SPV 选定的候选被阻断后，输入指纹不变时等待。指纹包括正式 Outcome、Scientific Model、Plan 和小型规范输入清单。新增材料能否作为研究证据仍由相应审查阶段验证。
+
+Challenger 获得绑定已提交调用的资格失败历史与原科学三元组。SDK 拦截完全重复的候选，保留过程记录，科学语义和试验价值继续由 Challenger 判定。任务计划、证据和 Judge 权威通过原有路径维护。真实轨迹观察参见 TMA-20261121-0178。
 
 工程候选接收与失败 invocation 绑定的紧凑公开证据，包括冻结科学、最近相关交付和已观察加载 Skill 的当前规则/哈希；当前规则不冒充历史版本证明。记录不授予修改科学状态或受保护策略的权限。普通代码候选继续通过独立差分验收；`repair_plan.json` 也可返回 `needs_dependency / needs_rule_revision / needs_configuration`、具体原因和缺失依赖，此类诊断必须无源码/测试变更，不安装文件、不授权 Resume。缺计划文件即使进程退出 0 也属于未交付；脱敏退出信息和输出片段随候选证据保留。
 

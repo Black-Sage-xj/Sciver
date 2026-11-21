@@ -1,6 +1,7 @@
 """Explicit branch parent and supplementary scientific provenance."""
 from __future__ import annotations
 
+import copy
 from typing import Any, Mapping
 
 from .research_transition import TRANSITION_LIMIT
@@ -112,6 +113,46 @@ def assert_repair_lineage_preserved(protected: list[dict[str, Any]], repaired: M
                     choices and isinstance(notes, Mapping)
                     and any(source in notes for source in set(choices) - set(roles))):
             raise ValueError(f"candidates[{index}] repair must preserve valid source contribution explanations")
+
+
+def restore_protected_contributions(
+    protected: list[dict[str, Any]], repaired: Mapping[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    """Copy back only valid source explanations already authored before repair.
+
+    A repair turn may change an unrelated invalid field while paraphrasing a
+    protected explanation. The original explanation remains the authority.
+    Missing notes, changed source roles and changed hypotheses still fail the
+    ordinary lineage check.
+    """
+    value = copy.deepcopy(repaired)
+    changes: list[str] = []
+    candidates = value.get("candidates")
+    if not isinstance(candidates, list):
+        return value, changes
+    for frozen in protected:
+        index = frozen["index"]
+        if index >= len(candidates) or not isinstance(candidates[index], dict):
+            continue
+        candidate = candidates[index]
+        if candidate.get("hypothesis") != frozen["hypothesis"]:
+            continue
+        try:
+            lineage = explicit_lineage(candidate)
+        except ValueError:
+            continue
+        if lineage is None:
+            continue
+        retained = {lineage[0], *lineage[1]}
+        transition = candidate.get("transition")
+        notes = transition.get("source_contributions") if isinstance(transition, dict) else None
+        if not isinstance(notes, dict):
+            continue
+        for source, original in frozen["contributions"].items():
+            if source in retained and source in notes and notes[source] != original:
+                notes[source] = original
+                changes.append(f"candidates[{index}].transition.source_contributions[{source}]")
+    return value, changes
 
 
 def explicit_lineage(candidate: Mapping[str, Any]) -> tuple[str, list[str]] | None:

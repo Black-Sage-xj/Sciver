@@ -1,14 +1,72 @@
 """Research direction wake conditions and operator guidance."""
 from __future__ import annotations
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 
+_INPUT_IDS = "verified_research_input_ids"
+
+
+def _verified_input_ids(fingerprint: Any) -> frozenset[str] | None:
+    if not isinstance(fingerprint, dict):
+        return None
+    identities = fingerprint.get(_INPUT_IDS)
+    if not isinstance(identities, list) or not all(
+            isinstance(value, str) and len(value) == 64
+            and all(char in "0123456789abcdef" for char in value) for value in identities):
+        return None
+    return frozenset(identities)
+
+
+def _waiting_fingerprint(root: Path, previous: Any, wait_key: tuple, *, establish_from: Any = None) -> Any:
+    """Bind the first verified inventory to a specific old wait without editing its Cycle."""
+    if _direction_values(previous) is None or _verified_input_ids(previous) is not None:
+        return previous
+    from .invocations import stable_hash
+    from .runtime import write_json
+
+    owner = stable_hash([list(wait_key), previous])
+    base = root / ".theory-master" / "research_input_wait_baselines"
+    path = base / (owner + ".json")
+    try:
+        if any(part.is_symlink() for part in (path, base, base.parent)):
+            return previous
+        if path.is_file():
+            with path.open("rb") as handle:
+                raw = handle.read(65_537)
+            if len(raw) > 65_536:
+                return previous
+            record = json.loads(raw)
+            if (isinstance(record, dict) and record.get("wait_key") == owner
+                    and _verified_input_ids(record) is not None):
+                return {**previous, _INPUT_IDS: record[_INPUT_IDS]}
+            return previous
+        new_ids = _verified_input_ids(establish_from)
+        if not path.exists() and new_ids is not None:
+            write_json(path, {"wait_key": owner, _INPUT_IDS: sorted(new_ids)})
+    except (OSError, ValueError):
+        pass
+    return previous
+
+
+def qualification_wait_fingerprint(root: Path, state: dict, *, establish_from: Any = None) -> Any:
+    """Read or establish the baseline for exactly one persisted whole-task review."""
+    review = state.get("supervisor_qualification") or {}
+    previous = review.get("direction_fingerprint")
+    if not review.get("session_id") or not state.get("cycle_id"):
+        return previous
+    return _waiting_fingerprint(
+        root, previous, ("supervisor", state["cycle_id"], review["session_id"]),
+        establish_from=establish_from,
+    )
+
+
 def research_direction_fingerprint(spec: Any) -> dict[str, Any]:
-    """G6 deterministic wake signal: committed Outcomes, Scientific Model version, plan hash."""
+    """G6 wake authorities, including currently available verified input identities."""
     from . import multi_worker, worker_state, worker_store
-    import hashlib
+    from .research_inputs import qualification_input_ids
     import sqlite3
     root = Path(spec.research_root).resolve()
     ids: list[str] = []
@@ -24,12 +82,15 @@ def research_direction_fingerprint(spec: Any) -> dict[str, Any]:
     model_state = state_path(root)
     version = multi_worker._read_json(model_state).get("version") if model_state.is_file() else None
     plan = Path(spec.document)
+    input_ids = qualification_input_ids(spec)
     return {
         "schema": worker_state.DIRECTION_FINGERPRINT_SCHEMA,
         "committed_outcome_count": len(ids),
         "committed_outcome_ids_sha256": hashlib.sha256("\n".join(ids).encode("utf-8")).hexdigest(),
         "scientific_model_version": version if isinstance(version, int) else None,
         "research_plan_sha256": hashlib.sha256(plan.read_bytes()).hexdigest() if plan.is_file() else None,
+        _INPUT_IDS: input_ids,
+        "research_inputs_sha256": hashlib.sha256("\n".join(input_ids).encode()).hexdigest(),
     }
 
 
@@ -37,7 +98,78 @@ def _direction_values(fingerprint: Any) -> tuple[Any, ...] | None:
     from . import worker_state
     if not isinstance(fingerprint, dict) or not all(k in fingerprint for k in worker_state.DIRECTION_FINGERPRINT_FIELDS):
         return None
-    return tuple(fingerprint[k] for k in worker_state.DIRECTION_FINGERPRINT_FIELDS)
+    values = tuple(fingerprint[k] for k in worker_state.DIRECTION_FINGERPRINT_FIELDS)
+    count, outcomes, version, plan = values
+    if (type(count) is not int or count < 0 or not isinstance(outcomes, str) or not outcomes
+            or version is not None and (type(version) is not int or version < 0)
+            or not isinstance(plan, str) or not plan):
+        return None
+    return values
+
+
+def added_research_input_ids(previous: Any, current: Any) -> frozenset[str]:
+    old_inputs, new_inputs = _verified_input_ids(previous), _verified_input_ids(current)
+    return new_inputs - old_inputs if old_inputs is not None and new_inputs is not None else frozenset()
+
+
+def omitted_qualification_input_ids(root: Path, state: dict[str, Any], current: Any, *,
+                                    excluded_sha256: frozenset[str] = frozenset()) -> frozenset[str]:
+    """Recover new source text skipped by the previous qualification projection."""
+    from .public_submission import read_bounded_regular_file
+    from .supervisor_intervention import SESSION_SCHEMA
+    from .task_progression import local_replan_reason
+
+    review = state.get("supervisor_qualification") or {}
+    cycle = str(state.get("cycle_id") or "")
+    source = str(review.get("source_cycle") or "")
+    session_id = review.get("session_id")
+    if (review.get("source_context_version") != 2 or review.get("status") != "waiting"
+            or not session_id or not cycle.isascii() or not cycle.isdecimal()
+            or not source.isascii() or not source.isdecimal() or not 0 < int(source) < int(cycle)
+            or local_replan_reason(state) != "no_qualified_candidate"):
+        return frozenset()
+    try:
+        previous = json.loads(read_bounded_regular_file(root / source / "research_state.json", 2_000_000))
+        if (str(previous.get("cycle_id")) != source or previous.get("worker_id") != state.get("worker_id")
+                or local_replan_reason(previous) != "no_qualified_candidate"):
+            return frozenset()
+        added = (added_research_input_ids(qualification_wait_fingerprint(root, previous),
+                                         qualification_wait_fingerprint(root, state))
+                 & (_verified_input_ids(current) or frozenset())) - excluded_sha256
+        if not added:
+            return frozenset()
+        raw = read_bounded_regular_file(root / cycle / "supervisor" / "session.jsonl", 2_000_000)
+        prompts = []
+        for line in raw.splitlines():
+            entry = json.loads(line)
+            if (entry.get("schema") == SESSION_SCHEMA and entry.get("session_id") == session_id
+                    and entry.get("profile") == "attention" and entry.get("code") == "no_qualified_candidate"
+                    and entry.get("kind") == "prompt" and entry.get("role") == "attention_reviewer"):
+                prompts.append(entry["content"])
+        if not prompts:
+            return frozenset()
+        payload = json.loads(prompts[0].partition("\nTask evidence:\n")[2])
+        sources = payload.get("verified_public_sources") or []
+        eligible = {
+            row["sha256"] for row in sources if row.get("sha256") in added
+            and row.get("kind") in {"fixture_input", "supplemental_input"}
+            and type(row.get("size")) is int and 0 < row["size"] <= 12_000
+            and Path(str(row.get("path") or "")).suffix in {".json", ".md", ".py"}
+        }
+        inlined = {row["sha256"] for row in sources if row.get("sha256") in eligible and row.get("source_text")}
+        return frozenset(eligible - inlined)
+    except (OSError, ValueError, AttributeError, TypeError, KeyError):
+        return frozenset()
+
+
+def direction_changed(previous: Any, current: Any) -> bool:
+    """Missing new fields in an old fingerprint are not evidence of a change."""
+    before, after = _direction_values(previous), _direction_values(current)
+    if before is None or after is None:
+        return False
+    if before != after:
+        return True
+    return bool(added_research_input_ids(previous, current))
 
 
 def _retry_direction_path(root: Path, worker_id: str) -> Path:
@@ -46,13 +178,22 @@ def _retry_direction_path(root: Path, worker_id: str) -> Path:
 
 
 def _pending_retry_direction(root: Path, worker_id: str) -> dict[str, Any] | None:
-    from . import multi_worker
+    from . import multi_worker, worker_store
     request = multi_worker._read_json(_retry_direction_path(root, worker_id))
-    return request if request.get("status") == "pending" else None
+    if request.get("status") != "pending":
+        return None
+    if request.get("source") == "supervisor":
+        from .supervisor_activation import dormant_qualification_cycle
+        from .supervisor_intervention import supervisor_enabled
+        worker = worker_store.read_worker(root, worker_id)
+        cycle = dormant_qualification_cycle(root, worker) if supervisor_enabled(root) else None
+        if (cycle is None or request.get("waiting_cycle") != cycle
+                or request.get("wake_fingerprint_at_request") != worker.get("wake_fingerprint")):
+            return None
+    return request
 
 
-def _waiting_local_replan_reason(root: Path, worker: dict[str, Any]) -> str | None:
-    """Read a historical waiting attempt without reopening or editing its Cycle."""
+def _waiting_cycle_state(root: Path, worker: dict[str, Any]) -> tuple[Path, dict] | None:
     from . import multi_worker
     cycle = str(worker.get("current_cycle") or "")
     if (worker.get("claim_id") or worker.get("epoch") is not None
@@ -69,9 +210,46 @@ def _waiting_local_replan_reason(root: Path, worker: dict[str, Any]) -> str | No
     if (state.get("worker_id") != worker.get("worker_id")
             or str(state.get("cycle_id") or "") != cycle):
         return None
-    from .task_progression import local_replan_reason
-    return local_replan_reason(state)
+    return directory, state
 
+
+def _waiting_local_replan_reason(root: Path, worker: dict[str, Any], *, spec: Any = None,
+                                current_fingerprint: Any = None) -> str | None:
+    """Classify a waiting attempt without reopening or editing its Cycle."""
+    from .task_progression import local_replan_reason, qualification_replan_allowed
+
+    waiting = _waiting_cycle_state(root, worker)
+    if waiting is None:
+        return None
+    directory, state = waiting
+    reason = local_replan_reason(state)
+    if reason == "no_qualified_candidate" and (spec is None or not qualification_replan_allowed(
+            spec, state, current_fingerprint=current_fingerprint)):
+        return None
+    if reason == "input_support_unavailable":
+        from .supervisor_input_support import input_support_recovery
+
+        review = input_support_recovery(directory, state, establish_baseline=True, spec=spec,
+                                        worker_id=worker.get("worker_id"))
+        if not review or review["route"] != "input_support":
+            return "input_support_wait"
+    return reason
+
+
+
+def _worker_input_wake(spec: Any, worker: dict) -> dict | None:
+    from .supervisor_input_support import input_support_recovery
+
+    waiting = _waiting_cycle_state(Path(spec.research_root).resolve(), worker)
+    if waiting is None:
+        return None
+    directory, state = waiting
+    plan = input_support_recovery(directory, state, spec=spec, worker_id=worker["worker_id"])
+    if not plan or plan["route"] != "input_support":
+        return None
+    return {"cycle_id": directory.name, "dependency_identity": plan["dependency_identity"],
+            "wake_identity": plan["wake_identity"], "wake_fingerprint": worker.get("wake_fingerprint"),
+            "waiting_since": worker.get("waiting_since")}
 
 def _partition_waiting_workers(spec: Any, workers: list[dict[str, Any]]
                                ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any] | None]:
@@ -93,14 +271,27 @@ def _partition_waiting_workers(spec: Any, workers: list[dict[str, Any]]
     woken, dormant = [], []
     for worker in waiting:
         retry = _pending_retry_direction(root, worker["worker_id"])
-        local_replan = _waiting_local_replan_reason(root, worker)
-        stored = _direction_values(worker.get("wake_fingerprint"))
-        changed = (current is not None and stored is not None
-                   and stored != _direction_values(current))
+        local_replan = _waiting_local_replan_reason(root, worker, spec=spec,
+                                                   current_fingerprint=current)
+        previous = _waiting_fingerprint(
+            root, worker.get("wake_fingerprint"),
+            ("worker", worker["worker_id"], worker.get("current_cycle"), worker.get("waiting_since")),
+            establish_from=current,
+        )
+        bound_input_wait = worker.get("input_support_wait_cycle") == str(worker.get("current_cycle") or "")
+        input_wake = None
+        if not retry and (bound_input_wait or local_replan in {"input_support_wait", "input_support_unavailable"}):
+            input_wake = _worker_input_wake(spec, worker) if local_replan == "input_support_unavailable" else None
+            if input_wake is None:
+                dormant.append(worker)
+                continue
+        changed = direction_changed(previous, current)
         if retry or changed or local_replan:
             woken.append({**worker, "wake_reason": "retry_direction" if retry
+                          else "local_replan:" + local_replan if input_wake
                           else "direction_fingerprint_changed" if changed
-                          else "local_replan:" + local_replan})
+                          else "local_replan:" + local_replan,
+                          **({"input_support_wake": input_wake} if input_wake else {})})
         else:
             dormant.append(worker)
     return woken, dormant, current

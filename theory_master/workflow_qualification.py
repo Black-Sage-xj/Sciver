@@ -38,7 +38,7 @@ class _ProposalRetry(Exception):
 _CHALLENGER_CANDIDATE_FIELDS = (
     "hypothesis", "scope", "why_now", "goal_advance", "decisive_test", "transition",
     "lineage_anchor_node_id", "lineage_anchor_node_ids", "lineage_main_node_id",
-    "lineage_other_node_ids", "evolution_operator", "reconsideration_trigger",
+    "lineage_other_node_ids", "evolution_operator", "reconsideration_trigger", "evaluation_materials",
 )
 
 
@@ -56,6 +56,7 @@ def _challenger_candidate_seed(candidates: list[dict[str, Any]]) -> list[dict[st
             for key in ("id", *_CHALLENGER_CANDIDATE_FIELDS)
             if (key != "evolution_operator" or str(candidate.get("evolution_operator") or "").strip())
             and (key != "transition" or key in candidate)
+            and (key != "evaluation_materials" or key in candidate)
         }
         for candidate in candidates
     ]
@@ -130,8 +131,10 @@ class QualificationMixin:
         decisive_test = finalized.get("decisive_test") or finalized.get("cycle_milestone", "")
         assembled = {"hypothesis": finalized.get("hypothesis"), "scope": selected.get("scope", ""),
                      "decisive_test": decisive_test}
+        if "evaluation_materials" in finalized:
+            assembled["evaluation_materials"] = finalized["evaluation_materials"]
         if (checkpoint.get("selected_candidate_id") != selected.get("id")
-                or assembled != frozen_science_view(selected)):
+                or frozen_science_view(assembled) != frozen_science_view(selected)):
             raise RecoveryStop("pre-H Lock science differs from the reviewed candidate")
         criteria = make_cycle_criteria(decisive_test)
         state["hypothesis_lock"] = {
@@ -144,6 +147,8 @@ class QualificationMixin:
             "cycle_criteria": json.loads(json.dumps(criteria)),
             "initial_investigation_intent": finalized.get("initial_investigation_intent", ""),
             "candidate_provenance": json.loads(json.dumps(selected)),
+            **({"evaluation_materials": json.loads(json.dumps(selected["evaluation_materials"]))}
+               if "evaluation_materials" in selected else {}),
             "qualification": {
                 "selection_rationale": checkpoint.get("selection_rationale", ""),
                 "review": json.loads(json.dumps(checkpoint.get("selected_review") or {})),

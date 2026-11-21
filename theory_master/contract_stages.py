@@ -10,6 +10,11 @@ from typing import Any, Mapping
 
 from .hypothesis_display import TITLE_LIMIT, CLAIM_LIMIT, CONDITIONS_LIMIT
 from .research_transition import validate_transition
+from .evaluation_history import (
+    EVALUATION_MATERIAL_SCHEMA, SCIENTIFIC_CHECK_SCHEMA, validate_materials,
+    require_eligible_identity, validate_scientific_checks,
+)
+from .goal_gaps import GAP_SCHEMA, validate_gaps
 
 from .cycle_criteria import criterion_rows
 
@@ -66,31 +71,36 @@ CANDIDATE_SELECTION_SCHEMA = {
 
 LEAD_LITERATURE_REQUEST_SCHEMA = {
     "task_type": "landscape|targeted_source|novelty_check",
-    "search_target": "external scholarly field, claim, or source to investigate",
-    "why_external_needed": "why supplied local/project context is insufficient",
-    "expected_external_evidence": "external scholarly evidence expected to resolve the stated gap",
-    "new_search_lead": "optional source/search hint; required for targeted_source",
+    "search_target": "external scholarly question or source",
+    "why_external_needed": "why local context cannot answer it",
+    "expected_external_evidence": "external evidence needed",
+    "new_search_lead": "hint; required for targeted_source",
+    "search_queries": "optional 1..6 queries",
+    "relevance_terms": "optional 1..12 anchors",
 }
 
 MINIMAL_FRONTIER_PROPOSAL_SCHEMA = {
     "candidates": [{
         "hypothesis": "...",
-        "scope": "the scientific scope/boundary of this hypothesis",
+        "scope": "scientific scope and boundary",
         "why_now": "...",
         "goal_advance": "...",
         "transition": {
             "prior_gap": "source unresolved gap or root Goal unknown; nonempty, maximum 400 characters",
             "current_change": "what this H changes or tests in response; nonempty, maximum 400 characters",
-            "source_contributions": "object: exactly main/other H IDs as keys; each value explains the result, definition, method or comparison used here (1..400 characters); {} for root",
+            "source_contributions": "object keyed by exactly main/other H IDs; values explain the source result/definition/method/comparison used here (1..400 characters); {} for root",
         },
         "decisive_test": "test definition for this hypothesis within its stated scope",
-        "lineage_main_node_id": "one existing SQLite H ID; determines the branch connection",
-        "lineage_other_node_ids": "0–2 other existing SQLite H IDs; details only, no branch connections",
+        "evaluation_materials": [EVALUATION_MATERIAL_SCHEMA],
+        "lineage_main_node_id": "existing SQLite H ID; main source",
+        "lineage_other_node_ids": "0–2 existing SQLite H IDs; references, no branch connections",
         "evolution_operator": "required typed lineage operator for a derived H; omit for root H",
-        "reconsideration_trigger": "optional; omit if unused; new Evidence/dependency/scope change or removed blocker for parked H",
+        "reconsideration_trigger": "optional; omit if unused; new Evidence/dependency/scope or removed blocker for parked H",
     }],
+    "no_new_science": {**GAP_SCHEMA, "kind": "delivery|unavailable_material; use only when no new scientific H is necessary; omit candidates/literature"},
     "needs_literature": "optional boolean; true requires literature_request and omits candidates; false means no Literature detour; may be omitted",
     "literature_request": LEAD_LITERATURE_REQUEST_SCHEMA,
+    "blocking_reason": "only for candidates=[]: explain missing prerequisites; omit Literature; no lock/verdict or proof of data absence",
 }
 
 MINIMAL_FRONTIER_PROPOSAL_VALIDATION_SCHEMA = {
@@ -102,7 +112,7 @@ MINIMAL_FRONTIER_PROPOSAL_VALIDATION_SCHEMA = {
     }],
 }
 
-FRONTIER_PROPOSAL_PROMPT_NOTE = """Use evolution_operator only from: refine | specialize | generalize | alternative | combine | derive | counter_hypothesis. For a root H, omit all lineage fields. Choose one main and up to two other sources; if revisiting parked H, include that H in main or other sources. Closed/rejected H may source a distinct H, not reopen. Anchors are directly relevant lineage references, not evidence. The SDK owns H identity and lineage edges. Repair preserves valid IDs, roles and contributions. The SDK freezes transition verbatim. Do not return canvas_title, canvas_summary, canvas_claim, or canvas_conditions; post-lock hypothesis_display owns display output."""
+FRONTIER_PROPOSAL_PROMPT_NOTE = 'Use evolution_operator only from: refine | specialize | generalize | alternative | combine | derive | counter_hypothesis. For a root H, omit all lineage fields. Otherwise use one main and up to two other H; if revisiting parked H, include that H in main or other sources. Closed/rejected H may source distinct H, not reopen. Anchors are lineage references, not evidence. The SDK owns H identity/edges; freezes transition verbatim. Repair preserves IDs/roles/contributions. Do not return canvas_title, canvas_summary, canvas_claim, canvas_conditions; hypothesis_display owns display.'
 
 MINIMAL_HYPOTHESIS_DISPLAY_SCHEMA = {
     "canvas_title": f"faithful scientific title, maximum {TITLE_LIMIT} characters",
@@ -170,6 +180,7 @@ MINIMAL_CHALLENGER_SCHEMA = {
         "candidate_id": "exact SDK-provided candidate ID (copy, never create)",
         "verdict": "qualified|revise|reject",
         "reason": "concise rationale for the verdict",
+        "scientific_checks": SCIENTIFIC_CHECK_SCHEMA,
         "blocking_issues": "ONLY for verdict=revise: array of {problem, required_change}; OMIT ENTIRELY for qualified/reject",
     }]
 }
@@ -301,13 +312,17 @@ MINIMAL_JUDGE_SCHEMA = {
 MINIMAL_GOAL_COMPLETION_SCHEMA = {
     "verdict": "passed|not_passed",
     "rationale": "concise reason the completed Task does or does not satisfy the Final Gate; not a next step",
+    "gaps": [GAP_SCHEMA],
 }
 
 MINIMAL_FRONTIER_MAINTENANCE_SCHEMA = {
     "updates": [{
         "hypothesis_id": "existing H id in the canonical SQLite science graph",
         "status": "closed|parked|active",
-        "reason": "why this existing H is active, parked, or closed relative to the unmet Goal",
+        "reason": "source-grounded reason about this H's own research opportunity; general Goal relevance alone is insufficient",
+        "remaining_question": "required for active/parked: executable unresolved question inside this H's scope; omit for closed",
+        "dependency": "required for parked: missing input, design or other concrete blocking condition; otherwise optional",
+        "reopen_basis": "required when reopening closed H: changed evidence/condition or a previously unresolved H-scoped question with its source; otherwise optional",
     }],
 }
 
@@ -344,8 +359,17 @@ def _validate_lead_literature_detour(output: dict[str, Any], *, normal_fields: s
         return False
     if output.get("needs_literature") is not True:
         raise ValueError("literature_request requires needs_literature=true")
-    if normal_fields & set(output):
-        raise ValueError("Lead Literature detour is mutually exclusive with normal frontier output")
+    # An empty candidate list carries no frontier decision; semantic closure
+    # drops that placeholder while retaining the requested Literature branch.
+    conflicting = {
+        field for field in normal_fields & set(output)
+        if not (field == "candidates" and output[field] == [])
+    }
+    if conflicting:
+        raise ValueError(
+            "Lead Literature detour is mutually exclusive with normal frontier output; "
+            "omit candidates or return [] while keeping needs_literature=true"
+        )
     request = output.get("literature_request")
     if not isinstance(request, dict):
         raise ValueError("needs_literature=true requires literature_request")
@@ -361,6 +385,17 @@ def _validate_lead_literature_detour(output: dict[str, Any], *, normal_fields: s
         raise ValueError("literature_request.new_search_lead must be a string when supplied")
     if request.get("task_type") == "targeted_source" and not str(lead or "").strip():
         raise ValueError("Lead targeted_source requires a concrete new_search_lead (DOI/title/author/source hint)")
+    for field, limit, minimum, maximum in (
+        ("search_queries", 6, 2, 180), ("relevance_terms", 12, 1, 80),
+    ):
+        if field not in request:
+            continue
+        values = request[field]
+        if (not isinstance(values, list) or not 1 <= len(values) <= limit
+                or any(not isinstance(value, str)
+                       or not minimum <= len(value.strip()) <= maximum
+                       or "\x00" in value for value in values)):
+            raise ValueError(f"literature_request.{field} must be a bounded list of nonempty strings")
     return True
 
 
@@ -390,6 +425,19 @@ def _known_hypothesis_ids(context: Mapping[str, Any]) -> set[str] | None:
 
 
 def _minimal_frontier_structure(output: dict[str, Any], context: Mapping[str, Any]) -> None:
+    if "blocking_reason" in output:
+        if (output.get("candidates") != [] or output.get("needs_literature", False) is not False
+                or set(output) - {"candidates", "needs_literature", "blocking_reason"}):
+            raise ValueError("blocking_reason requires only an empty candidate set and no Literature detour")
+        _text(output.get("blocking_reason"), "blocking_reason")
+        return
+    if "no_new_science" in output:
+        if set(output) != {"no_new_science"}:
+            raise ValueError("no_new_science is exclusive with candidates/literature")
+        validate_gaps([output["no_new_science"]], "not_passed")
+        if output["no_new_science"]["kind"] == "scientific":
+            raise ValueError("a scientific gap requires a candidate or literature request")
+        return
     if _validate_lead_literature_detour(output, normal_fields={"candidates"}):
         return
     candidates = output.get("candidates")
@@ -407,11 +455,15 @@ def _minimal_frontier_structure(output: dict[str, Any], context: Mapping[str, An
             raise ValueError("candidate contains SDK-owned fields: " + ", ".join(sorted(forbidden)))
         for field in ("hypothesis", "scope", "why_now", "goal_advance", "decisive_test"):
             _text(candidate.get(field), f"candidates[{index}].{field}")
+        from .plan_anchor_guard import require_explicit_plan_grid
+        require_explicit_plan_grid(candidate, context)
         validate_transition(candidate.get("transition"))
+        if "evaluation_materials" in candidate:
+            validate_materials(candidate["evaluation_materials"])
         allowed_candidate_fields = {
             "hypothesis", "scope", "why_now", "goal_advance", "decisive_test", "transition",
             "lineage_anchor_node_id", "lineage_anchor_node_ids", "lineage_main_node_id",
-            "lineage_other_node_ids", "evolution_operator", "reconsideration_trigger",
+            "lineage_other_node_ids", "evolution_operator", "reconsideration_trigger", "evaluation_materials",
         }
         unsupported = set(candidate) - allowed_candidate_fields - forbidden
         if unsupported:
@@ -529,6 +581,8 @@ def _minimal_selection_repair_structure(output: dict[str, Any], context: Mapping
     # A repaired qualification must freeze executable science, not merely a
     # convincing narrative in blocker_closures or an orphaned definition.
     _text(repair.get("repaired_decisive_test"), "repair.repaired_decisive_test")
+    from .plan_anchor_guard import require_explicit_plan_grid
+    require_explicit_plan_grid({"decisive_test": repair["repaired_decisive_test"]}, context)
     parent = next((item for item in candidates if isinstance(item, dict)
                    and str(item.get("id") or "") == (selected_parent or next(iter(parent_ids), ""))), {})
     original = " ".join(str(parent.get("decisive_test") or "").split())
@@ -649,6 +703,14 @@ def _minimal_challenger_structure(output: dict[str, Any], context: Mapping[str, 
         if verdict not in {"qualified", "revise", "reject"}:
             raise ValueError(f"reviews[{index}].verdict is invalid")
         _text(review.get("reason"), f"reviews[{index}].reason")
+        candidate = next((item for item in candidates if item.get("id") == candidate_id), {})
+        if "evaluation_materials" in candidate:
+            validate_materials(candidate["evaluation_materials"])
+        if "evaluation_materials" in candidate or "scientific_checks" in review:
+            validate_scientific_checks(review.get("scientific_checks"), qualified=verdict == "qualified")
+            if (verdict == "qualified" and any(row["independence"] != "not_required" for row in candidate.get("evaluation_materials", []))
+                    and review["scientific_checks"]["evidence_identity"]["assessment"] != "clear"):
+                raise ValueError("qualified independence claim requires a clear evidence_identity check")
         if verdict == "qualified" and any(
             str(context.get(key) or "").strip() for key in ("goal", "research_contract", "final_gate")
         ):
@@ -661,6 +723,9 @@ def _minimal_challenger_structure(output: dict[str, Any], context: Mapping[str, 
                 final_gate=str(context.get("final_gate") or ""),
                 label=f"reviews[{index}]",
             )
+        if verdict == "qualified":
+            graph = context.get("agent_graph") or {}
+            require_eligible_identity(candidate, graph.get("evaluation_history") or [])
         blocking = review.get("blocking_issues")
         if verdict == "revise":
             if not isinstance(blocking, list) or not blocking:
@@ -690,6 +755,8 @@ def _minimal_repair_verification_structure(output: dict[str, Any], context: Mapp
     if output.get("verdict") not in {"confirmed", "unresolved"}:
         raise ValueError("repair verification verdict must be confirmed or unresolved")
     _text(output.get("reason"), "repair verification reason")
+    if output.get("verdict") == "confirmed":
+        require_eligible_identity(candidate, (context.get("agent_graph") or {}).get("evaluation_history") or [])
     if str(review.get("verdict")) != "revise" or not review.get("blocking_issues"):
         raise ValueError("repair verification requires frozen revise blockers")
     if str(candidate.get("parent_candidate_id") or "") != str(original.get("id") or ""):
@@ -924,7 +991,8 @@ def _frontier_maintenance_structure(output: dict[str, Any], context: Mapping[str
     for index, item in enumerate(updates):
         if not isinstance(item, dict):
             raise ValueError(f"frontier_maintenance updates[{index}] must be an object")
-        item_extra = set(item) - {"hypothesis_id", "status", "reason"}
+        from .frontier_opportunity import OPPORTUNITY_FIELDS, prior_status, validate_opportunity
+        item_extra = set(item) - {"hypothesis_id", "status", "reason"} - OPPORTUNITY_FIELDS
         if item_extra:
             raise ValueError(
                 f"frontier_maintenance updates[{index}] contains unsupported fields: "
@@ -943,11 +1011,12 @@ def _frontier_maintenance_structure(output: dict[str, Any], context: Mapping[str
         if not isinstance(status, str) or status not in {"closed", "parked", "active"}:
             raise ValueError(f"updates[{index}].status must be closed|parked|active")
         _text(item.get("reason"), f"updates[{index}].reason")
+        validate_opportunity(item, prior_status(context, hypothesis_id))
 
 
 def _goal_completion_structure(output: dict[str, Any], context: Mapping[str, Any]) -> None:
     """Final Gate verdict only. not_passed does not name a next scientific step."""
-    allowed = {"verdict", "rationale"}
+    allowed = {"verdict", "rationale", "gaps"}
     extra = set(output) - allowed
     if extra:
         raise ValueError("goal_completion contains unsupported fields: " + ", ".join(sorted(extra)))
@@ -955,6 +1024,7 @@ def _goal_completion_structure(output: dict[str, Any], context: Mapping[str, Any
     if verdict not in {"passed", "not_passed"}:
         raise ValueError("goal_completion verdict must be passed|not_passed")
     _text(output.get("rationale"), "goal_completion rationale")
+    validate_gaps(output.get("gaps", []), verdict)
 
 
 REPORTER_FORBIDDEN_STATUS_FIELDS = frozenset({"scientific_status", "frontier_status"})
@@ -989,7 +1059,7 @@ def _lead_selection_structure(output: dict[str, Any], context: Mapping[str, Any]
 
 PHASE_CONTRACTS: dict[tuple[str, str], RoleContract] = {
     ("research_lead", "frontier_proposal"): RoleContract(
-        "theory-master/role/research-lead/frontier-proposal", 15,
+        "theory-master/role/research-lead/frontier-proposal", 18,
         MINIMAL_FRONTIER_PROPOSAL_SCHEMA, _minimal_frontier_structure, _noop,
         FRONTIER_PROPOSAL_PROMPT_NOTE,
         validation_schema=MINIMAL_FRONTIER_PROPOSAL_VALIDATION_SCHEMA,
@@ -1013,16 +1083,16 @@ PHASE_CONTRACTS: dict[tuple[str, str], RoleContract] = {
         CYCLE_SYNTHESIS_PROMPT_NOTE,
     ),
     ("research_lead", "frontier_maintenance"): RoleContract(
-        "theory-master/role/research-lead/frontier-maintenance", 3,
+        "theory-master/role/research-lead/frontier-maintenance", 4,
         MINIMAL_FRONTIER_MAINTENANCE_SCHEMA, _frontier_maintenance_structure, _noop,
         FRONTIER_MAINTENANCE_PROMPT_NOTE,
     ),
     ("challenger", "candidate_review"): RoleContract(
-        "theory-master/role/challenger/candidate-review", 5,
+        "theory-master/role/challenger/candidate-review", 6,
         MINIMAL_CHALLENGER_SCHEMA, _minimal_challenger_structure, _noop,
     ),
     ("challenger", "repair_verification"): RoleContract(
-        "theory-master/role/challenger/repair-verification", 2,
+        "theory-master/role/challenger/repair-verification", 3,
         MINIMAL_REPAIR_VERIFICATION_SCHEMA, _minimal_repair_verification_structure, _noop,
     ),
     ("investigator", "preserve_research"): RoleContract(
@@ -1062,7 +1132,7 @@ PHASE_CONTRACTS: dict[tuple[str, str], RoleContract] = {
         JUDGE_INVESTIGATION_RESULT_PROMPT_NOTE,
     ),
     ("judge", "goal_completion"): RoleContract(
-        "theory-master/role/judge/goal-completion", 2,
+        "theory-master/role/judge/goal-completion", 3,
         MINIMAL_GOAL_COMPLETION_SCHEMA, _goal_completion_structure, _noop,
     ),
     ("reporter", "report"): RoleContract(

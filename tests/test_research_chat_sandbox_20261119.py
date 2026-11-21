@@ -97,7 +97,7 @@ def test_only_chat_and_nested_clients_receive_private_workspace_tmpdir(tmp_path,
     monkeypatch.setattr(backend, "_verify_provider_runtime", lambda: None)
     monkeypatch.setattr(backend, "_run_network_guard", lambda *args, **kwargs: None)
     monkeypatch.setattr(backend, "_runtime_config", lambda *args: ((), {}))
-    monkeypatch.setattr(backend, "_sdk_environment", lambda *args: {"EXISTING": "preserved"})
+    monkeypatch.setattr(backend, "_sdk_environment", lambda *args, **kwargs: {"EXISTING": "preserved"})
     monkeypatch.setattr("theory_master.codex_sdk_compat.install_approval_handler", lambda *args: None)
     constructor = Mock(return_value=SimpleNamespace())
     monkeypatch.setattr("openai_codex.Codex", constructor)

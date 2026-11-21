@@ -44,7 +44,11 @@ _RUNTIME_SOURCE_MODULES = {
     "codex_turn_transport.py": "theory_master.codex_turn_transport",
     "codex_goal_transport.py": "theory_master.codex_goal_transport",
     "native_goal.py": "theory_master.native_goal",
+    "native_goal_stop.py": "theory_master.native_goal_stop",
+    "native_goal_guidance.py": "theory_master.native_goal_guidance",
+    "native_goal_budget_notice.py": "theory_master.native_goal_budget_notice",
     "native_goal_recovery.py": "theory_master.native_goal_recovery",
+    "retained_goal_quota.py": "theory_master.retained_goal_quota",
     "hypothesis_lineage.py": "theory_master.hypothesis_lineage",
     "workflow_support.py": "theory_master.workflow_support",
     "resume_preparation.py": "theory_master.resume_preparation",
@@ -60,8 +64,22 @@ _RUNTIME_SOURCE_MODULES = {
     "specification.py": "theory_master.specification",
     "prompt_stages.py": "theory_master.prompt_stages",
     "stage_registry.py": "theory_master.stage_registry",
+    "reporting.py": "theory_master.reporting",
+    "report_materials.py": "theory_master.report_materials",
+    "report_material_tools.py": "theory_master.report_material_tools",
     "supervisor_attention_review.py": "theory_master.supervisor_attention_review",
+    "supervisor_activation.py": "theory_master.supervisor_activation",
+    "supervisor_qualification_recovery.py": "theory_master.supervisor_qualification_recovery",
+    "supervisor_delivery.py": "theory_master.supervisor_delivery",
+    "supervisor_goal_reassessment.py": "theory_master.supervisor_goal_reassessment",
+    "goal_reassessment_recovery.py": "theory_master.goal_reassessment_recovery",
+    "supervisor_reassessment_retry.py": "theory_master.supervisor_reassessment_retry",
+    "supervisor_runtime_wait.py": "theory_master.supervisor_runtime_wait",
+    "supervisor_runtime_resume.py": "theory_master.supervisor_runtime_resume",
+    "archival_goal_delivery.py": "theory_master.archival_goal_delivery",
+    "operator_technical_recovery.py": "theory_master.operator_technical_recovery",
     "delivery_repair.py": "theory_master.delivery_repair",
+    "operator_delivery.py": "theory_master.operator_delivery",
     "evidence.py": "theory_master.evidence",
     "evidence_provenance.py": "theory_master.evidence_provenance",
     "literature_source_access.py": "theory_master.literature_source_access",
@@ -82,6 +100,7 @@ _RUNTIME_SOURCE_MODULES = {
     "invocation_context.py": "theory_master.invocation_context",
     "invocation_transport.py": "theory_master.invocation_transport",
     "invocation_output.py": "theory_master.invocation_output",
+    "output_normalization.py": "theory_master.output_normalization",
     "invocation_commit.py": "theory_master.invocation_commit",
     "invocation_lifecycle.py": "theory_master.invocation_lifecycle",
     "qualification_session.py": "theory_master.qualification_session",
@@ -100,6 +119,7 @@ _RUNTIME_SOURCE_MODULES = {
     "worker_launch.py": "theory_master.worker_launch",
     "worker_routes.py": "theory_master.worker_routes",
     "worker_direction.py": "theory_master.worker_direction",
+    "task_progression.py": "theory_master.task_progression",
     "worker_execution.py": "theory_master.worker_execution",
     "worker_quota.py": "theory_master.worker_quota",
     "worker_preservation.py": "theory_master.worker_preservation",
@@ -293,6 +313,13 @@ class RuntimeRegistryError(RuntimeError):
     """Persisted ownership is unreadable; new ownership must fail closed."""
 
 
+def _clear_inactive_recovery_job(payload: dict[str, Any]) -> None:
+    # This projection represents an operational wait owned by the Supervisor.
+    # The Cycle's recovery.json remains the durable record of the episode.
+    if payload.get("state") != "RECOVERY_WAIT" or payload.get("qualification_wait"):
+        payload.pop("recovery_job", None)
+
+
 def load_registry(research_root: Path) -> dict[str, Any]:
     path = registry_path(research_root)
     if path.is_symlink():
@@ -307,6 +334,7 @@ def load_registry(research_root: Path) -> dict[str, Any]:
         raise RuntimeRegistryError("Runtime registry is unreadable") from exc
     if not isinstance(payload, dict) or payload.get("schema") != RUNTIME_SCHEMA:
         raise RuntimeRegistryError("Runtime registry has an invalid schema")
+    _clear_inactive_recovery_job(payload)
     return payload
 
 
@@ -316,14 +344,49 @@ def update_registry(research_root: Path, **fields: Any) -> dict[str, Any]:
         payload = load_registry(root)
         if payload.get("schema") != RUNTIME_SCHEMA:
             payload = {"schema": RUNTIME_SCHEMA}
+        previous_cycle = payload.get("current_cycle")
+        previous_boot_wait = payload.get("boot_wait")
+        previous_boot_resume = payload.get("boot_resume")
+        previous_state = payload.get("state")
         payload.update(fields)
+        if payload.get("current_cycle") != previous_cycle:
+            for key in ("recovery_job", "boot_wait", "boot_recovery", "boot_resume"):
+                if key not in fields:
+                    payload.pop(key, None)
+        _clear_inactive_recovery_job(payload)
         # Storage moves can preserve an old runtime.json for provenance.
         # The live registry must always identify its *current* physical root.
         payload["research_root"] = str(root)
         payload["updated_at"] = _now()
-        _write_json_atomic(registry_path(root), payload)
+        # Heartbeats replace the registry file even when a boot receipt is unchanged.
+        if ({"boot_wait", "boot_recovery", "boot_resume", "runner_checkpoint_protocol",
+             "delivery_reassessment_attempt", "goal_reassessment_retry"} & fields.keys()
+                or payload.get("boot_wait") or payload.get("boot_resume")
+                or ((previous_boot_wait or previous_boot_resume) and (previous_cycle != payload.get("current_cycle")
+                    or previous_state != payload.get("state")))):
+            from .runtime import write_json
+            write_json(registry_path(root), payload, sync_directory=True)
+        else:
+            _write_json_atomic(registry_path(root), payload)
         return payload
 
+
+
+def valid_boot_id(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        return str(uuid.UUID(value)) == value
+    except ValueError:
+        return False
+
+
+def host_boot_id() -> str | None:
+    try:
+        value = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+    except OSError:
+        return None
+    return value if valid_boot_id(value) else None
 
 def process_start_ticks(pid: int | None) -> int | None:
     if not pid:
@@ -382,6 +445,13 @@ def runtime_health(research_root: Path, *, stale_after_s: float = HEARTBEAT_STAL
                 "ownership_unknown": True, "error": str(exc)}
     if not payload:
         return {"state": "ABSENT", "active": False, "registry": {}}
+    current_boot = host_boot_id()
+    if current_boot and valid_boot_id(payload.get("boot_id")) and payload["boot_id"] != current_boot:
+        state = str(payload.get("state") or "UNKNOWN").upper()
+        terminal = state in {"OVER", "COMPLETE", "COMPLETED", "STOPPED", "NEEDS_ATTENTION",
+                             "CANCELLED", "FAILED", "FAILED_RECOVERY"}
+        return {"state": state if terminal else "ORPHANED", "active": False,
+                "supervisor_alive": False, "runner_alive": False, "previous_boot": True, "registry": payload}
     supervisor_pid = payload.get("supervisor_pid")
     supervisor_alive = process_identity_alive(supervisor_pid, payload.get("supervisor_start_ticks"))
     runner_pid = payload.get("runner_pid")
@@ -414,6 +484,9 @@ def foreground_runtime(research_root: Path, *, master_id: int, operation: str) -
     Offline gaps are deliberately excluded from ``active_elapsed_s``.
     """
     root = Path(research_root).expanduser().resolve()
+    if operation == "run":
+        from .supervisor_activation import release_qualification_wait_for_run
+        release_qualification_wait_for_run(root)
     lock_path = owner_lock_path(root)
     try:
         owner = _file_lock(lock_path, nonblocking=True)
@@ -454,6 +527,11 @@ def foreground_runtime(research_root: Path, *, master_id: int, operation: str) -
                 launch_id=launch_id,
                 requested_operation=operation,
                 launcher="foreground",
+                boot_id=host_boot_id(),
+                boot_wait=None,
+                boot_recovery=None,
+                boot_resume=None,
+                qualification_wait=None,
                 supervisor_pid=None,
                 supervisor_start_ticks=None,
                 runner_pid=pid,
@@ -603,7 +681,7 @@ def _supervisor_command(spec: Any, *, operation: str, identifier: str, launch_id
 
 
 _SERVICE_ENV = frozenset({
-    "PYTHONPATH", "PATH", "HOME", "LANG", "LC_ALL", "HTTP_PROXY", "HTTPS_PROXY",
+    "PYTHONPATH", "PYTHONSAFEPATH", "PATH", "HOME", "LANG", "LC_ALL", "HTTP_PROXY", "HTTPS_PROXY",
     "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy",
     "THEORYMASTER_CODEX_HOME", "THEORYMASTER_ENV_FILE", "THEORYMASTER_QUOTA_PROVIDER_FALLBACK",
 })
@@ -655,8 +733,42 @@ def _runtime_env() -> dict[str, str]:
     return env
 
 
-def launch_managed_runtime(spec: Any, *, operation: str, identifier: str, model: str | None = None, provider: str | None = None, routes: list[str] | None = None, cycle_audit: bool | None = None, error_repair: bool | None = None, attention_takeover: bool | None = None, check_literature: bool = False) -> dict[str, Any]:
+def launch_managed_runtime(spec: Any, *, operation: str, identifier: str, model: str | None = None, provider: str | None = None, routes: list[str] | None = None, cycle_audit: bool | None = None, error_repair: bool | None = None, attention_takeover: bool | None = None, check_literature: bool = False, takeover_cycle: str | None = None, boot_wait: dict | None = None, boot_resume: dict | None = None) -> dict[str, Any]:
+    from .supervisor_runtime_resume import launch_options
+
     root = Path(spec.research_root).resolve()
+    repair_options = launch_options(model=model, provider=provider, routes=routes, cycle_audit=cycle_audit,
+                                    error_repair=error_repair, attention_takeover=attention_takeover,
+                                    check_literature=check_literature)
+    runtime_repair_resume = False
+    if (operation == "takeover") != (takeover_cycle is not None):
+        raise ValueError("Supervisor takeover must be bound to one stopped Cycle")
+    if boot_wait is not None and operation != "takeover":
+        raise ValueError("A host boot recovery must own a specific stopped dependency")
+    if boot_resume is not None:
+        from .supervisor_boot_recovery import RUNTIME_REPAIR_ACTIVE_RESUME, RUNTIME_REPAIR_RESUME
+
+        runtime_repair_resume = boot_resume.get("kind") == RUNTIME_REPAIR_RESUME
+        if boot_resume.get("kind") == "goal_reassessment":
+            if boot_wait is not None or operation != "takeover" or boot_resume.get("cycle") != takeover_cycle:
+                raise ValueError("A boot Goal reassessment must own its exact stopped Cycle")
+        elif runtime_repair_resume:
+            origin = boot_resume.get("origin")
+            authorization = origin.get("authorization") if isinstance(origin, dict) else None
+            if (boot_wait is not None or operation != "takeover" or boot_resume.get("cycle") != takeover_cycle
+                    or identifier != str(spec.master_id) or not isinstance(authorization, dict)
+                    or repair_options != authorization.get("options", {})):
+                raise ValueError("A boot runtime repair must own its exact stopped Cycle and saved Task settings")
+        elif operation != "resume" or boot_resume.get("cycle") != identifier:
+            raise ValueError("A boot Resume must match its exact interrupted Cycle")
+        elif boot_resume.get("kind") == RUNTIME_REPAIR_ACTIVE_RESUME:
+            origin = boot_resume.get("origin")
+            if (boot_wait is not None or not isinstance(origin, dict)
+                    or repair_options != origin.get("options")):
+                raise ValueError("An active repair Resume must match its saved Task settings")
+    if operation == "run":
+        from .supervisor_activation import release_qualification_wait_for_run
+        release_qualification_wait_for_run(root)
     from .runtime_admission import admission_lock
     with admission_lock(root), _file_lock(launch_lock_path(root)), _file_lock(branch_claim_lock_path(root)):
         _reject_legacy_when_claimed(root)
@@ -665,12 +777,44 @@ def launch_managed_runtime(spec: Any, *, operation: str, identifier: str, model:
             return {"status": "already_running", "health": health, "registry": health.get("registry") or {}}
         legacy = legacy_live_owner(spec)
         if legacy is not None:
-            payload = update_registry(root, state="LEGACY_RUNNING", master_id=int(getattr(spec, "master_id", 0) or 0), runner_pid=legacy["pid"], runner_start_ticks=process_start_ticks(legacy["pid"]), current_cycle=legacy["cycle"], heartbeat_at=None, launcher="legacy-adopted")
+            if boot_resume is not None:
+                return {"status": "already_running"}
+            payload = update_registry(
+                root, state="LEGACY_RUNNING", master_id=int(getattr(spec, "master_id", 0) or 0),
+                runner_pid=legacy["pid"], runner_start_ticks=process_start_ticks(legacy["pid"]),
+                current_cycle=legacy["cycle"], heartbeat_at=None, launcher="legacy-adopted",
+                boot_id=host_boot_id(), boot_wait=None, boot_recovery=None, boot_resume=None, qualification_wait=None,
+            )
             return {"status": "already_running", "legacy": True, "registry": payload}
         from .runtime_admission import assert_no_single_owner
         assert_no_single_owner(root)
         launch_id = uuid.uuid4().hex
         initial_cycle = latest_cycle_name(root)
+        retained_wait = boot_origin = boot_recovery = None
+        if boot_resume is not None:
+            from .supervisor_boot_recovery import eligible_boot_resume
+
+            if (eligible_boot_resume(root) != boot_resume or initial_cycle != boot_resume["cycle"]
+                    or boot_resume["origin"]["master_id"] != spec.master_id):
+                return {"status": "resume_checkpoint_changed"}
+        if boot_wait is not None:
+            from .invocations import stable_hash
+            from .supervisor_boot_recovery import eligible_boot_wait
+
+            if eligible_boot_wait(root) != boot_wait or boot_wait["cycle"] != takeover_cycle:
+                return {"status": "takeover_stop_changed"}
+            boot_origin = boot_wait["origin"]
+            if boot_origin["master_id"] != spec.master_id:
+                return {"status": "takeover_stop_changed"}
+            retained_wait = {**boot_origin["qualification_wait"], "launch_id": launch_id}
+            boot_recovery = {"boot_id": boot_wait["boot_id"], "launch_id": launch_id,
+                             "origin_sha256": stable_hash(boot_origin), "attempt": boot_wait["attempt"]}
+        if takeover_cycle is not None:
+            from .supervisor_activation import latest_recovery
+            from .supervisor_intervention import supervisor_enabled
+            current = latest_recovery(root, include_wait=True) if supervisor_enabled(root) else None
+            if current is None or current[0].name != takeover_cycle or (runtime_repair_resume and current[2] != "runtime"):
+                return {"status": "takeover_stop_changed"}
         master_id = int(getattr(spec, "master_id", 0) or 0)
         unit = unit_name(root, master_id)
         # A new launch_id is a fresh supervisor episode. Reset the
@@ -684,13 +828,23 @@ def launch_managed_runtime(spec: Any, *, operation: str, identifier: str, model:
             master_id=master_id,
             launch_id=launch_id,
             launch_requested_at=_now(),
+            boot_id=host_boot_id(),
             requested_operation=operation,
+            takeover_cycle=takeover_cycle,
+            qualification_wait=retained_wait,
+            boot_wait=boot_origin,
+            boot_recovery=boot_recovery,
+            boot_resume={**boot_resume, "launch_id": launch_id} if boot_resume is not None else None,
+            boot_resume_outcome=None,
             initial_latest_cycle=initial_cycle,
             current_cycle=initial_cycle,
             supervisor_pid=None,
             supervisor_start_ticks=None,
             runner_pid=None,
             runner_start_ticks=None,
+            runner_operation=None,
+            runner_checkpoint_protocol=None,
+            runtime_repair_options=repair_options,
             heartbeat_at=None,
             systemd_unit=unit,
             supervisor_attempt=0,
@@ -711,6 +865,8 @@ def launch_managed_runtime(spec: Any, *, operation: str, identifier: str, model:
                 update_registry(root, launcher="systemd-user", systemd_unit=unit)
             else:
                 detail = (proc.stderr or proc.stdout or "systemd-run failed").strip()
+        if not launched and (boot_wait is not None or boot_resume is not None):
+            return {"status": "systemd_launch_failed", "launch_id": launch_id, "unit": unit, "detail": detail}
         if not launched:
             log_path = runtime_dir(root) / "supervisor.log"
             log = open(log_path, "a", encoding="utf-8")
@@ -769,6 +925,7 @@ def ensure_canonical_tui(spec: Any, *, tmux_session: str | None = None) -> dict[
                     runner_start_ticks=process_start_ticks(legacy["pid"]),
                     current_cycle=legacy["cycle"],
                     launcher="legacy-adopted",
+                    boot_id=host_boot_id(), boot_wait=None, boot_recovery=None, boot_resume=None, qualification_wait=None,
                     tui={**row, "created_at": _now(), "adopted_legacy": True},
                 )
                 return {"status": "adopted", **row}

@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,13 +49,32 @@ class NativeGoalDeliveryError(NativeGoalIncomplete):
         self.args = (f"Investigator Goal completed, but findings handoff is invalid: {detail}",)
 
 
-class NativeGoalExecutionLimit(RuntimeError):
-    """An invocation-bound input limitation, never Findings or a Judge verdict."""
+class FixtureAvailabilityConflict(ValueError):
+    """An exact registered file contradicts the submitted missing-file audit."""
 
-    def __init__(self, thread_id: str, execution_limit: dict[str, Any], handoff_path: Path):
+    def __init__(self, references: list[str]):
+        self.references = references
+        super().__init__("registered fixture is available at its pinned path: " + ", ".join(references))
+
+
+class NativeGoalFixtureAvailabilityConflict(NativeGoalDeliveryError):
+    """A contradictory typed execution-limit delivery, with its original bytes pinned."""
+
+    def __init__(self, thread_id: str, error: FixtureAvailabilityConflict, handoff_sha256: str):
+        super().__init__(thread_id, "execution_limit: " + str(error))
+        self.references = error.references
+        self.handoff_sha256 = handoff_sha256
+
+
+class NativeGoalExecutionLimit(RuntimeError):
+    """An invocation-bound execution hold, never Findings or a Judge verdict."""
+
+    def __init__(self, thread_id: str, execution_limit: dict[str, Any], handoff_path: Path, *,
+                 fixture_audit_pins: list[dict[str, Any]] | None = None):
         self.thread_id = thread_id
         self.execution_limit = execution_limit
         self.handoff_path = str(handoff_path)
+        self.fixture_audit_pins = fixture_audit_pins
         super().__init__(execution_limit["reason"])
 
 
@@ -77,10 +97,10 @@ EXECUTION_LIMIT_PROTOCOL_MARKER = "SDK_EXECUTION_LIMIT_HANDOFF_V1"
 EXECUTION_LIMIT_SCHEMA = "theory-master/execution-limit-handoff/v1"
 EXECUTION_LIMIT_MAX_EVIDENCE_BYTES = 16 * 1024 * 1024
 EXECUTION_LIMIT_INSTRUCTION = (
-    f"{EXECUTION_LIMIT_PROTOCOL_MARKER}: Only an indispensable input/support gap "
-    "remaining after a bounded source-recovery audit permits Setup's execution_limit "
-    "handoff. Method failure or cost alone does not. This closes execution without "
-    "a completed test, Findings or scientific verdict; keep frozen science unchanged. "
+    f"{EXECUTION_LIMIT_PROTOCOL_MARKER}: Setup allows a hold for missing essential input "
+    "after bounded source-recovery audit, or ungranted approval explicitly required "
+    "by the reviewed Contract after complete method delivery. Neither completes "
+    "science; difficulty, cost or unfinished authorized work do not qualify. "
 )
 
 
@@ -333,7 +353,8 @@ def run_native_goal(thread: Any, objective: str, *,
                     on_turn_boundary: Callable[[Any], None] | None = None,
                     attachment: Any = None,
                     control_check: Callable[[], None] | None = None,
-                    on_operation_started: Callable[[], None] | None = None) -> NativeGoalResult:
+                    on_operation_started: Callable[[], None] | None = None,
+                    cancel_owned_operation: Callable[[Any], None] | None = None) -> NativeGoalResult:
     """Use the SDK's genuine thread-scoped Goal logical stream, never a normal Turn.
 
     Scientific Findings require native `complete`. The separate administrative
@@ -360,12 +381,33 @@ def run_native_goal(thread: Any, objective: str, *,
         state, logical_turn_id = attachment.state, attachment.logical_turn_id
     else:
         state, logical_turn_id = client.start_goal_operation(thread.id, objective)
+    cancel_attempted = False
+    cancel_error: BaseException | None = None
+
+    def cancel_operation():
+        nonlocal cancel_attempted, cancel_error
+        if cancel_attempted:
+            if cancel_error is not None:
+                raise cancel_error
+            return
+        cancel_attempted = True
+        try:
+            if cancel_owned_operation is not None:
+                cancel_owned_operation(state)
+            else:
+                client.cancel_goal_operation(state)
+        except BaseException as exc:
+            cancel_error = exc
+            raise
+
     if on_operation_started is not None:
         try:
             on_operation_started()
         except BaseException:
-            client.cancel_goal_operation(state)
-            client.unregister_goal_operation(state)
+            try:
+                cancel_operation()
+            finally:
+                client.unregister_goal_operation(state)
             raise
     active_physical_turn = state.current_turn_id if attachment is not None else None
     boundary_cancel_requested = False
@@ -382,7 +424,7 @@ def run_native_goal(thread: Any, objective: str, *,
                 boundary_cancel_requested = True
                 raise
             except BaseException:
-                client.cancel_goal_operation(state)
+                cancel_operation()
                 boundary_cancel_requested = True
                 raise
         event = client.next_goal_notification(state)
@@ -407,7 +449,7 @@ def run_native_goal(thread: Any, objective: str, *,
                 except BaseException:
                     # Cancel before the official cursor unregisters and clears
                     # its current-turn routing state while unwinding the hook.
-                    client.cancel_goal_operation(state)
+                    cancel_operation()
                     boundary_cancel_requested = True
                     raise
             active_physical_turn = None
@@ -419,7 +461,7 @@ def run_native_goal(thread: Any, objective: str, *,
         next_notification=next_notification if on_turn_boundary is not None or control_check is not None
                           else lambda: client.next_goal_notification(state),
         unregister=lambda: client.unregister_goal_operation(state),
-        cancel_goal=lambda: client.cancel_goal_operation(state),
+        cancel_goal=cancel_operation,
         **resume_stream,
     )
     turns = 0
@@ -458,7 +500,7 @@ def run_native_goal(thread: Any, objective: str, *,
     except BaseException:
         # A failed Python/SKD stream must not leave an orphaned active Goal.
         if not boundary_cancel_requested:
-            client.cancel_goal_operation(state)
+            cancel_operation()
         raise
     finally:
         stream.close()
@@ -524,9 +566,78 @@ def execution_limit_setup_binding(context_prompt: str, handoff_path: Path) -> di
     return binding
 
 
+
+def execution_limit_fixture_inputs(context_prompt: str) -> list[dict[str, Any]] | None:
+    """Recover the registered file inventory from the trusted native Setup."""
+    try:
+        context, _ = json.JSONDecoder().raw_decode(context_prompt.lstrip())
+    except (ValueError, TypeError):
+        return None
+    inputs = context.get("registered_fixture_inputs") if isinstance(context, dict) else None
+    if inputs is None:
+        return None
+    if not isinstance(inputs, list) or len(inputs) > 40:
+        raise ValueError("invalid SDK registered fixture inventory")
+    seen = set()
+    for row in inputs:
+        if (not isinstance(row, dict)
+                or set(row) != {"reference", "path", "size", "sha256", "status"}
+                or not isinstance(row["reference"], str) or not row["reference"].startswith("benchmark/")
+                or row["reference"] != Path(row["reference"]).as_posix()
+                or ".." in Path(row["reference"]).parts or row["reference"] in seen or not isinstance(row["path"], str)
+                or not Path(row["path"]).is_absolute() or ".." in Path(row["path"]).parts
+                or type(row["size"]) is not int or not 0 < row["size"] <= 64 * 1024 * 1024
+                or not isinstance(row["sha256"], str) or not re.fullmatch(r"[a-f0-9]{64}", row["sha256"])
+                or row["status"] not in ("available", "unavailable")):
+            raise ValueError("invalid SDK registered fixture inventory row")
+        seen.add(row["reference"])
+    return inputs
+
+
+def validate_execution_limit_fixture_audit(
+    limit: dict[str, Any], fixture_inputs: list[dict[str, Any]] | None, *, check_current: bool = True,
+) -> None:
+    """Verify physical source access separately from scientific eligibility."""
+    from .public_submission import read_bounded_regular_file
+
+    if "input_support_audit" not in limit and not fixture_inputs:
+        return  # A recorded unversioned Setup has no registered-file snapshot.
+    audit = limit.get("input_support_audit")
+    if not isinstance(audit, dict) or set(audit) != {"mode", "fixture_references"}:
+        raise ValueError("input_support_audit must name the file audit mode and exact registered references")
+    mode = audit["mode"]
+    if mode not in ("missing_fixture_files", "insufficient_eligible_support"):
+        raise ValueError("invalid input-support file audit mode")
+    refs = audit["fixture_references"]
+    if (not isinstance(refs, list) or not 0 < len(refs) <= 40
+            or any(not isinstance(ref, str) or not ref for ref in refs) or len(refs) != len(set(refs))):
+        raise ValueError("input-support audit references must be unique nonempty strings")
+    indexed = {row["reference"]: row for row in (fixture_inputs or [])}
+    if any(ref not in indexed for ref in refs):
+        raise ValueError("input-support audit cites a reference outside the SDK fixture inventory")
+    if not check_current:
+        return
+    contradicted = []
+    for ref in refs:
+        row = indexed[ref]
+        path, size, digest = Path(row["path"]), row["size"], row["sha256"]
+        try:
+            raw = read_bounded_regular_file(path, size)
+            available = len(raw) == size and hashlib.sha256(raw).hexdigest() == digest
+        except (OSError, ValueError):
+            available = False
+        if mode == "missing_fixture_files" and available:
+            contradicted.append(ref)
+        if mode == "insufficient_eligible_support" and not available:
+            raise ValueError(f"registered fixture was not available for the eligibility audit: {ref}")
+    if contradicted:
+        raise FixtureAvailabilityConflict(contradicted)
+
 def read_execution_limit_handoff(
     result: NativeGoalResult, handoff_path: Path, *, invocation_id: str,
     frozen_objective_sha256: str, workspace_path: Path,
+    fixture_inputs: list[dict[str, Any]] | None = None,
+    check_fixture_availability: bool = True,
 ) -> dict[str, Any] | None:
     """Validate authored input limits, never infer a limitation from public prose.
 
@@ -552,16 +663,28 @@ def read_execution_limit_handoff(
         if set(authored) != {"execution_limit"}:
             raise ValueError("execution_limit cannot be mixed with Findings or other handoffs")
         limit = authored["execution_limit"]
+        if not isinstance(limit, dict):
+            raise ValueError("execution_limit requires an object")
         fields = {"kind", "invocation_id", "frozen_objective_sha256", "reason", "checked_alternatives",
                   "unexecuted_test", "required_dependency", "evidence"}
-        if not isinstance(limit, dict) or set(limit) != fields:
+        if limit.get("kind") == "authorization_pending":
+            fields |= {"authorization_clause", "deliverable_clause"}
+        elif "input_support_audit" in limit:
+            fields.add("input_support_audit")
+        if set(limit) != fields:
             raise ValueError("execution_limit requires the exact SDK input-limit schema")
-        if (limit["kind"] != "input_support_unavailable" or limit["invocation_id"] != invocation_id
+        if (limit["kind"] not in {"input_support_unavailable", "authorization_pending"}
+                or limit["invocation_id"] != invocation_id
                 or limit["frozen_objective_sha256"] != frozen_objective_sha256):
             raise ValueError("execution_limit kind, invocation or frozen objective does not match")
         for key in ("reason", "unexecuted_test", "required_dependency"):
             if not isinstance(limit[key], str) or not 0 < len(limit[key].strip()) <= 12_000:
                 raise ValueError(f"execution_limit.{key} requires bounded nonempty text")
+        if limit["kind"] == "authorization_pending":
+            for key in ("authorization_clause", "deliverable_clause"):
+                if (not isinstance(limit[key], str)
+                        or not 20 <= len(limit[key].strip()) <= 4000):
+                    raise ValueError(f"execution_limit.{key} requires an exact reviewed-plan clause")
         alternatives = limit["checked_alternatives"]
         if (not isinstance(alternatives, list) or not 0 < len(alternatives) <= 32
                 or any(not isinstance(row, str) or not 0 < len(row.strip()) <= 4000 for row in alternatives)):
@@ -587,8 +710,14 @@ def read_execution_limit_handoff(
             if not isinstance(row["sha256"], str) or hashlib.sha256(data).hexdigest() != row["sha256"]:
                 raise ValueError("execution-limit evidence SHA-256 does not match existing source bytes")
             seen.add(row["path"])
+        if limit["kind"] == "input_support_unavailable":
+            validate_execution_limit_fixture_audit(limit, fixture_inputs, check_current=check_fixture_availability)
         return limit
-    except (OSError, UnicodeError, ValueError, TypeError) as exc:
+    except FixtureAvailabilityConflict as exc:
+        raise NativeGoalFixtureAvailabilityConflict(
+            result.thread_id, exc, hashlib.sha256(raw).hexdigest(),
+        ) from exc
+    except (OSError, UnicodeError, ValueError, TypeError, KeyError) as exc:
         raise NativeGoalDeliveryError(result.thread_id, "execution_limit: " + str(exc)) from exc
 
 

@@ -95,8 +95,44 @@ def restore_operator_guidance(state: dict[str, Any], cycle: Path) -> dict[str, A
     return state
 
 
+def consume_resume_repairs(cycle: Path, state: dict[str, Any]) -> str | None:
+    """Run the same evidence-bound repair consumers for either execution owner."""
+    from .operator_completed_delivery import consume_completed_delivery
+    from .operator_technical_recovery import consume_technical_recovery
+    from .supervisor_fixture_conflict_recovery import consume_fixture_conflict
+    from .supervisor_frontier_recovery import consume_frontier_reentry
+    from .supervisor_json_array_recovery import consume_json_array_reentry
+    from .supervisor_lineage_recovery import consume_lineage_reentry
+    from .supervisor_qualification_reentry import consume_qualification_reply_reentry
+    from .supervisor_reporter_input_recovery import require_reporter_input_reentry
+
+    require_reporter_input_reentry(cycle, state)
+    consume_fixture_conflict(cycle, state)
+    json_array = consume_json_array_reentry(cycle, state)
+    consume_completed_delivery(cycle, state)
+    consume_technical_recovery(cycle, state)
+    consume_frontier_reentry(cycle, state)
+    consume_qualification_reply_reentry(cycle, state)
+    if consume_lineage_reentry(cycle, state):
+        return "lineage"
+    return "json_array" if json_array else None
+
+
 def prepare_resume_recovery(state: dict[str, Any], cycle: Path) -> dict[str, Any]:
     """Mark explicit Resume while retaining original error/source/Goal metadata."""
+    from .supervisor_repair_receipts import EXECUTION_LIMIT_PROTOCOL_VALIDATOR, inspect_repair_receipt
+    try:
+        receipt = inspect_repair_receipt(cycle, state)
+    except (OSError, ValueError, TypeError, KeyError):
+        receipt = None
+    if receipt is not None and receipt.get("validator") == EXECUTION_LIMIT_PROTOCOL_VALIDATOR:
+        proof = json.loads(receipt.get("tests") or "{}")
+        if proof.get("resume_preparation") == "technical_rescan_new_goal":
+            state["supervisor_technical_rescan_reentry"] = {
+                "origin_invocation_id": proof["origin_invocation_id"],
+                "thread_id": proof["blocked_thread_id"],
+                "receipt_sha256": state["supervisor_repair_receipt"]["sha256"],
+            }
     recovery = dict(state.get("recovery") or {})
     recovery.update(action="resume", resumed_at=now(), allow_thread_fallback=True)
     state["recovery"] = recovery

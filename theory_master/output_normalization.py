@@ -173,6 +173,58 @@ def _repair_delimiters(text: str) -> tuple[str, list[dict[str, Any]], bool]:
     return "".join(output), repairs, False
 
 
+def _close_array_before_root_field(text: str, schema: Mapping[str, Any] | None) -> tuple[str, dict[str, Any] | None]:
+    """Insert only a missing array closer before an otherwise illegal known root key."""
+    expected = _schema_top_keys(schema)
+    if not expected:
+        return text, None
+    stack: list[str] = []
+    quoted = escaped = False
+    choices: list[tuple[str, dict[str, Any]]] = []
+    decoder = json.JSONDecoder()
+    for offset, char in enumerate(text):
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+            continue
+        if char == '"':
+            quoted = True
+        elif char in "{[":
+            stack.append("}" if char == "{" else "]")
+        elif char in "}]":
+            if not stack or stack[-1] != char:
+                break
+            stack.pop()
+        elif char == "," and stack == ["}", "]"]:
+            tail = text[offset + 1:].lstrip()
+            try:
+                key, end = decoder.raw_decode(tail)
+            except ValueError:
+                continue
+            if not isinstance(key, str) or key not in expected or not tail[end:].lstrip().startswith(":"):
+                continue
+            repaired = text[:offset] + "]" + text[offset:]
+            try:
+                def unique_pairs(pairs):
+                    result = {}
+                    for name, item in pairs:
+                        if name in result:
+                            raise ValueError("ambiguous duplicate object key")
+                        result[name] = item
+                    return result
+                value = json.loads(repaired, object_pairs_hook=unique_pairs)
+            except ValueError:
+                continue
+            if isinstance(value, dict) and key in value:
+                choices.append((repaired, {"kind": "close_array_before_root_field",
+                                          "offset": offset, "field": key, "token": "]"}))
+    return choices[0] if len(choices) == 1 else (text, None)
+
+
 def _schema_top_keys(schema: Mapping[str, Any] | None) -> set[str]:
     return {str(key) for key in schema} if isinstance(schema, Mapping) else set()
 
@@ -263,6 +315,7 @@ def normalize_agent_output(raw_text: str, schema: Mapping[str, Any] | None = Non
     attempted_escape_repair = False
     attempted_trailing_commas = False
     attempted_delimiters = False
+    attempted_root_array = False
     parser_edit_count = 0
 
     for _ in range(8):
@@ -302,6 +355,14 @@ def normalize_agent_output(raw_text: str, schema: Mapping[str, Any] | None = Non
             if count:
                 working = trimmed
                 repairs.append({"kind": "remove_trailing_commas", "count": count})
+                continue
+
+        if not attempted_root_array:
+            attempted_root_array = True
+            corrected, repair = _close_array_before_root_field(working, schema)
+            if repair is not None:
+                working = corrected
+                repairs.append(repair)
                 continue
 
         if not attempted_delimiters:

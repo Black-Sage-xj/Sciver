@@ -12,12 +12,16 @@ import threading
 import time
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from .backend_config import ACCOUNT_PROVIDERS, DEFAULT_ROUTES, RoleRoute
 from .execution_policy import PROCESS_CONTROL_GUARD, REPO_GUARD, make_approval_decision
+from .prequalification_holdout import GUARDED_ROLES, thread_profile
 from .role_registry import WRITE_ROLES
 from .skills import developer_instructions, turn_input
+
+if TYPE_CHECKING:
+    from .retained_goal_quota import RetainedGoalHome
 
 
 def _codex_home() -> Path:
@@ -47,7 +51,9 @@ class CodexBackend:
     """Thin official-SDK adapter; imports lazily so offline use has no dependency."""
     def __init__(self, cwd: Path, routes: dict[str, RoleRoute] | None = None, *,
                  task_config_path: Path | None = None,
-                 writable_roots: tuple[Path, ...] | None = None):
+                 writable_roots: tuple[Path, ...] | None = None,
+                 retained_goal_home: RetainedGoalHome | None = None,
+                 boot_native_goal: dict | None = None):
         self.cwd = cwd
         # Only Research Chat consumes these account-scoped capabilities. Normal
         # scientific roles retain their existing Cycle-local sandbox policy.
@@ -56,8 +62,13 @@ class CodexBackend:
         ))
         # TheoryMaster owns one stable Codex runtime. Account switching changes
         # only runtime_home/auth.json via the account selector, never config/skills.
-        active_codex_home = _codex_home()
-        os.environ["CODEX_HOME"] = str(active_codex_home)
+        self.retained_goal_home = retained_goal_home
+        self.boot_native_goal = boot_native_goal
+        self.retained_goal_delivered = False
+        self.goal_account_origin = None
+        self.goal_rollout_origin = None
+        if retained_goal_home is None:
+            os.environ["CODEX_HOME"] = str(_codex_home())
         # Stop native Codex project discovery at the cycle workspace so parent
         # AGENTS.md or repo-scoped skills cannot leak into TheoryMaster agents.
         marker = Path(self.cwd).expanduser().resolve() / ".theory-master-codex-root"
@@ -69,6 +80,7 @@ class CodexBackend:
         self.client_account: str | None = None
         self.threads: dict[str, Any] = {}
         self.thread_accounts: dict[str, str] = {}
+        self._holdout_threads: dict[str, tuple[str, str]] = {}
         # Track first-turn vs continuation for prompt/input compatibility. Role
         # Core and the skill whitelist live in thread developer instructions;
         # optional SKILL.md bodies are no longer eagerly attached on first turn.
@@ -179,7 +191,7 @@ class CodexBackend:
             from .supervisor_intervention import DEFAULT_REASONING_EFFORT, SUPERVISOR_ROLES
             effort = DEFAULT_REASONING_EFFORT if role in SUPERVISOR_ROLES else None
         config: dict[str, Any] = {}
-        if role == "research_chat":
+        if role in {"research_chat", "system_assistant"}:
             config["model_reasoning_summary"] = "auto"
         if provider in ACCOUNT_PROVIDERS:
             # Preserve the historical account-backed default when a route does
@@ -215,9 +227,12 @@ class CodexBackend:
         return max(5.0, value)
     @staticmethod
     def _deepseek_catalog() -> Path:
+        from .codex_accounts import runtime_home
         bundled = Path(__file__).resolve().parent / "deepseek_models.json"
-        home = _codex_home() / "deepseek.models.json"
-        return home if home.is_file() else bundled
+        worker_home = (os.environ.get("THEORYMASTER_WORKER_CODEX_HOME") or "").strip()
+        home = Path(worker_home).expanduser().resolve() if worker_home else runtime_home()
+        catalog = home / "deepseek.models.json"
+        return catalog if catalog.is_file() else bundled
 
     @staticmethod
     def _read_env_file(path: Path) -> dict[str, str]:
@@ -341,34 +356,42 @@ class CodexBackend:
         return tuple(overrides), environment
 
     @staticmethod
-    def _compute_python() -> Path:
+    def _compute_python(task_config_path: Path | None = None) -> Path:
         """Return the interpreter exposed to numerical Agent shells.
 
         TheoryMaster calculations must not depend on whichever lightweight
-        interpreter happened to start the desktop CLI. Operators may override
-        the shared scientific environment explicitly; the default is the
-        established Miniconda environment.
+        interpreter happened to start the desktop CLI. Explicit task config
+        precedes the operator environment; the fallback remains the established
+        Miniconda environment.
         """
-        selected = os.environ.get("THEORYMASTER_COMPUTE_PYTHON", "").strip()
-        path = Path(selected).expanduser() if selected else Path.home() / "miniconda3" / "bin" / "python"
-        if not path.is_file() or not os.access(path, os.X_OK):
-            raise RuntimeError(
-                "TheoryMaster compute interpreter is unavailable: "
-                f"{path}. Set THEORYMASTER_COMPUTE_PYTHON to an executable scientific Python."
-            )
-        # Resolving a venv bin/python symlink selects its base interpreter and
-        # loses that environment's installed scientific dependencies.
-        return path.absolute()
+        from .compute_environment import resolve_compute_environment
+        return resolve_compute_environment(task_config_path).python
+
+    def _selected_compute_environment(self) -> Any:
+        """Pin one choice for client environment, fresh identities and preflight."""
+        from .compute_environment import resolve_compute_environment
+        selected = getattr(self, "_compute_environment_selection", None)
+        if selected is None:
+            selected = resolve_compute_environment(getattr(self, "task_config_path", None))
+            self._compute_environment_selection = selected
+        return selected
 
     @classmethod
-    def _sdk_environment(cls, routes: dict[str, RoleRoute] | None = None) -> dict[str, str]:
+    def _sdk_environment(cls, routes: dict[str, RoleRoute] | None = None, *,
+                         task_config_path: Path | None = None,
+                         compute_environment: Any | None = None) -> dict[str, str]:
         """Build the environment passed to Codex SDK/app-server.
 
         Preserve the caller's proxy settings for optional providers too.
         Direct access can be unavailable even when a configured proxy works.
         """
         _overrides, provider_env = cls._runtime_config(routes)
-        compute_python = cls._compute_python()
+        if compute_environment is not None:
+            compute_python = compute_environment.python
+        elif task_config_path is not None:
+            compute_python = cls._compute_python(task_config_path)
+        else:
+            compute_python = cls._compute_python()
         provider_env["THEORYMASTER_COMPUTE_PYTHON"] = str(compute_python)
         provider_env["PYTHON"] = str(compute_python)
         provider_env["PATH"] = f"{compute_python.parent}:{os.environ.get('PATH', '')}"
@@ -378,6 +401,8 @@ class CodexBackend:
         old_client = getattr(self, "client", None)
         self.client = None
         self.client_account = None
+        self.goal_account_origin = None
+        self.goal_rollout_origin = None
         self.threads = getattr(self, "threads", {})
         self.thread_accounts = getattr(self, "thread_accounts", {})
         self._new_thread_ids = getattr(self, "_new_thread_ids", set())
@@ -401,6 +426,10 @@ class CodexBackend:
         )
         from .quota_provider_fallback import codex_quota_states
 
+        if getattr(self, "retained_goal_home", None) is not None:
+            self.reset_client_for_provider_change()
+            self.retained_goal_home = None  # New Cycle has the normal account policy.
+            os.environ["CODEX_HOME"] = str(_codex_home())
         self._cycle_provider_fallback = None
         if not any(route.provider in ACCOUNT_PROVIDERS for route in preferred_routes.values()):
             self._cycle_selected_account = None
@@ -488,15 +517,17 @@ class CodexBackend:
         except ImportError as exc:
             raise RuntimeError("Codex SDK unavailable; install `.[sdk]`") from exc
         if self.client is None:
+            compute_environment = self._selected_compute_environment()
             self._verify_provider_runtime()
             self._run_network_guard("theorymaster-startup" if not self._network_checked else "theorymaster-client-rebuild", required=True)
             routes = self.routes or DEFAULT_ROUTES
             account_backed = any(route.provider in ACCOUNT_PROVIDERS for route in routes.values())
-            if any(route.provider == "CodexHTTPS" for route in routes.values()):
+            retained = getattr(self, "retained_goal_home", None)
+            if retained is None and any(route.provider == "CodexHTTPS" for route in routes.values()):
                 self._ensure_openai_https_provider_registered()
             overrides, _provider_env = self._runtime_config(self.routes)
-            environment = self._sdk_environment(self.routes)
-            if (set(routes) == {"research_chat"}
+            environment = self._sdk_environment(self.routes, compute_environment=compute_environment)
+            if (set(routes) in ({"research_chat"}, {"system_assistant"})
                     or os.environ.get("THEORYMASTER_CHAT_SANDBOX") == "1"):
                 # Nested literature SDK/CLI processes need temporary IPC/files,
                 # while the chat sandbox deliberately excludes global /tmp.
@@ -508,18 +539,30 @@ class CodexBackend:
                 environment["TMPDIR"] = str(temp_root)
                 environment["THEORYMASTER_CHAT_SANDBOX"] = "1"
             pinned = (os.environ.get("THEORYMASTER_WORKER_PINNED_ACCOUNT") or "").strip()
-            if account_backed and pinned:
+            if retained is not None:
+                if not account_backed or pinned or os.environ.get("THEORYMASTER_WORKER_CODEX_HOME"):
+                    raise RuntimeError("Retained single-task quota launch lost its Codex route")
+                retained.verify_auth()
+                environment["CODEX_HOME"] = str(retained.home)
+                environment["CODEX_SQLITE_HOME"] = str(retained.sqlite_home)
+                overrides += ('cli_auth_credentials_store="file"',
+                              "sqlite_home=" + json.dumps(str(retained.sqlite_home)))
+                self.client_account = retained.account
+                self.client = Codex(CodexConfig(config_overrides=overrides, env=environment, cwd=str(self.cwd)))
+            elif account_backed and pinned:
                 # Private Worker CODEX_HOME permanently resolves to this identity;
                 # global account selection is unrelated and must not be changed.
                 self.client_account = pinned
                 self.client = Codex(CodexConfig(config_overrides=overrides, env=environment, cwd=str(self.cwd)))
             elif account_backed:
                 from .codex_accounts import account_switch_lock, selected_account
+                from .retained_goal_quota import capture_goal_account_origin
                 # Freeze selector provenance and app-server creation under the
                 # same host-wide lock used by account switching. This prevents
                 # a second Task from rotating auth between those two operations.
                 with account_switch_lock():
                     self.client_account = selected_account()
+                    self.goal_account_origin = capture_goal_account_origin(self.client_account, environment)
                     self.client = Codex(CodexConfig(config_overrides=overrides, env=environment, cwd=str(self.cwd)))
             else:
                 self.client_account = None
@@ -543,12 +586,17 @@ class CodexBackend:
         before Workflow allocates a real Cycle, so a lazy-import failure cannot
         leave an apparently started Cycle behind.
         """
-        self._verify_provider_runtime()
-        routes = self.routes or DEFAULT_ROUTES
-        original_cwd, original_cycle_id, original_collector = self.cwd, self.cycle_id, self.collector
         prior_client = self.client
         if prior_client is not None:
             raise RuntimeError("Codex runtime preflight requires a fresh backend client")
+        from .compute_environment import probe_compute_environment, record_compute_preflight
+        selection = self._selected_compute_environment()
+        result = probe_compute_environment(selection)
+        receipt = record_compute_preflight(self._quota_task_root, result)
+        self.compute_environment_preflight = {**result, "receipt_path": str(receipt)}
+        self._verify_provider_runtime()
+        routes = self.routes or DEFAULT_ROUTES
+        original_cwd, original_cycle_id, original_collector = self.cwd, self.cycle_id, self.collector
         try:
             with tempfile.TemporaryDirectory(prefix="tm-runtime-preflight-") as root:
                 workspace = Path(root) / "workspace"
@@ -578,6 +626,7 @@ class CodexBackend:
             self.client_account = None
             self._new_thread_ids.clear()
             self.thread_accounts.clear()
+            getattr(self, "_holdout_threads", {}).clear()
             self.cwd, self.cycle_id, self.collector = original_cwd, original_cycle_id, original_collector
 
     def _investigator_navigation_rule(self) -> str:
@@ -597,9 +646,44 @@ class CodexBackend:
     @staticmethod
     def _thread_sandbox(role: str):
         from openai_codex import Sandbox  # type: ignore
-        return Sandbox.workspace_write if role in WRITE_ROLES or role == "research_chat" else Sandbox.read_only
+        return Sandbox.workspace_write if role in WRITE_ROLES or role in {"research_chat", "system_assistant"} else Sandbox.read_only
+
+    def _holdout_profile(self, role: str) -> tuple[str, dict[str, Any]] | None:
+        if role not in GUARDED_ROLES:
+            return None
+        try:
+            config_path = getattr(self, "task_config_path", None)
+            profile = thread_profile(config_path, role, workspace=Path(self.cwd)) if config_path is not None else None
+        except FileNotFoundError as exc:
+            raise RuntimeError("Task configuration required for qualification is missing") from exc
+        if profile:
+            self._holdout_policy_armed = True
+        elif getattr(self, "_holdout_policy_armed", False):
+            raise RuntimeError("Active prequalification holdout disappeared from the task configuration")
+        return profile
+
+    def _checked_holdout_thread(self, role: str, thread_id: str | None,
+                                profile: tuple[str, dict[str, Any]] | None) -> str | None:
+        if profile and getattr(self, "_holdout_threads", {}).get(thread_id) != (role, profile[0]):
+            # Applying permissions to a persisted thread cannot retract past data.
+            return None
+        return thread_id
+
+    def qualification_thread(self, role: str, thread_id: str | None) -> str | None:
+        """Filter unverified history before preparing a continuation prompt."""
+        if thread_id is None:
+            return None
+        return self._checked_holdout_thread(role, thread_id, self._holdout_profile(role))
 
     def ensure_thread(self, role: str, thread_id: str | None, model: str, provider: str) -> str:
+        from .boot_native_goal import pending_boot_native_goal
+
+        if pin := pending_boot_native_goal(self):
+            binding = pin["account_binding"]
+            if (role != "investigator" or thread_id != pin["thread_id"]
+                    or provider != binding["provider"] or model != binding["model"]):
+                from .native_goal_recovery import NativeGoalRecoveryConflict
+                raise NativeGoalRecoveryConflict("Boot Resume must open the original Investigator thread and route")
         # Keep the thread lifecycle testable with a minimal SDK facade.  Actual
         # managed runs call preflight_runtime(), which still requires the full
         # ApprovalMode API before any Cycle is created.
@@ -609,13 +693,12 @@ class CodexBackend:
             deny_all = ApprovalMode.deny_all
         except (ImportError, AttributeError):
             deny_all = None
+        profile = self._holdout_profile(role)
+        thread_id = self._checked_holdout_thread(role, thread_id, profile)
         client = self._ensure_client()
         thread = self.threads.get(thread_id or "")
         newly_attached = thread is None
         if thread is None:
-            sandbox = (Sandbox.read_only if role == "investigator" and
-                       bool(getattr(self, "_preservation_read_only", False))
-                       else self._thread_sandbox(role))
             thread_cwd = Path(self.cwd)
             if role == "literature":
                 thread_cwd = thread_cwd / "literature"
@@ -625,7 +708,13 @@ class CodexBackend:
             effective_config = self._thread_config(role, provider)
             extra: dict[str, Any] = {"config": effective_config}
             if not thread_id:
-                compute_python = self._compute_python()
+                selected = getattr(self, "_compute_environment_selection", None)
+                if selected is not None:
+                    compute_python = selected.python
+                elif self.task_config_path is not None:
+                    compute_python = self._compute_python(self.task_config_path)
+                else:
+                    compute_python = self._compute_python()
                 compute_rule = (
                     f"Scientific Python is fixed for this TheoryMaster task: {compute_python}. "
                     "Use this interpreter for every numerical script and package check; it is also first on PATH. "
@@ -643,33 +732,36 @@ class CodexBackend:
             # Never request an approval; sandbox boundaries remain in force.
             if deny_all is not None:
                 extra["approval_mode"] = deny_all
-            if thread_id:
+            model_provider = ("openai_https" if provider == "CodexHTTPS"
+                              else None if provider in ACCOUNT_PROVIDERS else provider)
+            if profile:
+                from .codex_sdk_compat import open_holdout_thread, require_holdout_runtime
+
+                name, permissions = profile
+                require_holdout_runtime(client)
+                thread = open_holdout_thread(
+                    client, profile_name=name, config={**effective_config, **permissions},
+                    model=model, model_provider=model_provider, thread_id=thread_id,
+                    cwd=str(thread_cwd), developer_instructions=extra.get("developer_instructions"),
+                )
+                self._holdout_threads[thread.id] = (role, name)
+            elif thread_id:
                 # Resumed Codex threads otherwise silently retain their old
                 # persisted model, even when the operator intentionally uses
                 # a lower-cost Investigator route for this recovery episode.
                 # SDK thread_resume must pin BOTH model and provider; omitting
                 # model_provider can silently use api.openai.com on a resumed
                 # API-backed thread, bypassing the configured auth.
-                resumed_provider = ("openai_https" if provider == "CodexHTTPS"
-                                    else None if provider in ACCOUNT_PROVIDERS else provider)
                 thread = client.thread_resume(
-                    thread_id, model=model, model_provider=resumed_provider, **extra
+                    thread_id, model=model, model_provider=model_provider, **extra
                 )
             else:
-                start_args: dict[str, Any] = {
-                    "model": model,
-                    "sandbox": sandbox,
-                    "cwd": str(thread_cwd),
-                    **extra,
-                }
-                if provider in ACCOUNT_PROVIDERS:
-                    # Account-backed Codex uses the user's existing ChatGPT login.
-                    # CodexHTTPS is an explicit HTTPS-only transport for proxy
-                    # environments where long WebSocket streams are unstable.
-                    start_args["model_provider"] = "openai_https" if provider == "CodexHTTPS" else None
-                else:
-                    start_args["model_provider"] = provider
-                thread = client.thread_start(**start_args)
+                sandbox = (Sandbox.read_only if role == "investigator" and
+                           bool(getattr(self, "_preservation_read_only", False))
+                           else self._thread_sandbox(role))
+                thread = client.thread_start(model=model, model_provider=model_provider,
+                                             sandbox=sandbox, cwd=str(thread_cwd), **extra)
+            if not thread_id:
                 if self.collector is not None:
                     record_input = getattr(self.collector, "on_agent_input", None)
                     if callable(record_input):
@@ -688,6 +780,7 @@ class CodexBackend:
                             "native_compaction_enabled": "model_auto_compact_token_limit" in effective_config,
                             "compact_threshold_tokens": effective_config.get("model_auto_compact_token_limit"),
                             "compact_scope": effective_config.get("model_auto_compact_token_limit_scope"),
+                            **({"prequalification_holdout_profile": profile[0]} if profile else {}),
                             "native_functions_excluded": False},
                            role=role, thread_id=identifier)
                 except Exception:
@@ -714,11 +807,26 @@ class CodexBackend:
         """
         if thread_id not in self.threads:
             return
-        from openai_codex import ApprovalMode  # type: ignore
-        resumed = self._ensure_client().thread_resume(
-            thread_id, model=route.model,
-            config=self._thread_config(role, route.provider),
-            approval_mode=ApprovalMode.deny_all)
+        profile = self._holdout_profile(role)
+        if profile:
+            if not self._checked_holdout_thread(role, thread_id, profile):
+                raise RuntimeError("Prequalification holdout requires a fresh thread for the current policy")
+            from .codex_sdk_compat import open_holdout_thread, require_holdout_runtime
+
+            name, permissions = profile
+            client = self._ensure_client()
+            require_holdout_runtime(client)
+            resumed = open_holdout_thread(
+                client, profile_name=name, thread_id=thread_id, model=route.model,
+                model_provider=("openai_https" if route.provider == "CodexHTTPS"
+                                else None if route.provider in ACCOUNT_PROVIDERS else route.provider),
+                config={**self._thread_config(role, route.provider), **permissions},
+            )
+        else:
+            from openai_codex import ApprovalMode  # type: ignore
+            resumed = self._ensure_client().thread_resume(
+                thread_id, model=route.model,
+                config=self._thread_config(role, route.provider), approval_mode=ApprovalMode.deny_all)
         if getattr(resumed, "id", thread_id) != thread_id:
             raise RuntimeError("provider changed the thread identity during model reconfiguration")
         self.threads[thread_id] = resumed
@@ -729,6 +837,7 @@ class CodexBackend:
             self.threads.pop(thread_id, None)
             self.thread_accounts.pop(thread_id, None)
             self._new_thread_ids.discard(thread_id)
+            getattr(self, "_holdout_threads", {}).pop(thread_id, None)
 
     def close(self) -> None:
         """Close this adapter's local app-server while leaving remote thread IDs resumable."""
@@ -737,6 +846,7 @@ class CodexBackend:
         self.threads.clear()
         self.thread_accounts.clear()
         self._new_thread_ids.clear()
+        getattr(self, "_holdout_threads", {}).clear()
         if client is not None:
             try:
                 client.close()
@@ -820,7 +930,13 @@ class CodexBackend:
                input_images: list[str] | None = None,
                request_user_input: Any | None = None,
                usage_guard: Any | None = None, control_check: Any | None = None) -> tuple[str, str]:
+        from .boot_native_goal import pending_boot_native_goal
+
+        if pending_boot_native_goal(self) is not None:
+            from .native_goal_recovery import NativeGoalRecoveryConflict
+            raise NativeGoalRecoveryConflict("Boot Resume must resolve the original Native Goal before another model call")
         from .codex_turn_transport import CodexTurnTransport
+        thread_id = self.qualification_thread(role, thread_id)
         include_skills = thread_id is None or thread_id in self._new_thread_ids
         payload = turn_input(role, prompt, include_skills=include_skills, task_config_path=self.task_config_path)
         if input_images:

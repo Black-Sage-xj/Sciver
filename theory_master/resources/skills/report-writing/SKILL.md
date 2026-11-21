@@ -134,6 +134,10 @@ do not fabricate or insert decorative figures or empty tables to fill a slot.
   record actually supports a statistical claim; reserve `prove` for an established
   proof, not finite numerical examples. Do not manufacture missing comparisons,
   tests, numbers, citations, or causal/novelty claims to make prose more concrete.
+- Keep the tested prediction distinct from its broader interpretation. Preserve
+  its metric, denominator, weighting and contrast when material. Refuting a local
+  prediction alone does not establish relative contributions or identify a
+  mechanism; report a broader conclusion only with its supplied sufficient basis.
 - Preserve calibrated qualifiers such as `consistent with`, conditional model
   assumptions, the tested domain, and the difference between current results and
   re-analysis of historical data. Never silently strengthen or weaken an already

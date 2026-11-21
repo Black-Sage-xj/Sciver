@@ -192,6 +192,24 @@ def _interactive_terminal() -> bool:
     return bool(sys.stdin.isatty() and sys.stdout.isatty())
 
 
+def _prepare_protected_cli(spec: TaskSpec, *, check_scheduler: bool = False) -> None:
+    from .operator_host_binding import protected_launch_binding, verify_protected_scheduler
+
+    config_path = getattr(spec, "config_path", None)
+    binding = protected_launch_binding(config_path) if config_path is not None else None
+    if binding is None:
+        return
+    environment = binding.environment(protected=True)
+    if binding.sdk_root != Path(__file__).resolve().parents[1]:
+        executable = sys.executable
+        os.execve(executable, [executable, "-P", "-m", "theory_master", *sys.argv[1:]], environment)
+    if check_scheduler:
+        verify_protected_scheduler(spec.research_root, binding)
+    for key in ("PATH", "PYTHONSAFEPATH"):
+        if key in environment:
+            os.environ[key] = environment[key]
+
+
 def cycle_command(args) -> int:
     """Inspect Cycle provenance or execute a verified checkpoint in isolation."""
     from .specification import list_cycle_dirs, cycle_number
@@ -204,6 +222,7 @@ def cycle_command(args) -> int:
             raise ValueError(f"logical Cycle {args.cycle_number} resolves to {len(cycles)} attempts; refusing ambiguous selection")
         cycle = cycles[0]
         if args.cycle_action == "rerun":
+            _prepare_protected_cli(spec)
             from .cycle_replay import replay_cycle
             outcome = replay_cycle(spec, cycle, args.from_stage, dry_run=bool(getattr(args, "dry_run", False)))
             print(json.dumps(outcome, ensure_ascii=False, indent=2))
@@ -291,7 +310,16 @@ def main() -> int:
     repair_p = sub.add_parser("repair-delivery", help="rebuild delivery identity in an existing supported Cycle")
     repair_p.add_argument("master_id")
     repair_p.add_argument("--cycle", type=int)
-    repair_p.add_argument("--reassess", action="store_true", help="explicitly invoke Goal Judge; no new scientific Cycle")
+    repair_mode = repair_p.add_mutually_exclusive_group()
+    repair_mode.add_argument("--reassess", action="store_true", help="explicitly invoke Goal Judge; no new scientific Cycle")
+    repair_mode.add_argument("--attach-public-submission", type=Path,
+                             help="register an existing operator-supplied Python submission")
+    repair_p.add_argument("--verification-receipt", type=Path, help="attach an optional JSON verification receipt")
+    publish_p = sub.add_parser("publish-delivery", help="preview explicit verified delivery mappings; no Agent or Goal call")
+    publish_p.add_argument("master_id")
+    publish_p.add_argument("--manifest", type=Path, required=True)
+    publish_p.add_argument("--apply", action="store_true", help="publish the validated files and immutable receipt (default: preview only)")
+    repair_p.add_argument("--author-request", type=Path, help="explicit SDK-private public-interface correction request; resumes the original author within its existing allowance")
     cycle_sub = cycle_p.add_subparsers(dest="cycle_action", required=True)
     for action in ("checkpoints", "attempts"):
         cp = cycle_sub.add_parser(action)
@@ -411,6 +439,11 @@ def main() -> int:
     account_p = sub.add_parser("codex-account", help="switch Sciver ChatGPT/Codex login identity only")
     account_p.add_argument("action", nargs="?", default="status", choices=["status", "init", "1", "2", "login-1", "login-2"])
     args = parser.parse_args()
+    if args.command == "repair-delivery":
+        if args.attach_public_submission is not None and (args.cycle is None or args.cycle < 1):
+            parser.error("--attach-public-submission requires --cycle with a closed Cycle number")
+        if args.verification_receipt is not None and args.attach_public_submission is None:
+            parser.error("--verification-receipt requires --attach-public-submission")
     if args.command == "skills":
         from .skill_evolution.cli import run as skills_command
         return skills_command(args)
@@ -424,6 +457,8 @@ def main() -> int:
         from .worker_runtime import worker_action, list_workers, start_scheduler, stop_scheduler, schedule_once, scheduler_status
         try:
             spec = spec_from_task(master_id=args.master_id)
+            if args.action in {"start", "tick", "resume"}:
+                _prepare_protected_cli(spec, check_scheduler=args.action in {"start", "tick"})
             if spec.branch_canvas is None:
                 parser.error("task has no shared Canvas; cannot discover branch claims")
             from .notebook import graph_database_path
@@ -507,12 +542,23 @@ def main() -> int:
             return launch_demo_tui()
         try:
             tui_spec = spec_from_tui_identifier(args.master_id, args.root)
+            _prepare_protected_cli(tui_spec)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             parser.error(str(exc))
         if args.direct:
             return attach_tui(tui_spec)
         from theory_master.runtime_manager import reconnect_tui
         reconnect_tui(tui_spec, focus=True)
+        return 0
+    if args.command == "publish-delivery":
+        from .delivery_publish import publication_spec, publish_delivery
+        from .goal_terminal import GoalSealedError
+        try:
+            manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+            result = publish_delivery(publication_spec(manifest, args.master_id), manifest, dry_run=not args.apply)
+        except (OSError, ValueError, RuntimeError, GoalSealedError) as exc:
+            parser.error(str(exc))
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     try:
         if args.command == "resume":
@@ -525,8 +571,23 @@ def main() -> int:
                     spec = spec_from_resume_identifier(args.identifier)
         else:
             spec = spec_from_task(master_id=getattr(args, "master_id", None))
+        if args.command in {"run", "resume"} or (
+            args.command == "repair-delivery" and args.reassess
+        ):
+            _prepare_protected_cli(spec)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
+    if args.command == "repair-delivery" and args.attach_public_submission is not None:
+        from .goal_terminal import GoalSealedError
+        from .operator_public_submission import attach_public_submission
+
+        try:
+            result = attach_public_submission(spec, cycle_id=args.cycle, source=args.attach_public_submission,
+                                              verification_receipt=args.verification_receipt)
+        except (OSError, ValueError, GoalSealedError) as exc:
+            parser.error(str(exc))
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
     if args.command in {"run", "resume", "initialize", "cancel", "reset-research-lead"}:
         create_load_snapshot(spec, reason=args.command)
     if args.command in {"run", "resume"}:
@@ -557,9 +618,10 @@ def main() -> int:
     if args.command == "repair-delivery":
         from .delivery_repair import repair_delivery
         from .goal_terminal import GoalSealedError
-        backend = CodexBackend(spec.research_root, routes=routes) if args.reassess else FakeBackend()
+        backend = CodexBackend(spec.research_root, routes=routes) if args.reassess or args.author_request else FakeBackend()
         try:
-            result = repair_delivery(Workflow(spec, backend, routes), cycle=args.cycle, reassess=args.reassess)
+            result = repair_delivery(Workflow(spec, backend, routes), cycle=args.cycle, reassess=args.reassess,
+                                     author_request=args.author_request)
         except (OSError, ValueError, GoalSealedError) as exc:
             parser.error(str(exc))
         print(json.dumps(result, ensure_ascii=False, indent=2))

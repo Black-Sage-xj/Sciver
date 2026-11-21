@@ -43,7 +43,7 @@ HARD_CODES = frozenset({
     "investigator_native_goal_unexpected_blocked",
     "lead_literature_unavailable",
     "contract_repair_failed",
-    "public_submission_incomplete",
+    "public_submission_incomplete", "no_new_science",
 })
 MAX_QUALIFICATION_RETRIES = 1
 
@@ -124,6 +124,9 @@ def review_supervisor_attention(
     if code in HARD_CODES or (code == "no_qualified_candidate" and not allowed_retry) or (code == "investigator_native_goal_blocked" and not blocked_science):
         result = {
             "action": "hold", "reason": (
+                "Lead identified a delivery-only or unavailable-material requirement. "
+                "Retain the unlocked state for delivery repair or an input change; do not invent science or repair the engine."
+                if code == "no_new_science" else
                 "Unexpected native Goal blocked: no Investigator scientific stop authority; "
                 "retain the checkpoint for operational recovery without preservation."
                 if code == "investigator_native_goal_unexpected_blocked" else

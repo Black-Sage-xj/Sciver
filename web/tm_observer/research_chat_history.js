@@ -99,7 +99,7 @@
           if (action === 'delete' && !confirm('将此会话移到回收站？可以在回收站恢复。')) return;
           try {
             await post('/api/research-chat/' + row.id + '/manage',{action});
-            if(row.id === sid && (action === 'delete' || action === 'archive')) { location.assign('/research-chat/?new=1' + (root.dataset.embedded === 'true' ? '&embed=1' : '')); return; }
+            if(row.id === sid && (action === 'delete' || action === 'archive')) { location.assign('/research-chat/?new=1&channel=' + (root.dataset.channel || 'research') + (root.dataset.embedded === 'true' ? '&embed=1' : '')); return; }
             await refresh();
           }
           catch (reason) { if(error) error.textContent=String(reason.message || reason); }
@@ -112,7 +112,7 @@
   async function refresh() {
     const current = ++revision;
     try {
-      const params = new URLSearchParams({q:query?.value || '',task_id:task?.value || '',view:view?.value || 'active'});
+      const params = new URLSearchParams({q:query?.value || '',task_id:task?.value || '',view:view?.value || 'active',channel:root.dataset.channel || 'research'});
       const response=await fetch('/api/research-chat/sessions?' + params,{credentials:'same-origin',cache:'no-store'});
       const data=await response.json();if(!response.ok)throw new Error(data.error || '读取历史失败');
       if(current!==revision)return;history=data.sessions || [];render();
@@ -140,7 +140,8 @@
       }
       if(firstSession && firstTask!==taskId)throw new Error('附件草稿已绑定原项目，请先打开已保存的聊天草稿。');
       if(!firstSession){
-        const created=await post('/api/research-chat/session',taskId
+        const created=await post('/api/research-chat/session',root.dataset.channel === 'system'
+          ? {mode:'system',task_id:taskId || undefined} : taskId
           ? {mode:root.dataset.nextChatMode || 'project',task_id:taskId,skill:root.dataset.nextChatSkill}
           : {mode:'preparation',entry:'exploratory'});
         firstSession=created.session_id;firstTask=taskId;

@@ -1,11 +1,14 @@
-"""Explicit public JSON delivery contracts, independent of scientific grading."""
+"""Explicit public delivery structure, independent of scientific grading."""
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
+import keyword
 import math
 import os
+import re
 import stat
 from pathlib import Path
 from typing import Any
@@ -13,8 +16,12 @@ from typing import Any
 from referencing.exceptions import Unresolvable
 
 SCHEMA = "theory-master/public-submission-contract/v1"
+PYTHON_SCHEMA = "theory-master/public-python-submission-contract/v1"
 MAX_CONTRACT_BYTES = 128 * 1024
 MAX_SUBMISSION_BYTES = 16 * 1024 * 1024
+MAX_PYTHON_BYTES = 1024 * 1024
+_PYTHON_FILENAME = re.compile(r"[^/\\\x00-\x1f]+\.py")
+_SHA256 = re.compile(r"[a-f0-9]{64}")
 
 
 def _reject_constant(value: str) -> None:
@@ -164,6 +171,38 @@ def _validator(schema: dict):
     return Draft202012Validator(schema, registry=registry)
 
 
+def _identifier(value: Any) -> bool:
+    return isinstance(value, str) and value.isidentifier() and not keyword.iskeyword(value)
+
+
+def _contract_structure(value: Any) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("Invalid public submission contract declaration")
+    schema = value.get("schema")
+    if schema == SCHEMA:
+        if (set(value) - {"schema", "json_schema", "selection"}
+                or value.get("selection", "unique_registered_json") != "unique_registered_json"
+                or not isinstance(value.get("json_schema"), dict)):
+            raise ValueError("Invalid public submission contract declaration")
+        return {"schema": SCHEMA, "json_schema": value["json_schema"], "selection": "unique_registered_json"}
+    if schema != PYTHON_SCHEMA or set(value) != {"schema", "filename", "callable", "allowed_imports"}:
+        raise ValueError("Invalid public submission contract declaration")
+    filename, callable_spec, imports = value["filename"], value["callable"], value["allowed_imports"]
+    if (not isinstance(filename, str) or not _PYTHON_FILENAME.fullmatch(filename)
+            or not isinstance(callable_spec, dict) or set(callable_spec) != {"name", "parameters"}
+            or not _identifier(callable_spec["name"])):
+        raise ValueError("Python submission requires a literal .py basename and one callable name")
+    parameters = callable_spec["parameters"]
+    if (not isinstance(parameters, list) or not all(_identifier(name) for name in parameters)
+            or len(set(parameters)) != len(parameters)):
+        raise ValueError("Python submission requires distinct positional parameter names")
+    if (not isinstance(imports, list) or not all(isinstance(name, str) and
+            all(_identifier(part) for part in name.split(".")) for name in imports)
+            or len(set(imports)) != len(imports)):
+        raise ValueError("Python submission requires distinct absolute import names")
+    return {**value, "format": "python", "selection": "unique_registered_python"}
+
+
 def load_submission_contract(spec: Any) -> dict | None:
     """Only an explicit benchmark namespace grants access; never search parents."""
     reference = getattr(spec, "submission_contract_ref", None)
@@ -196,28 +235,28 @@ def load_submission_contract(spec: Any) -> dict | None:
         )
     path = root.joinpath(*relative.parts[1:])
     raw = read_bounded_regular_file(path, MAX_CONTRACT_BYTES)
-    value = strict_json(raw)
-    if (
-        not isinstance(value, dict)
-        or value.get("schema") != SCHEMA
-        or set(value) - {"schema", "json_schema", "selection"}
-        or value.get("selection", "unique_registered_json") != "unique_registered_json"
-        or not isinstance(value.get("json_schema"), dict)
-    ):
-        raise ValueError("Invalid public submission contract declaration")
-    _validator(value["json_schema"])
+    contract = _contract_structure(strict_json(raw))
+    if contract["schema"] == SCHEMA:
+        _validator(contract["json_schema"])
     return {
-        "schema": SCHEMA,
         "reference": reference,
         "path": str(path),
         "sha256": hashlib.sha256(raw).hexdigest(),
-        "json_schema": value["json_schema"],
-        "selection": "unique_registered_json",
+        **contract,
     }
 
 
-def _registered_json_assets(payload: dict) -> list[dict]:
+def _registered_assets(payload: dict, declaration: dict, hashes: dict) -> list[dict]:
+    from .delivery_materials import EXECUTION_RELATION
+
+    python_filename = declaration["filename"] if declaration["schema"] == PYTHON_SCHEMA else None
+    if python_filename is not None and "operator_public_submission" in payload:
+        from .operator_public_submission import checked_operator_asset
+
+        selected = checked_operator_asset(payload["operator_public_submission"], declaration, hashes)
+        return [selected] if selected is not None else []
     assets = {}
+    inputs = set()
     for group in (payload.get("material_index") or {}).get("materials", []):
         states = group.get("evidence_states") or {}
         if not any(
@@ -230,21 +269,31 @@ def _registered_json_assets(payload: dict) -> list[dict]:
             continue
         for asset in group.get("assets") or []:
             name = asset.get("path")
-            if (
-                isinstance(name, str)
-                and Path(name).suffix.lower() == ".json"
-                and asset.get("status") == "available"
-                and asset.get("role") != "input"
-            ):
-                previous = assets.get(name) or {}
-                if (
-                    previous.get("sha256")
-                    and asset.get("sha256")
-                    and previous["sha256"] != asset["sha256"]
-                ):
-                    raise ValueError("Conflicting registered submission content hashes")
-                assets[name] = asset if asset.get("sha256") else previous or asset
-    return [assets[name] for name in sorted(assets)]
+            if not isinstance(name, str) or asset.get("status") != "available":
+                continue
+            if python_filename is None:
+                if Path(name).suffix.lower() != ".json" or asset.get("role") == "input":
+                    continue
+            else:
+                if Path(name).name != python_filename:
+                    continue
+                if asset.get("role") == "input":
+                    inputs.add(name)
+                    continue
+                producer = group.get("producer_invocation") or {}
+                if (group.get("relation") != EXECUTION_RELATION
+                        or group.get("integrity", {}).get("status") != "verified"
+                        or not isinstance(producer, dict) or producer.get("role") != "investigator"
+                        or not isinstance(producer.get("invocation_id"), str) or not producer["invocation_id"]
+                        or not _SHA256.fullmatch(str(group.get("manifest_sha256") or ""))
+                        or not _SHA256.fullmatch(str(asset.get("sha256") or ""))):
+                    continue
+            previous = assets.get(name) or {}
+            if (previous.get("sha256") and asset.get("sha256")
+                    and previous["sha256"] != asset["sha256"]):
+                raise ValueError("Conflicting registered submission content hashes")
+            assets[name] = asset if asset.get("sha256") else previous or asset
+    return [assets[name] for name in sorted(assets.keys() - inputs)]
 
 
 def check_frozen_submission(payload: dict, snapshot: Any) -> dict | None:
@@ -256,50 +305,109 @@ def check_frozen_submission(payload: dict, snapshot: Any) -> dict | None:
     if not contract_path.is_relative_to(snapshot.root):
         raise ValueError("Public submission contract is outside its frozen snapshot")
     contract_raw = read_bounded_regular_file(contract_path, MAX_CONTRACT_BYTES)
-    contract_value = strict_json(contract_raw)
+    contract = {key: value for key, value in declaration.items() if key not in {"reference", "path", "sha256"}}
     if (
         hashlib.sha256(contract_raw).hexdigest() != declaration["sha256"]
-        or not isinstance(contract_value, dict)
-        or contract_value.get("schema") != SCHEMA
-        or contract_value.get("json_schema") != declaration["json_schema"]
+        or _contract_structure(strict_json(contract_raw)) != contract
     ):
         raise ValueError(
             "Public submission contract bytes differ from frozen authority"
         )
-    validator = _validator(declaration["json_schema"])
     manifest = strict_json(
         read_bounded_regular_file(snapshot.manifest_path, MAX_SUBMISSION_BYTES)
     )
     hashes = {
         str(snapshot.root / row["path"]): row["sha256"] for row in manifest["files"]
     }
+    return _check_registered_submission(payload, declaration, hashes, snapshot_root=snapshot.root)
+
+
+def check_current_submission(payload: dict) -> dict | None:
+    """Preview the same schema and registration rule on verified live sources."""
+    declaration = payload.get("submission_contract")
+    if declaration is None:
+        return None
+    hashes = {
+        row["path"]: row["sha256"] for row in payload.get("goal_material_sources", [])
+        if row.get("status") == "available" and row.get("path") and row.get("sha256")
+    }
+    return _check_registered_submission(payload, declaration, hashes)
+
+
+def _python_errors(raw: bytes, declaration: dict) -> list[dict]:
+    try:
+        tree = ast.parse(raw, filename=declaration["filename"], mode="exec")
+    except SyntaxError as error:
+        return [{"line": error.lineno, "message": f"Invalid Python syntax: {error.msg}"[:1000]}]
+    signature = declaration["callable"]
+    name = signature["name"]
+    definitions = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                   and node.name == name]
+    errors = []
+    if len(definitions) != 1 or not isinstance(definitions[0], ast.FunctionDef):
+        errors.append({"message": f"Expected one top-level synchronous function definition named {name}"[:1000]})
+    else:
+        args = definitions[0].args
+        if ([arg.arg for arg in [*args.posonlyargs, *args.args]] != signature["parameters"]
+                or args.defaults or args.vararg or args.kwonlyargs or args.kwarg):
+            expected = ", ".join(signature["parameters"])
+            errors.append({"line": definitions[0].lineno,
+                           "message": f"Expected exact positional signature {name}({expected})"[:1000]})
+    allowed = set(declaration["allowed_imports"])
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            modules = ["." * node.level + (node.module or "")]
+        else:
+            continue
+        for module in modules:
+            parent = module
+            while parent and parent not in allowed:
+                parent = parent.rpartition(".")[0]
+            if not parent or module.startswith("."):
+                errors.append({"line": node.lineno, "message": f"Disallowed explicit Python import: {module}"[:1000]})
+                if len(errors) == 20:
+                    return errors
+    return errors
+
+
+def _check_registered_submission(
+    payload: dict, declaration: dict, hashes: dict, *, snapshot_root: Path | None = None
+) -> dict:
+    python_filename = declaration["filename"] if declaration["schema"] == PYTHON_SCHEMA else None
+    validator = _validator(declaration["json_schema"]) if python_filename is None else None
+    verification = {"verification": "python_ast_structure"} if python_filename is not None else {}
     matches, failures = [], []
-    for asset in _registered_json_assets(payload):
+    for asset in _registered_assets(payload, declaration, hashes):
         path = Path(asset["path"])
         try:
-            if not path.is_relative_to(snapshot.root) or str(path) not in hashes:
+            if snapshot_root is not None and not path.is_relative_to(snapshot_root):
                 raise ValueError("Submission is outside the registered frozen snapshot")
-            raw = read_bounded_regular_file(path, MAX_SUBMISSION_BYTES)
+            if str(path) not in hashes:
+                raise ValueError("Submission is outside the registered frozen snapshot"
+                                 if snapshot_root is not None else "Submission has no verified registered source")
+            raw = read_bounded_regular_file(path, MAX_PYTHON_BYTES if python_filename else MAX_SUBMISSION_BYTES)
             digest = hashlib.sha256(raw).hexdigest()
             if digest != hashes[str(path)] or (
                 asset.get("sha256") and digest != asset["sha256"]
             ):
                 raise ValueError("Registered submission content hash changed")
-            document = strict_json(raw)
-            errors = []
-            for error in validator.iter_errors(document):
-                errors.append(
-                    {
-                        "path": "/" + "/".join(map(str, error.absolute_path)),
-                        "message": error.message[:1000],
-                    }
-                )
-                if len(errors) >= 20:
-                    break
+            if validator is None:
+                errors = _python_errors(raw, declaration)
+            else:
+                document = strict_json(raw)
+                errors = []
+                for error in validator.iter_errors(document):
+                    errors.append({"path": "/" + "/".join(map(str, error.absolute_path)),
+                                   "message": error.message[:1000]})
+                    if len(errors) >= 20:
+                        break
             if errors:
                 failures.append({"path": str(path), "errors": errors})
             else:
-                matches.append({"path": str(path), "sha256": digest})
+                matches.append({"path": str(path), "sha256": digest,
+                                **({"origin": asset["origin"]} if asset.get("origin") else {})})
         except (OSError, ValueError, RecursionError, Unresolvable) as exc:
             failures.append(
                 {"path": str(path), "errors": [{"message": str(exc)[:1000]}]}
@@ -309,6 +417,7 @@ def check_frozen_submission(payload: dict, snapshot: Any) -> dict | None:
             "status": "valid",
             "contract_sha256": declaration["sha256"],
             "submission": matches[0],
+            **verification,
         }
     return {
         "status": "invalid",
@@ -321,5 +430,7 @@ def check_frozen_submission(payload: dict, snapshot: Any) -> dict | None:
         "contract": declaration,
         "matching_artifacts": matches,
         "artifact_errors": failures[:50],
-        "reason": "Exactly one formally registered, immutable JSON artifact must satisfy the explicit public submission schema.",
+        "reason": (f"Exactly one formally registered, immutable {python_filename} artifact must satisfy the declared Python structure."
+                   if python_filename else "Exactly one formally registered, immutable JSON artifact must satisfy the explicit public submission schema."),
+        **verification,
     }

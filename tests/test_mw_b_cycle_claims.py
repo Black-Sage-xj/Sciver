@@ -182,9 +182,9 @@ def test_preferred_does_not_order_frontier_snapshot(tmp_path):
         for n in (3, 1, 2):
             store.add_hypothesis(f"H-000{n}", title=f"H {n}")
         store.set_frontiers_batch([
-            {"hypothesis_id": "H-0003", "status": "active", "reason": "preferred", "preferred": True},
-            {"hypothesis_id": "H-0001", "status": "active", "reason": "x"},
-            {"hypothesis_id": "H-0002", "status": "active", "reason": "x"},
+            {"hypothesis_id": "H-0003", "status": "active", "reason": "preferred", "preferred": True, "remaining_question": "Does the fixture H satisfy its remaining scientific requirement?"},
+            {"hypothesis_id": "H-0001", "status": "active", "reason": "x", "remaining_question": "Does the fixture H satisfy its remaining scientific requirement?"},
+            {"hypothesis_id": "H-0002", "status": "active", "reason": "x", "remaining_question": "Does the fixture H satisfy its remaining scientific requirement?"},
         ])
     rows = frontier_snapshot(db)[1]
     assert [r["hypothesis_id"] for r in rows] == ["H-0001", "H-0002", "H-0003"]
