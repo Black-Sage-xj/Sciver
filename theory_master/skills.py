@@ -22,7 +22,7 @@ ROLE_SKILLS: dict[str, tuple[str, ...]] = {
     "system_assistant": (),
     "research_chat": (
         "research-progress", "research-discussion", "research-intervention",
-        "research-evidence", "research-next-steps", "research-preparation",
+        "research-evidence", "research-next-steps", "research-preparation", "research-literature",
     ),
     "research_lead": (),
     "challenger": (),
@@ -224,11 +224,14 @@ def skill_prompt_block(
             f"Optional skills for role {role}: none. "
             "Follow the identity block. Do not load other skills."
         )
-    lines = [
-        f"Optional skills for role {role} (SDK whitelist). "
-        "Load a skill's SKILL.md only when this turn actually needs that capability. "
-        "Do not use skills outside these two levels.",
-    ]
+    if role == "research_chat":
+        lines = ["Use only listed skills. Choose by the latest request, even when it differs from the selected card."]
+    else:
+        lines = [
+            f"Optional skills for role {role} (SDK whitelist). "
+            "Load a skill's SKILL.md only when this turn actually needs that capability. "
+            "Do not use skills outside these two levels.",
+        ]
     if role in {"investigator", "literature"}:
         lines.append(
             "The SDK may attach a versioned learned task-skill catalogue to an invocation. "
@@ -241,6 +244,11 @@ def skill_prompt_block(
         if not scoped:
             continue
         lines.append(f"{title}:")
+        if role == "research_chat" and scope == "system":
+            template = scoped[0].path.parent / "<directory>" / "SKILL.md"
+            lines.append(f"Read {template} for the relevant workflow.")
+            lines.extend(f"- {ref.directory}: {ref.description}" for ref in scoped)
+            continue
         for ref in scoped:
             alias = f" (design: {ref.design_name})" if ref.design_name != ref.directory else ""
             lines.append(f"- {ref.name}{alias}: {ref.skill_md}")

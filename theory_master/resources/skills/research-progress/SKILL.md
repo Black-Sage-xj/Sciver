@@ -1,10 +1,10 @@
 ---
 name: research-progress
-description: Explain current research paths, evidence, failures, and blockers, then propose an actionable plan for the operator to accept or revise.
+description: Check current Workers, research progress and blockers.
 ---
 
 # 研究进展与科学性
 
-按图谱中的研究问题和分支梳理进展。报全局数量前核对完整图谱，区分研究路径和同一路径的多次 Cycle。
+按研究问题和分支梳理进展。报全局数量前核对完整图谱；同一 H 可以有多次 Cycle 尝试。当前执行状态用最新 Worker 身份核实，历史过程查 Cycle 报告。调度器停止后，Worker 仍可能运行。
 
-逐条说明每条主要路径研究了什么、已知结果、未解问题及当前阻塞，给出有关 H ID、Cycle 和来源。解释已经失败的尝试及失败原因，区分执行故障和 Judge 对命题的裁决。依据原题判据和有关证据解释结论的可靠范围；尚未核实的原因标为推断。
+分别说明路径状态（active、parked、closed）、科研裁决（supported、rejected、undetermined）和运行状态（running、interrupted、failed、completed）。结合相关 H ID、Cycle 和来源，解释主要路径上的已知结果、未解问题、失败尝试及其阻塞。尚未核实的原因标为推断。

@@ -11,7 +11,7 @@ import pytest
 
 from theory_master.codex_backend import CodexBackend
 from theory_master.science_graph_store import ScienceGraphStore
-from theory_master.skills import developer_instructions, role_skills
+from theory_master.skills import developer_instructions, role_skills, skills_root
 from tm_observer import research_chat as chat
 
 
@@ -64,10 +64,10 @@ def test_selected_skill_is_loaded_on_first_and_resumed_turn(workspace):
     assert row["skill"] == "research-progress"
     for prompt, _ in backend.calls:
         assert "Loaded research chat skill: research-progress" in prompt
-        assert "逐条说明每条主要路径研究了什么" in prompt
-        assert "解释已经失败的尝试及失败原因" in prompt
+        for status in ("parked", "rejected", "interrupted"):
+            assert status in prompt
         assert "independence of samples/networks" not in prompt
-        assert "依据原题判据" in prompt
+        assert "write_stdin" not in prompt
     assert "执行你刚才的具体建议，但保留第二条路径" in backend.calls[1][0]
     assert backend.calls[1][1] == "fake-chat-thread"
     assert "Canonical SQLite science graph" in backend.calls[0][0]
@@ -114,14 +114,13 @@ def test_every_real_skill_body_reaches_fresh_and_resumed_turns(workspace, skill)
     for prompt, thread in backend.calls:
         assert body in prompt
         assert f"Source: {refs[skill].skill_md}" in prompt
-        assert "A card click" not in body  # Shared authorization lives in the native handbook.
         assert thread == "fake-chat-thread"
     assert acceptance in backend.calls[1][0]
     assert "Latest operator message (continue the existing thread)" in backend.calls[1][0]
     assert "仅执行第 2 项" not in backend.calls[0][0]
 
 
-@pytest.mark.parametrize("value", ["../../other", "research-lead", {}, 1, ""])
+@pytest.mark.parametrize("value", ["../../other", "research-lead", "research-literature", {}, 1, ""])
 def test_unlisted_skill_cannot_create_or_change_session(workspace, value):
     root, state_dir, state, _ = workspace
     with pytest.raises(chat.ResearchChatError):
@@ -163,11 +162,11 @@ def test_missing_binding_or_broken_database_does_not_invent_context_or_block_cha
     assert "Inspect the binding before task writes" in backend.calls[-1][0]
 
 
-def test_chat_handbook_and_skill_catalog_reach_actual_sdk_developer_prompt(tmp_path, monkeypatch):
+def test_startup_routes_to_whitelisted_skills_without_their_operation_manuals(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "empty-home"))
     monkeypatch.setenv("THEORYMASTER_COMPUTE_PYTHON", sys.executable)
     refs = role_skills("research_chat")
-    assert {ref.directory for ref in refs} == set(chat.CHAT_SKILLS) | {chat.PREPARATION_SKILL}
+    assert {ref.directory for ref in refs} == set(chat.CHAT_SKILLS) | {chat.PREPARATION_SKILL, "research-literature"}
     sdk = SimpleNamespace(Sandbox=SimpleNamespace(full_access="full", workspace_write="write", read_only="read"))
     backend = CodexBackend(tmp_path)
     client = Mock()
@@ -176,15 +175,20 @@ def test_chat_handbook_and_skill_catalog_reach_actual_sdk_developer_prompt(tmp_p
         backend.ensure_thread("research_chat", None, "model", "provider")
     prompt = client.thread_start.call_args.kwargs["developer_instructions"]
     assert "Research Chat runtime AGENTS.md" in prompt
-    assert "Sciver Research Chat agent handbook" in prompt
-    assert "scientific verdict" in prompt
-    for rule in ("Lead/Challenger qualification before H allocation",
-                 "number the applicable items", "A card click, source selection or discussion does not authorize writes",
-                 "load research-intervention/SKILL.md", "without repeat confirmation",
-                 "Approval to edit a plan alone does not authorize a run",
-                 "Human edits do not change graph facts, Judge verdicts, Hypothesis locks, or Goal completion",
-                 "partial success and pending effects", "Preserve historical contracts and verdicts"):
-        assert rule in prompt
+    template = str(skills_root() / "<directory>" / "SKILL.md")
+    assert template in prompt
+    for requirement in ("allowed methods", "deliverables", "scoring", "versioned correction",
+                        "historical verdicts"):
+        assert requirement in prompt
     for ref in refs:
-        assert str(ref.skill_md) in prompt
+        assert Path(template.replace("<directory>", ref.directory)) == ref.skill_md
+        assert f"{ref.directory}: {ref.description}" in prompt
+        assert ref.skill_md.read_text(encoding="utf-8") not in prompt
+    by_name = {ref.directory: ref for ref in refs}
+    for name, operation in (("research-literature", "tm_observer.research_chat_literature"),
+                            ("research-evidence", "science_graph_tools"),
+                            ("research-intervention", "record_conjecture"),
+                            ("research-preparation", "research_preparation.create_project")):
+        assert operation not in prompt
+        assert operation in by_name[name].skill_md.read_text(encoding="utf-8")
     assert "Research Chat runtime AGENTS.md" not in developer_instructions("judge")

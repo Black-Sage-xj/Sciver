@@ -167,9 +167,9 @@ def test_preparation_skill_is_real_whitelisted_content_without_literature_role_e
     refs = {ref.directory: ref for ref in role_skills("research_chat")}
     skill = refs["research-preparation"]
     body = skill.skill_md.read_text(encoding="utf-8")
-    assert "tm_observer.research_chat_literature" in developer_instructions("research_chat")
-    assert "共享 Literature 服务" in body and "四个 H1" in body
-    assert str(skill.skill_md) in developer_instructions("research_chat")
+    assert "tm_observer.research_chat_literature" in refs["research-literature"].skill_md.read_text(encoding="utf-8")
+    assert "research_preparation.update" in body and "四个 H1" in body
+    assert refs["research-literature"].directory in developer_instructions("research_chat")
     assert "research-preparation" not in {ref.directory for ref in role_skills("literature")}
 
 

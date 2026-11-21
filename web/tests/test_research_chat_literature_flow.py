@@ -35,6 +35,34 @@ def test_host_delegation_uses_stable_job_and_awaits_report_before_chat(tmp_path,
     assert prepare_literature(tmp_path, None, row) is None
 
 
+def test_completed_receipt_reaches_chat_without_retrieving_again(tmp_path, monkeypatch):
+    from tm_observer import research_chat as chat
+    from tm_observer import research_chat_literature as literature
+
+    state = {"runs": []}
+    ident = chat.create(tmp_path, state, {"mode": "preparation", "entry": "clear"})["session_id"]
+    jobs, prompts = [], []
+
+    def run(_state, _root, _session, payload, **kwargs):
+        jobs.append(payload["job_id"])
+        return {"status": "completed", "report_href": "/test-report", "source_count": 1}
+
+    monkeypatch.setattr(literature, "run_study", run)
+    monkeypatch.setattr(literature, "read_report", lambda *args: "A finding from the requested study.")
+
+    class Backend:
+        def invoke(self, role, prompt, thread, model, provider):
+            prompts.append(prompt)
+            return "offline-thread", "已阅读实际报告。"
+
+    chat.send(tmp_path, tmp_path, state, ident, {"content": "请搜索相关论文"}, backend=Backend())
+    assert len(jobs) == len(prompts) == 1
+    assert jobs[0] in prompts[0] and "/test-report" in prompts[0]
+    assert "A finding from the requested study." in prompts[0]
+    receipt_instruction = prompts[0].split("Literature job receipt for this request.", 1)[1].split("\n", 1)[0]
+    assert "research-literature" in receipt_instruction and "report_href" in receipt_instruction
+
+
 def test_contextual_followups_and_selected_project_stay_with_chat(tmp_path, monkeypatch):
     from tm_observer import research_chat_literature as literature
     monkeypatch.setattr(literature, "run_study", lambda *args, **kwargs: pytest.fail("context must reach Chat first"))

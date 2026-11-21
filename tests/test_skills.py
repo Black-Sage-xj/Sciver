@@ -149,6 +149,21 @@ class SkillRegistryTest(unittest.TestCase):
                 self.assertEqual(loaded_skill_for_path("investigator", local / "SKILL.md", task_config_path=config).scope, "task")
                 self.assertIn(str(local / "SKILL.md"), prompt)
 
+    def test_research_chat_local_skill_path_is_distinct_from_system_template(self):
+        with tempfile.TemporaryDirectory() as temp:
+            task_root = Path(temp)
+            config = task_root / "theory-master.config.json"
+            config.write_text(json.dumps({"task_skills": {"research_chat": ["task-method"]}}))
+            entry = task_root / ".theory-master" / "skills" / "task-method" / "SKILL.md"
+            entry.parent.mkdir(parents=True)
+            entry.write_text("---\nname: task-method\ndescription: Task method.\n---\n\nTask-private instructions.")
+
+            ordinary = skill_prompt_block("research_chat")
+            bound = skill_prompt_block("research_chat", task_config_path=config)
+            self.assertNotIn(str(entry), ordinary)
+            self.assertIn(str(entry), bound)
+            self.assertNotIn("Task-private instructions.", bound)
+
     def test_shared_cursor_skills_and_theorymaster_native_skills(self):
         root = skills_root()
         compute = root / "compute-dispatch"

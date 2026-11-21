@@ -142,7 +142,7 @@ class ResearchChatTests(unittest.TestCase):
         store = module._store(self.state_dir)
         record = module._read(store, ident)
         record["codex_thread_id"] = "old-authority-thread"
-        record["agent_policy_version"] = 3
+        record["agent_policy_version"] = 11  # Last thread policy with the full operations handbook.
         module._message(record, "user", "此前的科研问题")
         module._write(store, record)
         fake = PersistentFakeBackend()

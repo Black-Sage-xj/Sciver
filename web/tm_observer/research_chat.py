@@ -30,7 +30,7 @@ _SCIENCE_EDGES = {"", "scientific_lineage", "hypothesis_evolution"}
 CHAT_SKILLS = ("research-progress", "research-discussion", "research-intervention",
                "research-evidence", "research-next-steps")
 PREPARATION_SKILL = "research-preparation"
-_AGENT_POLICY_VERSION = 11
+_AGENT_POLICY_VERSION = 12
 _SYSTEM_POLICY_VERSION = 10
 _JOBS_LOCK = threading.RLock()
 _JOBS: dict[str, dict[str, Any]] = {}
@@ -1042,7 +1042,7 @@ def _model_reply(task: dict[str, Any] | None, row: dict[str, Any], backend: Any 
                               "image_replay_count": len(input_images), "image_replay_truncated": image_replay_truncated,
                               "history_truncated": not resumed_thread and (len(row["messages"]) > len(history_rows) or len(history) >= 480_000)}})
     if literature_result:
-        context += ("\n\nLiterature job receipt for this request. Use its status, actual sources and report; "
+        context += ("\n\nLiterature job receipt for this request. Use research-literature to interpret the report and link report_href; "
                     "do not restart retrieval for this message.\n" + json.dumps(literature_result, ensure_ascii=False))
     prompt = (
         ("You are Sciver System Assistant. Diagnose and resolve the operator's system issue using local evidence. "

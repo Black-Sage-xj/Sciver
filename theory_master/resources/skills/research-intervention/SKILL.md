@@ -1,6 +1,6 @@
 ---
 name: research-intervention
-description: Interpret operator steering depth and execute authorized plan changes, Scientific Model corrections, branch curation, human conjectures, and runtime actions through canonical interfaces.
+description: Carry out authorized edits, conjectures and runtime actions.
 ---
 
 # 调整研究路径
@@ -27,7 +27,7 @@ Scientific Model 是当前科学认识的总结，与 Goal/Contract 等计划条
 
 ### 从用户新猜想开始
 
-先将猜想、可区分检验、与 Goal 的关系和要替代/保留的路径写清楚，读取现有人工猜想及投递状态。有其他 pending 猜想时说明先后；用户要求取代某条待投递猜想才传其 `replace_external_id`，不能把追加误报成已取代。使用 `tm_observer.research_chat_intervention.record_conjecture(search_root, task, hypothesis=exact_proposition, decisive_test=exact_test, reason=human_reason, expected_revision=required_context_section["revision"], source_session=session_id, timing="next_proposal", replace_external_id=authorized_replacement_or_empty, source_references=verified_sources)`。接口只记录 canonical External 及投递事件，保留 Research Plan 每节原文；`expected_revision` 核对讨论时使用的 Required Context，并不要求把一次性指令追加到稳定上下文。来自图谱节点/报告选段的来源使用服务端核验的 ID、版本和原文，不编造来源快照；来源过期时重新读取后处理。
+先将猜想、可区分检验、与 Goal 的关系和要替代/保留的路径写清楚，读取现有人工猜想及投递状态。有其他 pending 猜想时说明先后；用户要求取代某条待投递猜想才传其 `replace_external_id`，不能把追加误报成已取代。使用 `tm_observer.research_chat_intervention.record_conjecture(search_root, task, hypothesis=exact_proposition, decisive_test=exact_test, reason=human_reason, expected_revision=required_context_section["revision"], source_session=session_id, timing="next_proposal", replace_external_id=authorized_replacement_or_empty, source_references=verified_sources)`。接口只记录 canonical External 及投递事件，保留 Research Plan 每节原文；`expected_revision` 核对讨论时使用的 Required Context，并不要求把一次性指令追加到稳定上下文。使用图谱选段时按 research-evidence 核对 `source_references`。
 
 默认 `timing="next_proposal"` 可在当前 Cycle 继续运行时登记，不为下一轮建议擅自中断当前工作。SDK 将待投递项交给下一次全新 `frontier_proposal`，同一项只分配给一个提案过程；同一 Cycle 的重试/恢复沿用已领取的快照，不在以后 Cycle 重复注入。用 `theory_master.operator_direction.direction_status(store, external_id)` 核对 `pending`、`claimed`、`consumed`、`revoked`、`superseded`；`consumed` 仅表示交给该提案，不表示资格通过、调查开始或科学成立。明确撤销待投递项用 `revoke_conjecture(search_root, task, external_id=external_id, reason=human_reason, source_session=session_id)`；已领取项不能撤销或替换，不直接修改事件账本。需要长期研究方向时另提 Research Plan 变更。
 
@@ -40,3 +40,5 @@ Scientific Model 是当前科学认识的总结，与 Goal/Contract 等计划条
 ### 启动、恢复与核对
 
 从 `TaskBinding.load(task_root)` 和 `TaskSpec.from_config(binding.config_path)` 取得 spec。使用已支持的 `worker_action`、`start_scheduler(spec, verified_slots)` 或 `theory_master.operator_control.dispatch` 完成明确请求；容量未知时先读取配置，不能随意扩容。公开命令 `python -m theory_master workers TASK_ID start --resource-slots N` 启动调度，`pause|resume|release --worker worker-N` 操作指定 Worker。NEEDS_ATTENTION 的说明可用 `Workflow.submit_attention_guidance(text, source="human")` 后再按授权恢复；此接口不适用于任意活跃 Cycle。
+
+完成操作后重读回执，逐项说明哪些变更已保存、哪些失败或仍待生效，并给出失败步骤的实际原因。

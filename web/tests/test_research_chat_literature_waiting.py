@@ -3,13 +3,12 @@ from __future__ import annotations
 
 import io
 import json
-from pathlib import Path
 import signal
 
 import pytest
 
 from tests.test_literature_service import LiteratureBackend, Retriever
-from theory_master.skills import developer_instructions, skills_root
+from theory_master.skills import developer_instructions, role_skills, skills_root
 from tm_observer import research_chat as chat
 from tm_observer import research_chat_literature as literature
 
@@ -98,14 +97,16 @@ def test_cli_progress_keeps_signal_cancellation_and_handler_restoration(
 
 @pytest.mark.parametrize('mode,skill', [('preparation', 'research-preparation'),
                                        ('project', 'research-discussion')])
-def test_native_handbook_owns_waiting_contract_for_both_turn_types(mode, skill):
+def test_literature_operations_are_discoverable_but_absent_from_unrelated_turns(mode, skill):
     prompt = chat._skill_context({'mode': mode, 'skill': skill})
     source = skills_root() / skill / 'SKILL.md'
     assert str(source) in prompt and source.read_text(encoding='utf-8') in prompt
     instructions = developer_instructions('research_chat')
-    for rule in ('yield_time_ms=30000', 'write_stdin', '30–60 second intervals', 'final JSON',
-                 'instead of polling files or starting another job', 'cancellation, failures and diagnostics',
-                 'resume the same job with `--job-id`', 'authorized SDK Cycle'):
-        assert rule in instructions
-    assert 'write_stdin' not in prompt
-    assert not (Path(__file__).resolve().parents[2] / 'skills').exists()
+    literature = next(ref for ref in role_skills('research_chat') if ref.directory == 'research-literature')
+    assert literature.directory in instructions
+    operations = literature.skill_md.read_text(encoding='utf-8')
+    for token in ('tm_observer.research_chat_literature', '--job-id', '--retrieval-manifest',
+                  'write_stdin', 'report_href'):
+        assert token in operations
+        assert token not in instructions
+        assert token not in prompt
