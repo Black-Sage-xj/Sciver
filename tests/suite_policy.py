@@ -8,6 +8,7 @@ CATEGORIES = ("invariant", "architecture", "regression", "ui")
 # exists, not how important it is. A small number of tests in mixed legacy modules
 # may additionally participate in the invariant gate via INVARIANT_TEST_IDS.
 MODULE_CATEGORIES: dict[str, str] = {
+    "test_prompt_task_fidelity": "architecture",
     "test_execution_limit_plan_binding": "invariant",
     "test_lead_contribution_gap_repair": "invariant",
     "test_method_stage_qualification_prompt_20261119": "architecture",

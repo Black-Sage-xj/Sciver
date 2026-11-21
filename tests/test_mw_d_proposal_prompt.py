@@ -8,7 +8,6 @@ def test_frontier_prompt_dedups_running_hypotheses_and_drops_claimed_parent():
         "research_lead", "frontier_proposal")
     assert "worker_claimed_frontier" not in text
     assert "preferred ResearchFocus" not in text
-    assert "active or resolved claim needs new science or a new source of uncertainty" in text
     assert "SDK owns identity, lineage persistence" in text
     projected = stage_context("research_lead", "frontier_proposal", {
         "goal": "G",
@@ -16,4 +15,5 @@ def test_frontier_prompt_dedups_running_hypotheses_and_drops_claimed_parent():
         "running_hypotheses": [{"hypothesis_id": "H-0002", "decisive_test": "sign"}],
     })
     assert projected["running_hypotheses"][0]["hypothesis_id"] == "H-0002"
+    assert projected["running_hypotheses"][0]["decisive_test"] == "sign"
     assert "worker_focus" not in projected

@@ -43,9 +43,7 @@ def test_lead_acquires_indispensable_external_definitions_before_proposal():
         assert "never repeat an exhausted detour" in prompt
         assert "Local sources sufficient for this decision do not require an external search" in prompt
         assert "targeted_source for a known claim" in prompt
-        assert "decide the proposition yourself" in prompt
         assert "make Literature mandatory each Cycle" in prompt
-        assert "full proof/test remains Investigator work" in prompt
 
 
 @pytest.mark.parametrize("stage", ["candidate_review", "repair_verification"])
@@ -58,7 +56,8 @@ def test_challenger_checks_the_actual_executor_source_route(stage):
 
 def test_investigator_authority_and_current_delivery_budgets_remain_intact():
     identity = developer_instructions("investigator")
-    assert "外部学术检索属于 Literature；本地材料调查属于 Investigator" in identity
+    assert "外部学术检索属于 Literature" in identity
+    assert "本地读取从 Task scientific read root 起步" in identity
     assert "使用当前获准的 Literature 路径" in identity
     assert len(stage_definition_text("research_lead", "frontier_proposal")) < 12500
     assert len(stage_definition_text("challenger", "candidate_review")) < 10500

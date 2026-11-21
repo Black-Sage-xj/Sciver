@@ -208,7 +208,7 @@ class InvestigatorPromptConsistencyTests(unittest.TestCase):
                     self.assertNotIn(marker, goal)
                     self.assertNotIn(marker, setup)
                 self.assertEqual(goal.count("Never self-terminate or request native blocked"), 1)
-                self.assertIn("do not skip a required independent check", goal)
+                self.assertIn("When required, perform independent checks appropriate to the test", goal)
                 self.assertIn("independent Judge", goal)
                 self.assertIn("actual Investigator token budget boundary", goal)
                 for value in SCENARIOS["mixed"].values():
@@ -218,7 +218,7 @@ class InvestigatorPromptConsistencyTests(unittest.TestCase):
             if stage == "judge_rework":
                 self.assertIn(rework_request, goal)
                 self.assertIn("a partial Finding resolves the Judge request", goal)
-                self.assertIn("post-hoc generated data as independent holdout/gate Evidence", goal)
+                self.assertIn("post-hoc data cannot certify a protected blind evaluation", goal)
                 self.assertNotIn("SCIENTIFIC COMPLETION CHAIN", goal)
             if stage == "integrate_literature":
                 self.assertIn("do not invent a blind dataset for a proof", goal)
@@ -326,7 +326,7 @@ class InvestigatorPromptConsistencyTests(unittest.TestCase):
         handoff = _copies_match("_investigator_handoff.md")
         developer = developer_instructions("investigator")
         self.assertEqual(developer.count("历史证据复用"), 1)
-        self.assertIn("已暴露样本不能冒充盲测或 Final Gate 证据", identity)
+        self.assertIn("已暴露样本不能声称为事前未触碰的最终盲测材料", identity)
         self.assertIn("纯理论证明不必制造盲测数据", identity)
         self.assertNotIn("网络、协议、力域", identity)
         self.assertIn("不得因历史相似而跳过", identity)

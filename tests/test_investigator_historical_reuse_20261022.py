@@ -61,14 +61,14 @@ class HistoricalReusePromptTests(unittest.TestCase):
 
     def test_c_required_independent_check_is_not_skipped_for_similar_history(self):
         self.assertIn("不得因历史相似而跳过", self.identity)
-        self.assertIn("do not skip a required independent check", self.goal)
+        self.assertIn("When required, perform independent checks appropriate to the test", self.goal)
         for value in LOCK.values():
             self.assertIn(value, self.goal)
         self.assertIn("FROZEN SCIENTIFIC OBJECTIVE (immutable)", self.goal)
 
     def test_d_new_uncertainty_is_not_a_meaningless_repeat(self):
-        self.assertIn("新判别对象或新不确定性，不是无意义重复", self.identity)
-        self.assertIn("复现成功不是新科学发现", self.identity)
+        self.assertIn("核对既有结果的对象、协议和误差边界", self.identity)
+        self.assertIn("原题要求复现时应执行复现", self.identity)
         self.assertNotIn("复现成功不是新科学发现", self.goal)
 
     def test_e_continuation_rework_and_recovery_keep_existing_records(self):
@@ -162,7 +162,7 @@ class HistoricalReusePromptTests(unittest.TestCase):
         self.assertNotIn("历史证据复用", skill)
 
     def test_boundaries_stay_outside_the_reuse_rule(self):
-        self.assertIn("已暴露样本不能冒充盲测或 Final Gate 证据", self.identity)
+        self.assertIn("已暴露样本不能声称为事前未触碰的最终盲测材料", self.identity)
         self.assertIn("Never self-terminate or request native blocked", self.goal)
         self.assertIn("silently weaken the frozen estimand", self.goal)
         self.assertNotIn("随机网络", self.identity)

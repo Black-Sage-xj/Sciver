@@ -61,16 +61,12 @@ def assembled(role: str, stage: str, *, candidate: dict | None = None) -> tuple[
 
 class SingleCycleQualificationPromptTests(unittest.TestCase):
     def test_lead_receives_complete_single_cycle_boundary_in_both_prompt_paths(self):
-        for prompt in assembled("research_lead", "frontier_proposal")[:2]:
-            for phrase in (
-                "one Cycle-decidable proposition", "allowed inputs and acquisition status",
-                "existing relevant comparator", "one minimum decisive result",
-                "supporting/contrary/inconclusive exits", "indispensable prerequisites",
-                "task-proportionate resource upper bound", "necessary subclaim",
-                "positive or contrary result advances the Goal",
-                "preparation-only work", "Missing execution inputs are not scientific inconclusiveness",
-            ):
-                self.assertIn(phrase, prompt)
+        initial, continuation, context = assembled("research_lead", "frontier_proposal")
+        for prompt in (initial, continuation):
+            for field in ("goal", "research_contract", "final_gate"):
+                self.assertIn(context[field], prompt)
+            self.assertIn("one Cycle-decidable proposition", prompt)
+            self.assertIn("no_new_science", prompt)
 
     def test_synthetic_counterexamples_reach_challenger_with_scope_gate(self):
         self.assertEqual(len(SYNTHETIC_CANDIDATES), 3)
@@ -85,10 +81,7 @@ class SingleCycleQualificationPromptTests(unittest.TestCase):
                 for prompt in (initial, continuation):
                     self.assertIn(candidate["hypothesis"], prompt)
                     self.assertIn(candidate["decisive_test"], prompt)
-                    self.assertIn("full prerequisite chain", prompt)
                     self.assertIn("Missing means to run the test are operational", prompt)
-                    self.assertIn("reject the program-sized H", prompt)
-                    self.assertIn("revise only if definitions", prompt)
 
     def test_generic_theory_negative_and_local_work_remain_eligible(self):
         lead = stage_definition_text("research_lead", "frontier_proposal")
@@ -96,10 +89,6 @@ class SingleCycleQualificationPromptTests(unittest.TestCase):
         for text in (lead, challenger):
             for task_specific in ("Q_g", "P(k)", "bondingprob", "mother network"):
                 self.assertNotIn(task_specific, text)
-        self.assertIn("Bounded unfinished proofs", challenger)
-        self.assertIn("valid negative results", challenger)
-        self.assertIn("informative local necessary tests", challenger)
-        self.assertIn("Do not impose universal sample, token, compute or time thresholds", challenger)
         self.assertIn("Do not demand the research answer at qualification", challenger)
         self.assertIn("unknown derivations and the decisive experiment remain Investigator work", lead)
         self.assertEqual(role_contract("research_lead", phase="frontier_proposal").version, 18)

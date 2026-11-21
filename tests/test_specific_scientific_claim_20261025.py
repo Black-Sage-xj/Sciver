@@ -9,23 +9,14 @@ from theory_master.stage_registry import stage_definition_text
 
 class SpecificScientificClaimTests(unittest.TestCase):
     def test_scientific_commitment_is_checked_before_selection_not_repeated_in_every_stage(self):
-        obligations = {
-            ("research_lead", "frontier_proposal"): (
-                "specific proposed answer", "discriminating consequence", "Goal restatements",
-                "material definitions", "remain Investigator work"),
-            ("challenger", "candidate_review"): (
-                "specific scientific commitment", "discriminating consequence", "not a Goal restatement",
-                "finite failed search is not general refutation", "Do not demand the research answer"),
-            ("research_lead", "candidate_selection"): (
-                "already-qualified set", "Do not reopen qualification", "select one unchanged"),
-            ("research_lead", "selection_repair"): (
-                "frozen Challenger blocker ledger", "preserving the parent hypothesis",
-                "COMPLETE revised decisive_test", "cannot_repair"),
-            ("challenger", "repair_verification"): (
-                "original blocker ledger", "all original blockers", "complete decisive_test",
-                "Do not renew the full novelty or Goal-priority review"),
-        }
-        for (role, stage), rules in obligations.items():
+        stages = (
+            ("research_lead", "frontier_proposal"),
+            ("challenger", "candidate_review"),
+            ("research_lead", "candidate_selection"),
+            ("research_lead", "selection_repair"),
+            ("challenger", "repair_verification"),
+        )
+        for role, stage in stages:
             contract = role_contract(role, phase=stage)
             for continuation in (False, True):
                 with self.subTest(role=role, stage=stage, continuation=continuation):
@@ -37,8 +28,8 @@ class SpecificScientificClaimTests(unittest.TestCase):
                                 contract_schema=contract.prompt_projection(context), context=context)
                     prompt = (build_continuation_prompt(**args) if continuation else
                               build_initial_prompt(prefix="offline", write_rule="read only", **args))
-                    for rule in rules:
-                        self.assertIn(rule, prompt)
+                    self.assertIn(contract.ref, prompt)
+                    self.assertNotIn("A descriptive reproduction alone is insufficient", prompt)
                     self.assertEqual(prompt.count("Stage: " + stage), 1)
         # Universal scientific honesty remains in the persistent Identity.
         self.assertIn("有限搜索无结果不能充当一般性反证", identity_block("research_lead"))

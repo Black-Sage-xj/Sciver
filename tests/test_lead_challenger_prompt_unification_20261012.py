@@ -95,11 +95,11 @@ class QualificationIntegrity(unittest.TestCase):
                     context=ctx,write_rule="read only")
         self.assertIn("candidate_id",prompt)
         self.assertIn("hypothesis",prompt)
-        self.assertIn("for an unmet Goal/Final Gate or a necessary prerequisite",prompt)
+        self.assertIn(self.candidates[0]["id"], prompt)
         self.assertIn("Output contract: theory-master/role/challenger/candidate-review/v6",prompt)
         self.assertEqual(prompt.count(stage_definition_text("challenger", "candidate_review")), 1)
         self.assertIn("Review frozen_objective as the binding science", prompt)
-        self.assertIn("proposal_context only explains priority and provenance", prompt)
+        self.assertIn("proposal_context", ctx["candidate"][0])
         self.assertIn("selection follows separately", prompt)
 
     def test_cannot_repair_prompt_never_qualifies_parent(self):

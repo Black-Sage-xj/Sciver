@@ -50,7 +50,6 @@ def prepare_literature(state_dir: Path, search_root: Path | None, row: dict, *, 
             on_event({"type": "tool", "id": "literature-" + job_id, "label": label,
                       "status": "complete" if event.get("event") == "literature.job_finished" else "running"})
     result = run_study(state_dir, search_root, row["id"], {"query": text,
-        "scope": "Respond to the user's stated scientific interest; distinguish mechanisms, material systems and loading conditions.",
         "job_id": job_id}, cancel_event=cancel_event, on_event=progress)
     if cancel_event is not None and cancel_event.is_set():
         from theory_master.codex_backend import CodexTurnCancelled

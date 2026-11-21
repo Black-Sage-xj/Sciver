@@ -13,7 +13,7 @@ class TerminalAssessmentPromptTest(unittest.TestCase):
             card,
         )
         self.assertIn(
-            "not for whether the overall research topic still has future questions",
+            "Future questions and optional strengthening do not block scientific closure",
             card,
         )
         self.assertIn(
@@ -25,16 +25,16 @@ class TerminalAssessmentPromptTest(unittest.TestCase):
             card,
         )
         self.assertIn(
-            "stronger hypotheses, broader scope, or optional scientific strengthening",
+            "A contrary result refutes a claim if it contradicts a necessary prediction",
             card,
         )
 
     def test_optional_strengthening_does_not_justify_milestone(self):
         card = stage_card_text("judge", "terminal_assessment")
 
-        self.assertIn("Do not block closure or justify milestone_advanced for stronger hypotheses", card)
-        self.assertIn("optional scientific strengthening (extra robustness, higher confidence, future propositions)", card)
-        self.assertIn("unless the locked Hypothesis and frozen scope logically require them", card)
+        self.assertIn("optional strengthening do not block scientific closure", card)
+        self.assertIn("Ground each objection in a specific necessary frozen requirement", card)
+        self.assertIn("If necessary work is still executable within the frozen scope", card)
 
     def test_terminal_scope_boundary_lives_in_stage_card_not_shared_role_core(self):
         card = stage_card_text("judge", "terminal_assessment")

@@ -229,7 +229,7 @@ class RoleContractTest(unittest.TestCase):
             contract_ref=frontier.ref, contract_schema=frontier_projection,
             context={}, write_rule="",
         )
-        self.assertIn("one coherent, independently adjudicable scientific claim", assembled_frontier)
+        self.assertIn(frontier.ref, assembled_frontier)
         self.assertIn("Use evolution_operator only from:", assembled_frontier)
 
         challenger = role_contract("challenger", phase="candidate_review")
@@ -240,7 +240,7 @@ class RoleContractTest(unittest.TestCase):
             contract_ref=challenger.ref, contract_schema=challenger.prompt_projection(),
             context={"candidates": [{"id": "cand-1"}]}, write_rule="",
         )
-        self.assertIn("unmet Goal/Final Gate or a necessary prerequisite", assembled_challenger)
+        self.assertIn(challenger.ref, assembled_challenger)
         self.assertIn("concise rationale for the verdict", assembled_challenger)
 
         repair = role_contract("research_lead", phase="selection_repair")

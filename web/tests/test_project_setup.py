@@ -80,7 +80,8 @@ class ProjectSetupTests(unittest.TestCase):
         for answer in ('研究目标', '可核验的完成标准', '暂无额外限制'):
             send(self.state_dir, self.workspace, {'runs': []}, ident, {'content': answer})
         action = snapshot(self.state_dir, {'runs': []}, ident)['session']['pending_action']
-        self.assertIn('可核验的完成标准', action['details'])
+        from theory_master.specification import scientific_sections
+        self.assertEqual(scientific_sections(action['details'])[2], '用户定义的完成标准：\n\n可核验的完成标准')
 
     def test_secret_and_symlink_files_are_not_imported(self):
         (self.original / 'api_token.txt').write_text('sensitive')

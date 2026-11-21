@@ -27,6 +27,7 @@ def test_host_delegation_uses_stable_job_and_awaits_report_before_chat(tmp_path,
            "messages": [{"role": "user", "content": "搜搜文献看看"}]}
     receipt = prepare_literature(tmp_path, tmp_path, row, on_event=events.append)
     again = prepare_literature(tmp_path, tmp_path, row)
+    assert all("scope" not in payload for payload in calls)
     assert calls[0]["job_id"] == calls[1]["job_id"] == receipt["job_id"]
     assert receipt["source_access_counts"]["full_text"] == 2
     assert receipt["report_markdown"].startswith("# Real material")

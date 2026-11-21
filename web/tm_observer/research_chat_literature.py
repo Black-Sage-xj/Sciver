@@ -511,6 +511,8 @@ def run_study(state_dir: Path, search_root: Path, ident: str, payload: dict, *, 
                 if _lock_held(root / _SERVICE_LOCK):
                     raise ChatLiteratureError('该文献调研已在执行，请先等待或取消原调用', 409, 'already_running')
                 previous = entry['request']
+                if 'scope' not in payload:
+                    request['scope'] = previous['scope']
                 for key in _BUDGET_FIELDS:
                     # Omitted defaults never enlarge a previously bounded job;
                     # lower values retain the service's existing monotonic cap.

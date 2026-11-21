@@ -33,28 +33,16 @@ REASON_ONLY = "REVIEW_REASON_ONLY_MUST_NOT_SILENTLY_CHANGE_THE_TEST"
 class InputLimitsHandoff(unittest.TestCase):
     def test_initial_continuation_and_repair_prompts_bind_material_limits(self):
         helper = input_fixtures.InputQualificationEvidence()
-        expected = {
-            ("research_lead", "frontier_proposal"): (
-                "Bind all material definitions, eligibility conditions",
-                "in hypothesis/scope/decisive_test, not proposal rationale",
-                "distinguish checked from pending assumptions"),
-            ("challenger", "candidate_review"): (
-                "frozen_objective as the binding science",
-                "proposal_context only explains priority and provenance",
-                "without dropping frozen restrictions"),
-            ("challenger", "repair_verification"): (
-                "binding definitions and the complete decisive_test",
-                "preserve the original scientific target/scope/estimand",
-                "Apply frozen eligibility restrictions without relaxing them"),
-        }
-        for (role, stage), rules in expected.items():
-            for prompt in helper.prompts(role, stage):
-                for rule in rules:
-                    self.assertIn(rule, prompt)
-        for prompt in helper.prompts("research_lead", "selection_repair"):
-            self.assertIn("checked/pending input limit", prompt)
-            self.assertIn("Do not rely on audit rationale or proposal background as hidden conditions", prompt)
-            self.assertIn("preserving the parent hypothesis, scientific scope and estimand", prompt)
+        for role, stage in (("research_lead", "frontier_proposal"), ("challenger", "candidate_review"),
+                            ("challenger", "repair_verification")):
+            for prompt in helper.prompts(role, stage, {"research_contract": LIMITS}):
+                self.assertIn(LIMITS, prompt)
+        candidate = {"id": "parent", "hypothesis": "The local contrast is sufficient.", "scope": "Finite subset.",
+                     "decisive_test": TEST, "why_now": RATIONALE_ONLY}
+        context = stage_context("challenger", "candidate_review", {"candidate": [candidate], "agent_graph": input_fixtures.GRAPH})
+        objective = context["candidate"][0]["frozen_objective"]
+        self.assertEqual(objective["decisive_test"], TEST)
+        self.assertNotIn(RATIONALE_ONLY, json.dumps(objective))
 
     def test_graph_authority_guard_survives_procedure_compression(self):
         # Missing graph is already rejected by actual production assembly;
@@ -63,12 +51,6 @@ class InputLimitsHandoff(unittest.TestCase):
                             ("challenger", "candidate_review")):
             with self.assertRaisesRegex(RuntimeError, "SQLite Agent graph context is missing"):
                 stage_context(role, stage, {"candidate": []})
-        helper = input_fixtures.InputQualificationEvidence()
-        for prompt in helper.prompts("challenger", "candidate_review"):
-            self.assertIn("Independently reconstruct the closest prior model/claim", prompt)
-            self.assertIn("unavailable material history is a qualification gap", prompt.casefold())
-            self.assertIn("beyond declared parents and recent Cycles", prompt)
-            self.assertIn("not whether the hypothesis is true", prompt)
 
     def _checkpoint(self, root: Path, *, repair: bool):
         class LimitBackend(repair_fixtures.RepairFixtureBackend):

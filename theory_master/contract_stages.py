@@ -1138,16 +1138,9 @@ PHASE_CONTRACTS: dict[tuple[str, str], RoleContract] = {
     ("reporter", "report"): RoleContract(
         "theory-master/role/reporter", 5,
         {"title": "...", "summary": "...", "graph_summary": GRAPH_SUMMARY_SCHEMA}, _reporter_structure, _noop,
-        "summary is the scientific Markdown report body: question and necessary conditions, main results, "
-        "interpretation and limitations. Do not write another conclusion summary; the SDK reuses graph_summary "
-        "as the overview of the single report. graph_summary is not a report prefix copied from prose: "
-        "result first, decisive basis, necessary scope/origin, then the local unresolved gap. "
-        "Use ![[path.md#Section|Label]] only for relevant existing supplied supplementary documents; "
-        "the SDK freezes the source version and renders a disclosure. Essential arguments stay in the body. "
-        "Keep the guide comparable in length to an existing node overview; the 900-character total is a safety ceiling, "
-        "not a target. open_question may be empty when this frozen H is resolved. "
-        "Describe the supplied Judge conclusion in prose; do not return verdict/state fields, "
-        "make a new adjudication, propose next steps or add scientific claims.",
+        "summary contains the scientific Markdown body. graph_summary is the shared report and graph overview, "
+        "not a report prefix. Use open_question for the local unresolved gap or an empty string when resolved. "
+        "The 900-character total is a ceiling. Return only the three declared fields.",
     ),
 }
 

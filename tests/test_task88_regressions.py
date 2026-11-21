@@ -194,23 +194,20 @@ class Task88RegressionTest(unittest.TestCase):
         skill = (
             skills_root() / "numerical-investigation" / "SKILL.md"
         ).read_text(encoding="utf-8")
-        self.assertIn("独立正确性检查", skill)
-        self.assertIn("canary", skill)
-        self.assertIn("不能把 reproducibility 或 cross-file consistency 写成 correctness", skill)
-        self.assertIn("不要求额外生成固定名称的 validation.json", skill)
-        self.assertIn("不新增 validation artifact role", skill)
+        self.assertIn("根据结论选择适当的正确性检查", skill)
+        self.assertIn("重复运行和输出一致只能证明可重复或自洽", skill)
+        self.assertIn("无需另建验证报告", skill)
         self.assertIn("batch probe", skill)
-        self.assertIn("紧凑 JSON", skill)
 
     def test_numerical_skill_gates_downstream_work_on_decisive_provenance(self):
         skill = (
             skills_root() / "numerical-investigation" / "SKILL.md"
         ).read_text(encoding="utf-8")
-        self.assertIn("决定性输入/provenance gate", skill)
-        self.assertIn("source-recoverability audit", skill)
+        self.assertIn("核对必要输入、来源、适用范围与参数", skill)
+        self.assertIn("查权威 source 或 builder 是否可用现有授权输入重建", skill)
         self.assertIn("external_artifact", skill)
-        self.assertIn("不得重新全面审计旧资产", skill)
-        self.assertLess(skill.index("决定性输入/provenance gate"), skill.index("围绕冻结的 decisive test"))
+        self.assertIn("仅重查发生变化的部分", skill)
+        self.assertIn("须保持同一科学检验", skill)
 
     def test_active_cycle_synthesis_rejects_legacy_synthesis_and_frontier_fields(self):
         contract = role_contract("research_lead", phase="cycle_synthesis")

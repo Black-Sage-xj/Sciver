@@ -141,16 +141,13 @@ def handle_turn(row: dict, content: str, search_root: Path, state_dir: Path, bac
     ensure_runtime_outside_package(destination)
     context = '\n\n'.join(excerpts)[:16000]
     goal = _quote(answers['goal'])
-    draft = _plan(goal, destination, context)
     contract_note = ('用户定义的研究边界与证据要求：\n\n' + _quote(answers['contract'])
                      if answers.get('contract') else '')
-    if contract_note:
-        draft = draft.replace('# Research Contract\n\n', '# Research Contract\n\n' + contract_note + '\n\n')
     completion_note = '用户定义的完成标准：\n\n' + _quote(answers['completion'])
-    draft = draft.replace('# Final Gate\n\n', '# Final Gate\n\n' + completion_note + '\n\n')
+    draft = _plan(goal, destination, context, contract=contract_note, completion=completion_note)
     manifest_text = '\n'.join('- benchmark/source/' + item['path'] for item in entries)
     required = ('\n\n用户提供的资源与限制：\n' + _quote(answers['constraints']) +
-                '\n\n确认后导入的资料副本（原目录保持不变；benchmark 指系统配置 benchmark_root，读取该绝对路径下 source/）：\n' + (manifest_text or '无外部资料；研究数据尚待补充。'))
+                '\n\n确认后导入的资料副本（原目录保持不变；benchmark 指系统配置 benchmark_root，读取该绝对路径下 source/）：\n' + (manifest_text or '无外部资料。'))
     if setup.get('clarifications'):
         required += '\n\n用户补充说明：\n' + _quote('\n'.join(setup['clarifications']))
     draft = draft.replace('\n# Scientific Model\n', required + '\n\n# Scientific Model\n')

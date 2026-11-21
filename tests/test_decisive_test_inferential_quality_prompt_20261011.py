@@ -48,22 +48,20 @@ class DecisiveTestInferentialQualityPromptTests(unittest.TestCase):
         for role, stage in (("research_lead", "frontier_proposal"), ("challenger", "candidate_review")):
             for prompt in self._turn_prompts(role, stage, {"goal": "Distinguish live explanations"}):
                 with self.subTest(role=role, kind=prompt.splitlines()[0]):
-                    self.assertIn("competing", prompt)
-                    self.assertIn("model family" if role == "research_lead" else "model-family claim", prompt)
-                    self.assertIn("supplied premise", prompt)
-                    self.assertIn("useful optional strengthening alone does not close that gap", prompt)
+                    self.assertIn("Distinguish live explanations", prompt)
+                    self.assertNotIn("A descriptive reproduction alone is insufficient", prompt)
                     self.assertNotIn("Always fit an additional baseline", prompt)
         review = stage_card_text("challenger", "candidate_review")
-        self.assertIn("A small group alone does not establish", review)
         self.assertIn("Do not demand the research answer at qualification", review)
 
     def test_judge_method_timing_instruction_reaches_both_turn_types_without_new_requirements(self):
         for prompt in self._turn_prompts("judge", "terminal_assessment", {}):
             with self.subTest(kind=prompt.splitlines()[0]):
                 self.assertIn("choices made before fitting, and later changes", prompt)
-                self.assertIn("Do not call an unstated tail choice, knot rule or equivalence margin frozen", prompt)
-                self.assertIn("a justified directional test need not be two-sided", prompt)
-                self.assertIn("unless the frozen science requires it", prompt)
+                self.assertIn("Explain any material effect on inference", prompt)
+                self.assertIn("Judge ordinary validation under its stated protocol", prompt)
+                for task_specific_choice in ("knot rule", "equivalence margin", "need not be two-sided"):
+                    self.assertNotIn(task_specific_choice, prompt)
                 self.assertIn("Do not request raw files", prompt)
         self.assertNotIn("equivalence margin", procedure_card_text("challenger", "candidate_review"))
 
@@ -71,10 +69,6 @@ class DecisiveTestInferentialQualityPromptTests(unittest.TestCase):
         card = stage_card_text("research_lead", "frontier_proposal")
         self.assertIn("uncertainty and proof precision", card)
         self.assertIn("the scientific distinction claimed", card)
-        self.assertIn("logically attainable", card)
-        self.assertIn("for statistical tests, statistically reachable", card)
-        self.assertIn("nonzero, finite or converged estimate", card)
-        self.assertIn("Avoid universal sample sizes or thresholds", card)
         for other_role, other_stage in (
             ("investigator", "investigate"), ("judge", "terminal_assessment"),
             ("reporter", "report"),
@@ -90,19 +84,10 @@ class DecisiveTestInferentialQualityPromptTests(unittest.TestCase):
             "challenger", "candidate_review",
             {"candidate": [{"hypothesis": "Prediction", "decisive_test": "Preplanned evaluation"}]},
         ):
-            for instruction in (
-                "relevant simpler explanations or existing methods",
-                "Check logical reachability of the claimed decision",
-                "for empirical designs also assess independent units",
-                "statistically unreachable outcomes under the stated design",
-                "informative estimate or bound with uncertainty",
-                "local result bears on a broader claim only within its actual logical implication",
-                "eventual negative/open result is not itself a blocker",
-                "credible in-scope route and meaningful test remain",
-                "Do not demand optional stronger claims, irrelevant baselines",
-                "purely theoretical or existence proofs need no data matching",
-            ):
-                self.assertIn(instruction, prompt)
+            self.assertIn("Preplanned evaluation", prompt)
+            self.assertIn("Prediction", prompt)
+            self.assertIn("Do not demand optional stronger claims", prompt)
+            self.assertIn("eventual negative/open result is not itself a blocker", prompt)
             self.assertNotIn("R_eff", prompt)
             self.assertNotIn("p=0.025", prompt)
 
@@ -155,13 +140,10 @@ class DecisiveTestInferentialQualityPromptTests(unittest.TestCase):
         self.assertEqual(smallest_two_sided_p, .25)
         self.assertGreater(smallest_two_sided_p, asserted_alpha)
         challenger = stage_card_text("challenger", "candidate_review")
-        self.assertIn("under the stated design", challenger)
-        self.assertIn("statistically unreachable outcomes", challenger)
         self.assertNotIn("0.025", challenger)
         self.assertNotIn("three networks", challenger)
         # Finite exact counterexamples, one-sided exploratory tests, and valid
         # uncertain results must remain viable without arbitrary universal bars.
-        self.assertIn("Matching, contrary and inconclusive results must retain scientific meaning", challenger)
         self.assertIn("Do not demand optional stronger claims", challenger)
 
     def test_cannot_repair_and_investigator_duties_are_unchanged(self):

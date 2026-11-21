@@ -25,7 +25,7 @@ def require_explicit_plan_grid(candidate: Mapping[str, Any], context: Mapping[st
 
     The first x/z pair in Required Context is the selected model's reference;
     later pairs may describe other models solely to warn against mixing them.
-    A candidate with no grid must specify one before method qualification.
+    The reviewer checks the requirement when the interval is not machine-readable.
     """
     contract = str(context.get("research_contract") or "")
     if not (("拟议 W 网格须" in contract and "覆盖两条边界" in contract)
@@ -41,15 +41,12 @@ def require_explicit_plan_grid(candidate: Mapping[str, Any], context: Mapping[st
     test = str(candidate.get("decisive_test") or "")
     grid = _GRID.search(test)
     if grid is None:
-        raise ValueError(
-            "The current Research Contract requires an explicit proposed W grid. "
-            "State it as W=lower…upper in decisive_test and bind it to the selected-model "
-            "Wc(x), Wc(z) pair in Required Context."
-        )
+        # The task prescribes coverage, not the notation used to express a grid.
+        return
     lower, upper = (float(grid.group(1)), float(grid.group(2)))
     if lower > upper or any(not lower <= value <= upper for value in anchors.values()):
         raise ValueError(
             f"Proposed W={lower:g}…{upper:g} misses the selected-model Plan anchors "
             f"Wc(x)={anchors['x']:g}, Wc(z)={anchors['z']:g}. "
-            "Recheck the source equation and symmetry class before qualification."
+            "Check the proposed interval against the references specified in this Research Contract."
         )

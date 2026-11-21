@@ -66,9 +66,8 @@ def test_selected_skill_is_loaded_on_first_and_resumed_turn(workspace):
         assert "Loaded research chat skill: research-progress" in prompt
         assert "逐条说明每条主要路径研究了什么" in prompt
         assert "解释已经失败的尝试及失败原因" in prompt
-        assert "load research-intervention/SKILL.md" in prompt
-        assert "A progress/discussion recommendation is not authorization" in prompt
-        assert "do not ask for duplicate confirmation" in prompt
+        assert "independence of samples/networks" not in prompt
+        assert "依据原题判据" in prompt
     assert "执行你刚才的具体建议，但保留第二条路径" in backend.calls[1][0]
     assert backend.calls[1][1] == "fake-chat-thread"
     assert "Canonical SQLite science graph" in backend.calls[0][0]
@@ -115,10 +114,7 @@ def test_every_real_skill_body_reaches_fresh_and_resumed_turns(workspace, skill)
     for prompt, thread in backend.calls:
         assert body in prompt
         assert f"Source: {refs[skill].skill_md}" in prompt
-        assert "Scientific Model" in prompt
-        assert "1、2、3" in prompt
-        assert "不机械" in prompt
-        assert "A card click or a request to discuss is not acceptance" in prompt
+        assert "A card click" not in body  # Shared authorization lives in the native handbook.
         assert thread == "fake-chat-thread"
     assert acceptance in backend.calls[1][0]
     assert "Latest operator message (continue the existing thread)" in backend.calls[1][0]
@@ -156,11 +152,15 @@ def test_missing_binding_or_broken_database_does_not_invent_context_or_block_cha
     chat.send(state_dir, root, state, ident, {"content": "解释当前信息缺口"}, backend=backend)
     assert '"status": "database_error"' in backend.calls[0][0] or "Canonical SQLite graph unavailable" in backend.calls[0][0]
     assert "STALE_CANVAS_ONLY" not in backend.calls[0][0]
-    config = Path(state["runs"][0]["task_root"]) / "theory-master.config.json"
-    config.unlink()
+    task_root = Path(state["runs"][0]["task_root"])
+    (task_root / "research_plan.md").unlink()
+    chat.send(state_dir, root, state, ident, {"content": "当前原题是否可读？"}, backend=backend)
+    assert "Current Research Plan unavailable at the bound plan_path" in backend.calls[-1][0]
+    assert "Prior drafts cannot supply its terms" in backend.calls[-1][0]
+    (task_root / "theory-master.config.json").unlink()
     chat.send(state_dir, root, state, ident, {"content": "现在配置也缺失了"}, backend=backend)
-    assert '"binding_valid": false' in backend.calls[1][0]
-    assert "Inspect the binding before task writes" in backend.calls[1][0]
+    assert '"binding_valid": false' in backend.calls[-1][0]
+    assert "Inspect the binding before task writes" in backend.calls[-1][0]
 
 
 def test_chat_handbook_and_skill_catalog_reach_actual_sdk_developer_prompt(tmp_path, monkeypatch):
@@ -178,16 +178,13 @@ def test_chat_handbook_and_skill_catalog_reach_actual_sdk_developer_prompt(tmp_p
     assert "Research Chat runtime AGENTS.md" in prompt
     assert "Sciver Research Chat agent handbook" in prompt
     assert "scientific verdict" in prompt
-    assert "qualified by Lead/Challenger before formal H allocation" in prompt
-    assert "do not require repeated acceptance" in prompt
-    assert "When the conversation has reached a concrete executable proposal" in prompt
-    assert "Do not manufacture actions or ask for confirmation after every explanatory reply" in prompt
-    assert "Acceptance of plan edits alone does not authorize research start/resume" in prompt
-    assert "one use at the next fresh `frontier_proposal`" in prompt
-    assert "Human edits do not change graph facts, Judge verdicts, Hypothesis locks, or Goal completion" in prompt
-    assert "Do not infer execution authorization from selecting an object, quoting text, or opening Chat" in prompt
-    assert "Answer against the accepted numbered items" in prompt
-    assert "If one item fails, preserve and report earlier successful items" in prompt
+    for rule in ("Lead/Challenger qualification before H allocation",
+                 "number the applicable items", "A card click, source selection or discussion does not authorize writes",
+                 "load research-intervention/SKILL.md", "without repeat confirmation",
+                 "Approval to edit a plan alone does not authorize a run",
+                 "Human edits do not change graph facts, Judge verdicts, Hypothesis locks, or Goal completion",
+                 "partial success and pending effects", "Preserve historical contracts and verdicts"):
+        assert rule in prompt
     for ref in refs:
         assert str(ref.skill_md) in prompt
     assert "Research Chat runtime AGENTS.md" not in developer_instructions("judge")

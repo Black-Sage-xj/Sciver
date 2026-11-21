@@ -51,12 +51,9 @@ def test_preparation_acceptance_and_followup_receive_boundary_on_fresh_and_resum
     for role, prompt, thread in backend.calls:
         assert role == "research_chat" and thread == "execution-boundary-thread"
         assert "Loaded research chat skill: research-preparation" in prompt
-        assert "小尺寸复现、数值试算、原型实验、参数扫描" in prompt
-        assert "不能在筹备目录用 shell/Python 直接试跑" in prompt
-        assert "用户的“好的”不能使被跳过的前置步骤消失" in prompt
-        assert "查看已有图片/数据" in prompt
-        assert "不得在筹备科研对话中修改安装源码" in prompt
-        assert "The selected card is an initial workflow" not in prompt
+        assert "research_preparation.create_project" in prompt
+        assert "reviewed_revision" in prompt
+        assert "原题、公开附件和评分说明" in prompt
     assert bad_proposal in backend.calls[0][1]
     assert "Latest operator message (continue the existing thread)" in backend.calls[1][1]
     assert "再补两档更大的尺寸" in backend.calls[1][1]
@@ -69,8 +66,9 @@ def test_project_discussion_and_intervention_share_existing_task_boundary():
     """Changing the selected skill cannot turn Chat into an Investigator."""
     for skill in ("research-discussion", "research-intervention"):
         prompt = chat._skill_context({"mode": "project", "skill": skill})
-        assert "research-preparation/SKILL.md" in prompt
-        assert "SDK Cycle" in prompt
-        assert "直接运行" in prompt
-        assert ("科研脚本" if skill == "research-discussion" else "实验脚本") in prompt
-        assert "已有数据" in prompt
+        instructions = developer_instructions("research_chat")
+        assert skill in prompt
+        assert "research-preparation" in instructions
+        assert "authorized SDK Cycle" in instructions
+        assert "does not perform Investigator work through shell scripts" in instructions
+        assert "redrawing existing data" in instructions

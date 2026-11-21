@@ -250,7 +250,7 @@ class ResearchChatTests(unittest.TestCase):
         self.assertIn("notes/outcomes/132.md", prompt)
         self.assertIn("不得把它当成已完成实验结果", prompt)
         self.assertIn("Live Worker/scheduler identity check", prompt)
-        self.assertIn("current-running-status questions", prompt)
+        self.assertNotIn("independence of samples/networks", prompt)
 
     def test_legacy_orphaned_user_turn_becomes_retryable(self):
         ident = create(self.state_dir, self.state, {"mode": "project", "task_id": "a" * 16})["session_id"]
@@ -298,6 +298,8 @@ class ResearchChatTests(unittest.TestCase):
              {"content": "检验现有观察是否可复现"}, backend=InvalidPlanBackend())
         action = snapshot(self.state_dir, self.state, ident)["session"]["pending_action"]
         self.assertIn("notes.md", action["details"])
+        self.assertNotIn("关键反例", action["details"])
+        self.assertNotIn("竞争解释", action["details"])
         apply_action(self.state_dir, self.root, self.state, ident,
                      {"action_id": action["id"], "decision": "confirm"})
         self.assertTrue((work / "theory-master.config.json").is_file())

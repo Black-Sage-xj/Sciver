@@ -76,7 +76,7 @@ class JudgeLiteratureReporterPromptTest(unittest.TestCase):
         packaged = identities_root() / "reporter.md"
         source = Path(__file__).resolve().parents[1] / "identities" / "reporter.md"
         self.assertEqual(source.read_bytes(), packaged.read_bytes())
-        self.assertIn("NPZ/CSV", identity_block("reporter"))
+        self.assertIn("保留正式裁决的结论强度", identity_block("reporter"))
 
     def test_literature_novelty_is_actual_routable_stage(self):
         self.assertEqual(stage_for("literature", {}, {

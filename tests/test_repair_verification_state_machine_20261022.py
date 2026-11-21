@@ -361,9 +361,9 @@ class BoundedRepairVerificationTest(unittest.TestCase):
         self.assertEqual(projected["workspace_access"]["research_root"], "/research")
         self.assertEqual(projected["repaired_candidate"]["estimand"], "P(d)")
         card = stage_definition_text("challenger", "repair_verification")
-        for required in ("non-empty comparison set only where required", "matching, contrary and inconclusive",
-                         "uncertain effect or eventual negative/open result", "runs once"):
-            self.assertIn(required, card)
+        for key in ("original_candidate", "repaired_candidate", "original_blockers"):
+            self.assertIn(key, card)
+        self.assertNotIn("periodic aliasing", card)
 
     def test_fault_after_repair_persist_resumes_one_verification(self):
         with tempfile.TemporaryDirectory() as temp:

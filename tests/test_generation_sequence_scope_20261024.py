@@ -22,22 +22,6 @@ GRAPH = {"hypotheses": [], "current_frontiers": [], "lineage": []}
 class GenerationSequenceScope(unittest.TestCase):
     def test_scope_obligations_follow_task_requirements_in_both_thread_modes(self):
         # These assert delivered instructions, not that a model correctly applies them.
-        requirements = {
-            ("research_lead", "frontier_proposal"): (
-                "only when the task explicitly requires it", "terminology alone establishes neither restriction",
-                "If decisive_test depends on comparison", "Do not impose matching"),
-            ("challenger", "candidate_review"): (
-                "only when those requirements establish them", "terminology alone does not",
-                "only to actual empirical comparisons", "purely theoretical or existence proofs"),
-            ("research_lead", "candidate_selection"): (
-                "already-qualified set", "Do not reopen qualification", "select one unchanged"),
-            ("research_lead", "selection_repair"): (
-                "frozen Challenger blocker ledger", "COMPLETE revised decisive_test",
-                "do not add sequence or matching restrictions inferred only from terminology"),
-            ("challenger", "repair_verification"): (
-                "fixed checklist", "Do not renew the full novelty or Goal-priority review",
-                "only when established by the actual Goal", "terminology alone adds no obligation"),
-        }
         goals = (
             "Derive the complete signed shell-energy law and its far-field limit.",
             "Prove a matrix inequality over the stated deterministic class; no empirical comparison.",
@@ -73,8 +57,7 @@ class GenerationSequenceScope(unittest.TestCase):
                                 self.assertEqual(context[field][0]["blockers"][0]["id"], "definition")
                         else:
                             self.assertIn(goal, prompt)
-                        for rule in requirements[(role, stage)]:
-                            self.assertIn(rule, prompt)
+                        self.assertNotIn("Generation/shell terminology", stage_definition_text(role, stage))
                         self.assertNotIn("even as a local mechanism or prerequisite", prompt)
                         self.assertNotIn("Selected indices may serve only as internal diagnostics", prompt)
                         if stage == "candidate_selection":

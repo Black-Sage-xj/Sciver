@@ -19,9 +19,10 @@ def test_selected_model_reference_pair_is_required():
     require_explicit_plan_grid({"decisive_test": "Use W=25,25.5,…,32."}, CONTEXT)
 
 
-def test_absent_grid_is_repaired_when_plan_requires_it():
-    with pytest.raises(ValueError, match="explicit proposed W grid"):
-        require_explicit_plan_grid({"decisive_test": "Review methods without a grid."}, CONTEXT)
+def test_valid_interval_in_the_authors_notation_is_left_to_the_reviewer():
+    require_explicit_plan_grid(
+        {"decisive_test": "Sample W in [25, 32], increment 0.25."}, CONTEXT,
+    )
 
 
 def test_other_plans_do_not_inherit_this_numeric_gate():

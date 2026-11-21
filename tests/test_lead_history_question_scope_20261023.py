@@ -32,10 +32,6 @@ class LeadHistoryQuestionScope(unittest.TestCase):
                     self.assertIn("separate them from Judge conclusions", prompt)
                 self.assertNotIn("information beyond already terminal-adjudicated tests", prompt)
                 self.assertIn("Output contract:", prompt)
-        for prompt in helper.prompts("challenger", "candidate_review"):
-            self.assertIn("active/resolved claim without new uncertainty", prompt)
-            self.assertIn("topical overlap alone is insufficient", prompt)
-            self.assertIn("Do not demand the research answer at qualification", prompt)
         self.assertIsNone(history[0]["verdict"])
 
     def test_reparameterization_can_leave_every_prediction_unchanged(self):
@@ -60,36 +56,15 @@ class LeadHistoryQuestionScope(unittest.TestCase):
     def test_initial_and_continuation_require_history_difference_and_scientific_scale(self):
         helper = fixtures.InputQualificationEvidence()
         for prompt in helper.prompts("research_lead", "frontier_proposal"):
-            for rule in (
-                "Before proposing, search formal research history",
-                "beyond declared parents and recent Cycles",
-                "definitions/formula, actual test, verdict, scope",
-                "older defining or adverse results",
-                "titles or citations do not suffice",
-                "equivalent terms, mathematical descriptions and pagination",
-                "one keyword miss or first page does not establish novelty",
-                "what old results already imply, the remaining scientific unknown",
-                "renaming, reparameterizing or changing targets/scope alone does not establish novelty",
-                "which new result would distinguish it from the closest live alternative",
-                "Explain the substantive change from prior claims and what could contradict it",
-                "Expose material unavailable history rather than claim novelty",
-                "Avoid umbrella programs, filler, preparation-only work and fragments that add no scientific information",
-            ):
-                self.assertIn(rule, prompt)
-            for preserved in (
-                "A useful counterexample, bounded mechanism",
-                "negative result or high-risk claim can advance the Goal without completing it",
-                "unknown derivations and the decisive experiment remain Investigator work",
-                "one coherent, independently adjudicable scientific claim",
-                "Indispensable premises need a credible in-scope route",
-            ):
-                self.assertIn(preserved, prompt)
+            self.assertIn("pending/parked claims and unadjudicated work", prompt)
+            self.assertIn("beyond declared parents and recent Cycles", prompt)
+            self.assertNotIn("A descriptive reproduction alone is insufficient", prompt)
             self.assertIn("Output contract:", prompt)
         self.assertIn("不得读取、解析或直接修改它", identity_block("research_lead"))
         rendered = stage_definition_text("research_lead", "frontier_proposal")
         # Scientific scale is one discriminating claim, rather than an
         # obsolete character ceiling that predates the source-bound feedback.
-        self.assertIn("Each Candidate is one Cycle-decidable proposition", rendered)
+        self.assertIn("one Cycle-decidable proposition", rendered)
         self.assertEqual(rendered.count("Current objective:"), 1)
         self.assertEqual(rendered.count("Procedure for this stage only:"), 1)
 

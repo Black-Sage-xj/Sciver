@@ -68,6 +68,15 @@ def test_next_turn_uses_current_plan_workers_and_new_native_thread(created):
     row = chat._read(root, ident)
     row.update(codex_thread_id="old-preparation-thread", agent_policy_version=chat._AGENT_POLICY_VERSION)
     chat._write(root, row)
+    # The frozen preparation describes an earlier gate. Resume must read the edited Task.
+    from tm_observer.research_plan_editor import read_plan, save_section
+    task = next(item for item in state["runs"] if item["observer_id"] == receipt["observer_id"])
+    section = next(item for item in read_plan(search, task)["sections"] if item["name"] == "Final Gate")
+    updated_gate = "Submit the two estimates requested in the original question."
+    save_section(search, task, {
+        "section": "Final Gate", "text": section["text"].replace("Resolve the signed prediction with evidence.", updated_gate),
+        "change_reason": "Restore the source question.", "expected_revision": section["revision"],
+    })
     fake = Backend()
     chat.send(state_dir, search, state, ident,
               {"content": "那我们怎么开始科研呢", "skill": chat.PREPARATION_SKILL}, backend=fake)
@@ -78,6 +87,8 @@ def test_next_turn_uses_current_plan_workers_and_new_native_thread(created):
     assert "Loaded research chat skill: research-discussion" in prompt
     assert "Live Worker/scheduler identity check" in prompt
     assert "Distinguish the competing mechanisms" in prompt
+    assert updated_gate in prompt and "Resolve the signed prediction" not in prompt
+    assert "Resolve the signed prediction" in (Path(receipt["snapshot_path"]) / "research_plan.md").read_text()
     assert "Task console: " + receipt["task_href"] in prompt
     assert "There is no scientific Task" not in prompt
     assert "standalone pilot results are not Judge evidence" in prompt

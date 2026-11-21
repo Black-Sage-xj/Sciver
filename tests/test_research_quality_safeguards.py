@@ -174,12 +174,13 @@ def test_lead_can_exit_without_inventing_a_scientific_candidate(kind, tmp_path):
 
 def test_runtime_stage_rules_cover_sources_definitions_information_and_history():
     lead = procedure_card_text("research_lead", "frontier_proposal")
-    challenger = procedure_card_text("challenger", "candidate_review")
-    assert "empirical-composition weighting" in lead
+    review = procedure_card_text("challenger", "candidate_review")
+    for text in (lead, review):
+        assert "evaluation_materials" in text and "evaluation_history" in text
+        assert "protected_final" in text
     assert "no_new_science" in lead
-    assert "whether labels were used" in challenger
-    assert "unlabeled adaptation" in challenger
-    assert "no universal significance cutoff" in challenger
+    for field in ("source_fidelity", "definition_consistency", "discriminating_test", "evidence_identity"):
+        assert field in review
 
 
 @pytest.mark.parametrize("checkpoint", [False, True])

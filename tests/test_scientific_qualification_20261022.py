@@ -18,13 +18,6 @@ class ScientificQualification20261022(unittest.TestCase):
 
     def test_lead_compares_scientific_value_not_gate_bookkeeping(self):
         # Stage owns scientific criteria; Contract owns the two named output fields.
-        for phrase in (
-            "consequential unmet Goal", "Final Gate", "linked terminal Outcomes",
-            "closest live alternative", "inconclusive results",
-            "Scientific Model", "Indispensable premises need a credible in-scope route",
-        ):
-            with self.subTest(phrase=phrase):
-                self.assertIn(phrase, self.lead)
         projection = role_contract("research_lead", phase="frontier_proposal").prompt_projection()
         self.assertIn("goal_advance", projection)
         self.assertIn("why_now", projection)
@@ -32,36 +25,43 @@ class ScientificQualification20261022(unittest.TestCase):
     def test_positive_local_result_is_still_eligible(self):
         # A bounded implication can be useful before the full theorem is resolved.
         self.assertIn("claim can advance the Goal without completing it", self.lead)
-        self.assertIn("a local result bears on a broader claim only within its actual logical implication", self.challenger)
-        self.assertIn("necessary prerequisite before selection", self.challenger)
-        self.assertIn("bounded mechanism, negative result or high-risk", self.lead)
         self.assertIn("necessary local prediction", self.lead)
         self.assertIn("eventual negative/open result is not itself a blocker", self.challenger)
 
     def test_finite_examples_do_not_establish_universal_bound(self):
-        # A finite list of string examples cannot prove a universal invariant.
+        candidate = {"hypothesis": "Normalization preserves the checksum of every finite string.",
+                     "scope": "All finite strings.", "decisive_test": "Verify the invariant on ten examples."}
+        context = stage_context("challenger", "candidate_review", {
+            "candidate": [candidate], "agent_graph": {},
+        })
+        self.assertEqual(context["candidate"][0]["frozen_objective"], candidate)
         self.assertIn("Match uncertainty and proof precision to the scientific distinction claimed", self.lead)
-        self.assertIn("Indispensable premises need a credible in-scope route", self.lead)
-        self.assertIn("Matching, contrary and inconclusive results", self.challenger)
 
     def test_negative_prediction_still_informs_goal(self):
         # A counterexample can delimit a synthetic recurrence claim.
-        self.assertIn("Matching, contrary and inconclusive results each need an honest interpretation", self.lead)
         self.assertIn("negative", self.challenger)
         self.assertNotIn("all hypotheses must pass", self.challenger)
 
     def test_compound_claims_receive_independent_blocker_review(self):
         # An undefined estimator and missing evaluation control are separate blockers.
-        self.assertIn("one coherent, independently adjudicable scientific claim", self.lead)
+        blockers = [
+            {"problem": "Estimator undefined", "required_change": "Specify the stated estimator."},
+            {"problem": "Needed control absent", "required_change": "Identify an admissible control."},
+        ]
+        review = {"candidate_id": "compound", "verdict": "revise",
+                  "reason": "The current test depends on both conditions.", "blocking_issues": blockers}
+        contract = role_contract("challenger", phase="candidate_review")
+        contract.validate({"reviews": [review]}, {"candidates": [{"id": "compound"}]})
+        projected = stage_context("challenger", "repair_verification", {
+            "original_review": review, "agent_graph": {},
+        })
+        self.assertEqual(projected["original_blockers"], blockers)
         self.assertIn("all visible independent blockers", self.challenger)
-        self.assertIn("arbitrary sample sizes/cutoffs", self.challenger)
 
     def test_unavailable_essential_precondition_is_a_design_issue(self):
         # A required lemma without a credible route cannot be fixed by wording alone.
-        self.assertIn("Indispensable premises need a credible in-scope route", self.lead)
         self.assertIn("essential route is demonstrably unavailable", self.challenger)
         self.assertIn("unchanged hypothesis/scope/estimand", self.challenger)
-        self.assertIn("Reject the current design, not its general topic", self.challenger)
 
     def test_contract_and_prompt_assembly_unchanged(self):
         lead_contract = role_contract("research_lead", phase="frontier_proposal")
@@ -96,15 +96,12 @@ class ScientificQualification20261022(unittest.TestCase):
             self.assertIn("Verify string normalization invariants", prompt)
             self.assertIn("credible", prompt)
             self.assertIn("Output contract:", prompt)
-            if role == "research_lead":
-                self.assertIn("Response-fitted lookup or interpolation alone is a baseline", prompt)
-            else:
-                self.assertIn("descriptive reproduction alone is insufficient", prompt)
-                self.assertIn("closest prior claim and relevant simpler explanations or existing methods", prompt)
+            self.assertIn("Known inputs only", prompt)
+            self.assertIn("Resolve all declared input classes", prompt)
+            self.assertNotIn("descriptive reproduction alone is insufficient", prompt.casefold())
         self.assertIn("Do not reopen qualification", stage_card_text("research_lead", "candidate_selection"))
-        self.assertIn("all original blockers are closed", stage_card_text("challenger", "repair_verification"))
-        # The method-stage and source/model guards enlarged these definitions;
-        # keep a bounded budget without freezing the older smaller prompt size.
+        verification = role_contract("challenger", phase="repair_verification")
+        self.assertIn("confirmed", verification.prompt_projection())
         self.assertLess(len(self.lead), 12500)
         self.assertLess(len(self.challenger), 10500)
 

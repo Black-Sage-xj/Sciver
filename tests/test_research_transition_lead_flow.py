@@ -70,7 +70,7 @@ def test_challenger_sees_transition_with_main_and_other_sources():
     assert background["lineage_other_node_ids"] == ["H-0002"]
     procedure = procedure_card_text("challenger", "candidate_review")
     assert "Wording quality alone is not a scientific qualification blocker" in procedure
-    assert "unresolved, not failures" in procedure
+    assert "transition" not in prompt_context["candidate"][0]["frozen_objective"]
 
 
 def test_display_context_preserves_only_frozen_reasoning_without_new_output_fields():

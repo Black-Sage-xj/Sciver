@@ -56,7 +56,7 @@ def test_assembled_prompt_preserves_local_gap_origin_and_report_authority():
                                   contract_ref=contract.ref, contract_schema=contract.prompt_projection(),
                                   context=context, write_rule="No direct file writes.")
     for phrase in ("graph_summary", "not a report prefix", "local unresolved gap",
-                   "inherited knowledge", "next-frontier", "historical_reanalysis", "origin_cycle"):
+                   "propose the next frontier", "historical_reanalysis", "origin_cycle"):
         assert phrase in prompt
     lead = role_contract("research_lead", phase="hypothesis_display").prompt_projection()
     assert "discriminating scientific difference" in lead

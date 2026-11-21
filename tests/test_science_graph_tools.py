@@ -134,7 +134,7 @@ def test_challenger_search_surface_has_no_global_view_and_decision_reads_are_bou
     assert "Stop once the comparison needed for this decision is established" in review
     assert "bounded and input-only" in review
     assert "beyond declared parents and recent Cycles" in review
-    assert "active/resolved claim without new uncertainty" in review
+    assert "A descriptive reproduction alone is insufficient" not in review
 
 
 def test_hypothesis_detail_text_is_bounded_and_annotated(tmp_path: Path):

@@ -42,78 +42,52 @@ class InputQualificationEvidence(unittest.TestCase):
             contrasts = [(a[0], b[0]) for i, a in enumerate(records) for b in records[i+1:]
                          if a[1] == b[1] and a[2] != b[2] and {1, 2} <= a[3] & b[3]]
             self.assertEqual(len(contrasts), expected)
-        rules = {
-            ("research_lead", "frontier_proposal"): (
-                "joint/conditional support", "catalog counts do not establish it",
-                "cite sources and observed results", "bounded and input-only",
-                "do not fit responses, select samples from outcomes",
-            ),
-            ("challenger", "candidate_review"): (
-                "Joint/conditional support checks apply only", "Catalog counts or a check-later plan",
-                "cite the source and observed result", "bounded and input-only",
-                "no response fitting, outcome-based sample selection",
-            ),
-            ("challenger", "repair_verification"): (
-                "joint/conditional support only when established", "comparison set only where required",
-                "cite source/observed result", "bounded cheap input-side checks",
-                "no response fitting, outcome-based sample selection",
-            ),
-        }
-        for (role, stage), instructions in rules.items():
-            for prompt in self.prompts(role, stage):
-                with self.subTest(role=role, stage=stage):
-                    for instruction in instructions:
-                        self.assertIn(instruction, prompt)
+        # The comparison design is task-specific; preserve it in either prompt mode.
+        rule = "Compare two distinct eligible records within the declared control."
+        for role, stage in (("research_lead", "frontier_proposal"), ("challenger", "candidate_review"),
+                            ("challenger", "repair_verification")):
+            for prompt in self.prompts(role, stage, {"research_contract": rule}):
+                self.assertIn(rule, prompt)
+                self.assertNotIn("joint/conditional support", prompt)
 
     def test_missing_cheap_check_is_not_silently_deferred_at_any_review(self):
-        expected = {
-            "candidate_review": ("verify cheap necessary input/metadata conditions", "check-later plan do not establish necessary eligibility"),
-            "repair_verification": ("omitted cheap necessary checks remain unresolved", "existing summaries or bounded cheap input-side checks"),
-        }
-        for stage, rules in expected.items():
-            for prompt in self.prompts("challenger", stage):
-                for rule in rules:
-                    self.assertIn(rule, prompt)
-                self.assertIn("Investigator", prompt)
-        for prompt in self.prompts("research_lead", "frontier_proposal"):
-            self.assertIn("expose missing indispensable checks", prompt)
-            self.assertIn("unknown derivations and the decisive experiment remain Investigator work", prompt)
+        blocker = {"id": "missing-input", "problem": "Necessary source file not located.",
+                   "required_change": "Identify an accessible source of those inputs."}
+        for prompt in self.prompts("challenger", "repair_verification", {"original_review": {"blocking_issues": [blocker]}}):
+            self.assertIn(blocker["problem"], prompt)
+            self.assertIn(blocker["required_change"], prompt)
+            self.assertIn("unresolved", prompt)
+        for prompt in self.prompts("challenger", "candidate_review"):
+            self.assertIn("verify cheap necessary input/metadata conditions", prompt)
 
     def test_scientific_unknowns_remain_research_and_matching_is_conditional(self):
         # An informative high-risk test is not an advance-proof demand.
-        for prompt in self.prompts("challenger", "candidate_review"):
-            for rule in ("do not impose matching on a design that does not require it",
-                         "credible in-scope route and meaningful test remain",
-                         "Do not demand optional stronger claims", "uncertain effect",
-                         "eventual negative/open result is not itself a blocker",
-                         "purely theoretical or existence proofs need no data matching or statistical sample requirement"):
-                self.assertIn(rule, prompt)
-        for prompt in self.prompts("challenger", "repair_verification"):
-            self.assertIn("unfinished science with a credible route is Investigator work", prompt)
-            self.assertIn("Do not renew the full novelty or Goal-priority review", prompt)
-            self.assertIn("no response fitting, outcome-based sample selection or full experiment", prompt)
+        claim = {"hypothesis": "Every admitted sequence terminates.", "scope": "Finite rewrite systems.",
+                 "decisive_test": "Produce a derivation or a counterexample."}
+        for prompt in self.prompts("challenger", "candidate_review", {"candidate": [claim]}):
+            for value in claim.values():
+                self.assertIn(value, prompt)
+            self.assertNotIn("joint/conditional support", prompt)
+            self.assertIn("Do not demand optional stronger claims", prompt)
 
     def test_history_distinctions_remain_in_actual_assembled_context(self):
         # These are design fixtures, not predictions of model judgments. All
         # cases reach the reviewer unchanged and retain relevant generic rules.
         cases = (
-            ("paraphrased duplicate", "Repeat the adjudicated model under a renamed parameter",
-             "Compare its new information with the closest prior claim"),
-            ("new scope", "Test a local claim on a distinct admissible scope with new uncertainty",
-             "local result bears on a broader claim only within its actual logical implication"),
-            ("mechanism repair", "Old model failed; test a specified additional mechanism against that baseline",
-             "relevant adverse or competing results from primary reports"),
-            ("new scientific work", "A credible in-scope derivation remains unknown and is the scientific test",
-             "credible in-scope route and meaningful test remain"),
+            ("paraphrased duplicate", "Repeat the adjudicated model under a renamed parameter"),
+            ("new scope", "Test a local claim on a distinct admissible scope with new uncertainty"),
+            ("mechanism repair", "Test a specified additional mechanism against the earlier baseline"),
+            ("new scientific work", "Derive a previously unknown relation under the stated conditions"),
         )
-        for label, claim, instruction in cases:
+        for label, claim in cases:
             candidate = {"id": "cand-offline", "hypothesis": claim, "scope": "bounded",
                          "decisive_test": "Use existing inputs; test the prespecified distinction",
                          "why_now": label, "goal_advance": "Resolve an unmet scoped question"}
             for prompt in self.prompts("challenger", "candidate_review", {"candidate": [candidate]}):
                 with self.subTest(case=label):
                     self.assertIn(claim, prompt)
-                    self.assertIn(instruction, prompt)
+                    self.assertIn(candidate["decisive_test"], prompt)
+                    self.assertIn(label, prompt)
 
     def test_existing_contracts_and_stage_separation_remain(self):
         review = role_contract("challenger", phase="candidate_review")

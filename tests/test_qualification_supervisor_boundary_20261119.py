@@ -254,6 +254,11 @@ def test_typed_empty_lead_exit_reaches_the_same_spv_skill(tmp_path, monkeypatch,
     trace = [json.loads(line) for line in (wf.cycle_dir / "supervisor/session.jsonl").read_text().splitlines()]
     normalizations = [row for row in trace if row["kind"] == "normalization"]
     original_prompt = next(row["content"] for row in trace if row["kind"] == "prompt")
+    instructions, _, supplied = original_prompt.partition("\nTask evidence:\n")
+    assert json.loads(supplied)["final_gate"] == wf.spec.final_gate
+    assert "a protected evaluation claim only when that separation is required" in instructions
+    assert "requested reproduction, prediction or delivery" in instructions
+    assert "why the result would change the research direction" not in instructions
     assert "candidate.lineage_other_node_ids is a literal JSON array" in original_prompt
     assert "Use [] if there are no additional source IDs." in original_prompt
     assert len(backend.supervisor_contexts) == 1

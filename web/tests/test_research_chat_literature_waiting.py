@@ -9,7 +9,7 @@ import signal
 import pytest
 
 from tests.test_literature_service import LiteratureBackend, Retriever
-from theory_master.skills import role_skills, skills_root
+from theory_master.skills import developer_instructions, skills_root
 from tm_observer import research_chat as chat
 from tm_observer import research_chat_literature as literature
 
@@ -98,28 +98,14 @@ def test_cli_progress_keeps_signal_cancellation_and_handler_restoration(
 
 @pytest.mark.parametrize('mode,skill', [('preparation', 'research-preparation'),
                                        ('project', 'research-discussion')])
-def test_actual_loaded_skill_exposes_waiting_and_failure_exceptions(mode, skill):
+def test_native_handbook_owns_waiting_contract_for_both_turn_types(mode, skill):
     prompt = chat._skill_context({'mode': mode, 'skill': skill})
     source = skills_root() / skill / 'SKILL.md'
     assert str(source) in prompt and source.read_text(encoding='utf-8') in prompt
-    assert 'yield_time_ms=30000' in prompt and '`60000`' in prompt
-    assert 'write_stdin' in prompt and '30–60 秒' in prompt
-    assert '阶段没有变化时继续等待，不反复执行' in prompt
-    assert '进程结束后再读最终 JSON 回执、报告和来源访问层级' in prompt
-    assert '不启动重复作业' in prompt
-    assert '等待约定不阻止取消或有依据的故障诊断' in prompt
-    assert '恢复仍使用同一 `job_id`' in prompt
-    assert 'SDK Cycle' in prompt
-
-
-def test_packaged_chat_skills_are_the_runtime_sources_and_share_waiting_contract():
-    refs = {ref.directory: ref for ref in role_skills('research_chat')}
-    contracts = []
-    for name in ('research-preparation', 'research-discussion'):
-        path = refs[name].skill_md
-        assert path == skills_root() / name / 'SKILL.md'
-        text = path.read_text(encoding='utf-8')
-        contracts.append(next(paragraph for paragraph in text.split('\n\n')
-                              if paragraph.startswith('Literature CLI 同步执行')))
-    assert contracts[0] == contracts[1]
+    instructions = developer_instructions('research_chat')
+    for rule in ('yield_time_ms=30000', 'write_stdin', '30–60 second intervals', 'final JSON',
+                 'instead of polling files or starting another job', 'cancellation, failures and diagnostics',
+                 'resume the same job with `--job-id`', 'authorized SDK Cycle'):
+        assert rule in instructions
+    assert 'write_stdin' not in prompt
     assert not (Path(__file__).resolve().parents[2] / 'skills').exists()

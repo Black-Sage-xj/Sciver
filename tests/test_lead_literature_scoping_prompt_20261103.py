@@ -34,23 +34,16 @@ def prompts(role: str, stage: str) -> tuple[str, str]:
 class PreproposalLiteraturePromptTests(unittest.TestCase):
     def test_lead_research_and_conditional_detour_reach_both_prompt_paths(self):
         for prompt in prompts("research_lead", "frontier_proposal"):
-            for phrase in (
-                "bounded scientific scoping", "one necessary discriminating consequence",
-                "external scholarship would usefully map plausible mechanisms",
-                "before returning candidates",
-                "Local sources sufficient for this decision do not require an external search",
-                "Literature supplies external evidence, not the scientific proposition",
-                "no pre-proven blocker or guaranteed change of hypothesis is required",
-                "make Literature mandatory each Cycle",
-            ):
-                self.assertIn(phrase, prompt)
+            for field in ("needs_literature", "landscape", "targeted_source", "novelty_check"):
+                self.assertIn(field, prompt)
+            self.assertIn("Local sources sufficient for this decision do not require an external search", prompt)
 
     def test_literature_and_repair_boundaries_reach_prompt(self):
         for prompt in prompts("literature", "landscape"):
             self.assertIn("source-backed distinctions and assumptions", prompt)
             self.assertIn("without proposing or selecting a Hypothesis", prompt)
         for prompt in prompts("challenger", "repair_verification"):
-            self.assertIn("Recheck the whole necessary route", prompt)
+            self.assertIn("original_blockers", prompt)
             self.assertIn("inability to execute is not a scientific inconclusive result", prompt)
 
     def test_detour_remains_one_exclusive_request_or_local_candidate(self):

@@ -51,9 +51,9 @@ def test_empty_workspace_starts_preparation_and_loads_actual_skill_on_every_turn
         assert role == "research_chat" and thread == "preparation-thread"
         assert "Loaded research chat skill: research-preparation" in prompt
         assert "没有正式 Task" in prompt
-        assert "Do not demand a complete research contract" in prompt
+        assert "只问影响当前选择的缺项" in prompt
         assert "No separate Web controller" not in prompt
-        assert "do not invent papers" in prompt
+        assert "文献调研或方法建议须有问题依据" in prompt
         assert str(prep.workspace(state_dir, ident)) in prompt
         assert "research_preparation.update" in prompt
     assert "A preliminary observation" in fake.calls[-1][1]

@@ -40,6 +40,21 @@ class CompleteHandoffPromptTest(unittest.TestCase):
         self.assertIn("this observer/legacy Stage does not replace", card)
         self.assertIn("limits in each scientific statement", card)
 
+    def test_public_submission_follows_declared_format(self):
+        from theory_master.public_submission import SCHEMA, PYTHON_SCHEMA
+
+        for declaration in (
+            {"schema": SCHEMA, "json_schema": {"type": "object"}},
+            {"schema": PYTHON_SCHEMA, "filename": "model.py",
+             "callable": {"name": "predict", "parameters": ["x"]}, "allowed_imports": []},
+        ):
+            context = {**self._context("investigate"), "public_submission": declaration}
+            for layout in ("v1", "v2"):
+                with self.subTest(schema=declaration["schema"], layout=layout):
+                    goal = investigator_goal("investigate", context, layout=layout)
+                    self.assertIn("format declared by Setup Context.public_submission", goal)
+                    self.assertNotIn("public JSON submission", goal)
+
     def test_rework_requires_actual_resolution_not_partial_findings(self):
         goal = investigator_goal("judge_rework", self._context("judge_rework"), layout="v2")
         self.assertIn("Independent B comparison required", goal)

@@ -426,7 +426,7 @@ class OperationalGuardrailTest(unittest.TestCase):
 
     def test_frontier_proposal_prioritizes_remaining_goal_gap_over_open_science(self):
         lead = stage_definition_text("research_lead", "frontier_proposal")
-        self.assertIn("consequential unmet Goal, Research Contract, Final Gate or necessary prerequisite", lead)
+        self.assertIn("goal_gate_attention", lead)
         self.assertNotIn("remaining_goal_gap", lead)
         self.assertNotIn("remaining_gap", lead)
         self.assertIn("Avoid umbrella programs, filler, preparation-only work", lead)

@@ -100,10 +100,11 @@ def test_explicit_budget_increase_resumes_same_job_and_keeps_progress_readable(p
     assert manifest['request']['max_rounds'] == 2 and manifest['request']['max_sources'] == 3
     calls_before = len(backend.calls), len(retrieve.calls)
     for limits in ({}, {'max_rounds': 1, 'max_sources': 1}):
-        literature.run_study(state, search, ident, request(job_id=first['job_id'], **limits),
+        literature.run_study(state, search, ident, {'query': QUERY, 'job_id': first['job_id'], **limits},
                              backend=backend, retriever=retrieve)
         current = json.loads(Path(resumed['manifest']).read_text())['request']
         assert current['max_rounds'] == 2 and current['max_sources'] == 3
+        assert current['scope'] == SCOPE
     assert (len(backend.calls), len(retrieve.calls)) == calls_before
 
 

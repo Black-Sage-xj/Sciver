@@ -25,11 +25,10 @@ class LeadFrontierStatusPromptTest(unittest.TestCase):
 
     def test_parked_continuation_requires_new_science(self):
         self.assertIn("continue parked H unchanged", self.stage)
-        self.assertIn("A new Candidate from historical work must be scientifically distinct", self.stage)
+        self.assertNotIn("A descriptive reproduction alone is insufficient", self.stage)
 
     def test_closed_can_derive_new_h_without_reopening(self):
         self.assertIn("reopen closed H", self.stage)
-        self.assertIn("scientifically distinct", self.stage)
         self.assertIn("including closed H", self.procedure)
 
     def test_history_not_a_second_outcome(self):
@@ -99,9 +98,8 @@ class FrontierMaintenanceContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no phase contract"):
             role_contract("reporter", phase="canvas_maintenance")
         identity = (identities_root() / "reporter.md").read_text(encoding="utf-8")
-        self.assertIn("不改变候选、Scientific Model、Judge verdict", identity)
-        self.assertIn("Hypothesis 科学状态或前沿状态", identity)
-        self.assertIn("下一 Cycle 的候选由 Research Lead 提出", identity)
+        self.assertIn("不重新运行研究、产生证据、改变图谱状态或选定下一轮方向", identity)
+        self.assertIn("依据 SDK 提供的正式科学记录", identity)
         card = stage_card_text("research_lead", "frontier_maintenance")
         self.assertEqual(set(role_contract("research_lead", phase="frontier_maintenance").prompt_schema["updates"][0]), {"hypothesis_id", "status", "reason", "remaining_question", "dependency", "reopen_basis"})
 

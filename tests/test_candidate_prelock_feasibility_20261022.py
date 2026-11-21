@@ -71,12 +71,12 @@ class PrelockScientificFeasibilityOracle(unittest.TestCase):
                 self.assertNotIn(domain_specific.lower(), body.lower())
 
         self.assertIn("existing inputs/metadata", self.lead_procedure)
-        self.assertIn("comparison eligibility", self.lead_procedure)
-        self.assertIn("eligible independent units", self.lead_procedure)
-        self.assertIn("required comparator/contrast", self.review_procedure)
-        self.assertIn("credible essential route", self.review)
-        self.assertIn("comparison eligibility, matching or controls", self.lead_procedure)
-        self.assertIn("do not impose matching on a design that does not require it", self.review_procedure)
+        claim = {"hypothesis": "The two encodings agree.", "scope": "Exactly matched input pairs.",
+                 "decisive_test": "Check paired outputs only among eligible encodings."}
+        prompt = self._challenger_prompt(claim)
+        for value in claim.values():
+            self.assertIn(value, prompt)
+        self.assertNotIn("fixture-category", prompt)
 
     def test_uncertainty_and_common_support(self):
         # Illustrative overlapping intervals: point estimates exist, but they
@@ -88,12 +88,10 @@ class PrelockScientificFeasibilityOracle(unittest.TestCase):
 
         self.assertIn("uncertainty", self.lead.lower())
         self.assertIn("uncertainty and proof precision", self.lead.lower())
-        self.assertIn("for empirical designs also assess independent units", self.review)
-        self.assertIn("statistically unreachable outcomes under the stated design", self.review)
-        self.assertIn("independent units", self.lead_procedure)
-        self.assertIn("uncertainty/error budget", self.lead_procedure)
-        self.assertIn("joint/conditional support", self.lead_procedure)
-        self.assertIn("can in principle distinguish the stated outcomes", self.lead_procedure)
+        claim = {"hypothesis": "The difference is positive.", "scope": "Two uncertain estimates.",
+                 "decisive_test": "Compare the lower bound on the contrast with zero."}
+        prompt = self._challenger_prompt(claim)
+        self.assertIn(claim["decisive_test"], prompt)
         self.assertIn("credible in-scope route", self.review)
         self.assertIn("Do not demand the research answer at qualification", self.review)
 
@@ -107,12 +105,12 @@ class PrelockScientificFeasibilityOracle(unittest.TestCase):
             "a local contrary result refutes H only if it contradicts a necessary local prediction",
             self.lead,
         )
-        self.assertIn("local result bears on a broader claim only within its actual logical implication", self.review)
+        self.assertIn("necessary local prediction", self.lead)
         self.assertIn("negative", self.lead.lower())
         self.assertIn("eventual negative/open result is not itself a blocker", self.review)
         self.assertIn("uncertain effect", self.review.lower())
         self.assertIn("credible in-scope route and meaningful test remain", self.review)
-        self.assertIn("Reject the current design, not its general topic", self.review)
+        self.assertNotIn("A descriptive reproduction alone is insufficient", self.review)
 
     def test_stage_contract_separation_and_single_delivery(self):
         for role, stage, card, procedure in (
@@ -190,11 +188,10 @@ class PrelockScientificFeasibilityOracle(unittest.TestCase):
                 prompt = self._challenger_prompt(candidate)
                 self.assertIn(candidate["hypothesis"], prompt)
                 self.assertIn("credible in-scope route", prompt)
-                self.assertIn("matching, contrary and inconclusive", prompt.lower())
-                self.assertIn("purely theoretical or existence proofs need no data matching or statistical sample requirement", prompt)
+                self.assertIn(candidate["scope"], prompt)
+                self.assertIn(candidate["decisive_test"], prompt)
                 for domain_specific in ("fixture-category", "unique-0", "synthetic-record"):
                     self.assertNotIn(domain_specific.lower(), prompt.lower())
-        self.assertIn("do not impose matching on a design that does not require it", self.review_procedure)
 
     def test_synthetic_scientific_definitions_reach_challenger_without_rewriting(self):
         candidates = (

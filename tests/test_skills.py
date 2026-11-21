@@ -102,7 +102,7 @@ class SkillRegistryTest(unittest.TestCase):
         self.assertIsNotNone(loaded)
         self.assertEqual(loaded.skill_md, expected)
         body = ref.skill_md.read_text(encoding="utf-8")
-        self.assertIn("不能只核对点估计或优化收敛", body)
+        self.assertIn("若结论取决于误差估计，也核对能改变判断的不确定性计算", body)
         self.assertIn("不要求统一校正公式、样本阈值或额外大规模模拟", body)
         self.assertIn("拟合前明确的方法选择", body)
         self.assertIn("后选的判断规则也不能追称", body)

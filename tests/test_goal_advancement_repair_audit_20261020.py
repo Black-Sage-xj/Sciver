@@ -99,8 +99,7 @@ class QualificationRepairAuditTest(unittest.TestCase):
     def test_goal_advancement_is_scientific_review_not_success_guarantee(self):
         lead = stage_card_text("research_lead", "frontier_proposal")
         challenger = stage_card_text("challenger", "candidate_review")
-        self.assertIn("Matching, contrary and inconclusive results each need an honest interpretation", lead)
-        self.assertIn("Matching, contrary and inconclusive results", challenger)
+        self.assertIn("negative result or high-risk claim can advance the Goal", lead)
         self.assertIn("eventual negative/open result is not itself a blocker", challenger)
         self.assertIn("eventual negative/open result is not itself a blocker when a credible in-scope route and meaningful test remain", challenger)
 

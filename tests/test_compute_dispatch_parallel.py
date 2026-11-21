@@ -255,7 +255,7 @@ class ComputeDispatchParallelTests(unittest.TestCase):
         self.assertIn("--dry-run", doc)
         self.assertIn("parallel_units.py", doc)
         self.assertIn("重新评估", ndoc)
-        self.assertIn("compute-dispatch/scripts/parallel_units.py", ndoc)
+        self.assertIn("加载 compute-dispatch", ndoc)
         block = skill_prompt_block("investigator")
         self.assertIn(str(compute.skill_md), block)
 
