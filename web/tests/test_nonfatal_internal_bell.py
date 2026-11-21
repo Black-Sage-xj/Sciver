@@ -55,8 +55,11 @@ def test_bell_only_counts_actionable_stops():
     assert "tm.internal.incidents.seen.v1" not in BELL_SCRIPT
     assert "tm.supervisor.notices.v1" in BELL_SCRIPT
     assert "const unread=visible.filter(key=>!read.has(key)).length" in BELL_SCRIPT
-    assert "clear.textContent=\"清除\"" in BELL_SCRIPT
-    assert "待处理通知" in BELL_HTML
+    assert "clear.textContent=\"隐藏通知\"" in BELL_SCRIPT
+    from bs4 import BeautifulSoup
+    bell = BeautifulSoup(BELL_HTML, "html.parser")
+    assert bell.select_one("[data-notices-toggle]")["aria-label"] == "系统消息"
+    assert {x["data-notices-filter"] for x in bell.select("[data-notices-filter]")} == {"all", "system", "scientific"}
     assert "已查阅" in BELL_SCRIPT
 
 

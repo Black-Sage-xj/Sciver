@@ -957,12 +957,14 @@ class WebTests(unittest.TestCase):
                 "goal", "research_contract", "final_gate", "scientific_model_summary",
                 "agent_graph", "agent_graph_reuse", "science_graph_tools", "running_hypotheses",
                 "operator_guidance", "recent_execution_limits", "recent_qualification_stops",
-                "qualification_feedback", "lead_literature_result", "workspace_access",
+                "qualification_feedback", "lead_literature_result", "supplemental_research_inputs",
+                "registered_fixture_inputs", "prequalification_holdout", "workspace_access",
             ),
         )
         self.assertEqual(
             STAGE_CONTEXT_FIELDS[("investigator", "investigate")],
-            ("frozen_objective", "qualification_handoff", "previous_scientific_delta", "workspace_access"),
+            ("frozen_objective", "qualification_handoff", "previous_scientific_delta", "workspace_access",
+             "public_submission", "submission_delivery", "supplemental_research_inputs", "registered_fixture_inputs"),
         )
         self.assertEqual(
             STAGE_CONTEXT_FIELDS[("literature", "landscape")],
@@ -982,7 +984,7 @@ class WebTests(unittest.TestCase):
         )
         self.assertEqual(
             STAGE_CONTEXT_FIELDS[("research_lead", "selection_repair")],
-            ("repair_options",),
+            ("repair_options", "registered_fixture_inputs", "supplemental_research_inputs", "prequalification_holdout"),
         )
         self.assertEqual(
             STAGE_CONTEXT_FIELDS[("research_lead", "cycle_synthesis")],

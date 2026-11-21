@@ -86,7 +86,7 @@ def test_first_prompt_and_attachment_preserve_explicit_project_context(tmp_path,
             ident = parse_qs(urlsplit(page.url).query)["session"][0]
             row = chat._read(chat._store(state_dir), ident)
             contextual = entry in {"context", "selected"}
-            assert row["mode"] == ("frontier" if contextual else "preparation")
+            assert row["mode"] == ("project" if contextual else "preparation")
             assert row["task_id"] == (task if contextual else None)
             if entry == "attachment":
                 expect(page.get_by_role("textbox", name="发送给 Sciver 的消息", exact=True)).to_have_value(PROMPT)

@@ -360,10 +360,18 @@ class ResearchChatSourceTests(unittest.TestCase):
                 self.assertEqual(page.locator('.ex-research-transition').evaluate('e=>getComputedStyle(e).borderTopWidth'), '0px')
                 if os.environ.get('SCIVER_READER_PREVIEW'):
                     page.locator('#ex-reader').screenshot(path=os.environ['SCIVER_READER_PREVIEW'] + '-' + theme + '.png')
+            # Predecessors now open in their own canonical reader; transition
+            # facts stay attached to the current H rather than inline source cards.
             for selector, expected_quote, expected_node in (
-                ('[data-discussion-node="H-0000"]', 'Earlier mechanism remains unresolved', 'H-0000'),
-                ('.ex-transition-contribution', 'Carries the unresolved mechanism into the new comparison.', 'H-0001'),
+                ('.ex-hypothesis-title', 'Predecessor mechanism', 'H-0000'),
+                ('.ex-transition-facts dd', 'Existing observations do not identify the mechanism.', 'H-0001'),
             ):
+                if expected_node == 'H-0000':
+                    page.locator('.ex-transition-source-link', has_text='H-0000').click()
+                    expect(page.locator('.ex-hypothesis-title')).to_have_text('Predecessor mechanism')
+                else:
+                    page.evaluate("location.hash='node%3AH-0001'")
+                    expect(page.locator('.ex-hypothesis-title')).to_have_text('A conjecture')
                 paragraph = page.locator(selector).first
                 paragraph.scroll_into_view_if_needed()
                 paragraph.evaluate('''e=>{

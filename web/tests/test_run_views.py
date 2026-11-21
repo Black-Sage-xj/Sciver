@@ -257,7 +257,8 @@ class WebTuiMonitoringTests(unittest.TestCase):
             self.assertIn('href="?tab=events', page) if 'href="?tab=events' in page else None
             self.assertNotIn('<kbd>Q</kbd> 返回列表', page)
             self.assertNotIn('<kbd>P</kbd> Pause', page)
-            self.assertIn('id="tm-web-settings"', page)
+            self.assertNotIn('id="tm-web-settings"', page)
+            self.assertEqual(home.select_one('.tm-run-settings-link')['href'], '/settings/?observer_id=' + run['observer_id'])
             self.assertIn('TASK CONSOLE', page)
             self.assertNotIn('RUN / WEB TUI', page)
             self.assertNotIn('tm-tui-controls', page)
@@ -1107,7 +1108,7 @@ class EventsFocusedReaderAndUsageHitTests(unittest.TestCase):
                   "run_id":1,"state":"RUNNING"}
             primary=BeautifulSoup(run_detail_body(task,tab="activity",canvas_available=True),"html.parser")
             events=BeautifulSoup(run_detail_body(task,tab="events",canvas_available=True),"html.parser")
-            self.assertIsNotNone(primary.select_one("#tm-web-settings"))
+            self.assertIsNotNone(primary.select_one(".tm-run-settings-link"))
             self.assertIsNone(primary.select_one("#tm-tui-controls"))
             self.assertIsNotNone(primary.select_one("#tm-operator[hidden]"))
             self.assertIsNotNone(primary.select_one(".tm-tui-header a.tm-explore-map"))
@@ -1348,7 +1349,7 @@ class AllSecondaryViewsHideRunManagementTests(unittest.TestCase):
             for canvas_available in (True, False):
                 home = BeautifulSoup(run_detail_body(
                     run, canvas_available=canvas_available), "html.parser")
-                for selector in ("#tm-web-settings", "#tm-operator[hidden]",
+                for selector in (".tm-run-settings-link", "#tm-operator[hidden]",
                                  ".tm-explore-map"):
                     self.assertIsNotNone(home.select_one(selector), selector)
                 self.assertIsNone(home.select_one("#tm-tui-controls"))
@@ -1370,7 +1371,7 @@ class AllSecondaryViewsHideRunManagementTests(unittest.TestCase):
                         run, tab=retired, canvas_available=canvas_available),"html.parser")
                     self.assertIsNone(old_page.select_one(".tm-tui-secondary"))
                     self.assertIsNotNone(old_page.select_one(".tm-tui-history-panel"))
-                    self.assertIsNotNone(old_page.select_one("#tm-web-settings"))
+                    self.assertIsNotNone(old_page.select_one(".tm-run-settings-link"))
             js = str(home)
             self.assertIn("const params=new URLSearchParams();", js)
             self.assertIn("window.location.assign(location.pathname+", js)

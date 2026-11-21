@@ -119,20 +119,25 @@ class QuotaAutoPresentationTests(unittest.TestCase):
                 "cycle_id": "2", "status": "PAUSED",
                 "quota_auto_adjust_enabled": True,
                 "quota_auto_adjust": self._quota(),
+                "phase": "provider_quota_exhausted", "resumable": True,
+                "recovery": {"code": "provider_quota_exhausted"},
             }), encoding="utf-8")
             run = {"observer_id": "a"*16, "research_root": str(root),
                    "cycle_dir": str(cycle), "cycle": "2",
                    "task_name": "Test", "state": "PAUSED", "run_id": 1}
             html = run_detail_body(run)
             soup = BeautifulSoup(html, "html.parser")
-            card = soup.select_one(".tm-quota-auto")
+            card = soup.select_one("[data-quota-wait]")
             self.assertIsNotNone(card)
-            self.assertIn("等待额度恢复", card.get_text())
-            self.assertIsNone(card.select_one("details.tm-quota-auto-more"))
-            self.assertNotIn("查看账号与额度详情", card.get_text())
-            self.assertEqual(len(card.select('[data-setting-key="quota_auto_adjust"]')),1)
-            self.assertEqual(len(card.select('[data-setting-detail]')),2)
-            self.assertIsNotNone(card.select_one('[data-setting-key="supervisor"]'))
+            self.assertIn("额度等待中", card.get_text())
+            self.assertIn("已保留当前 Cycle", card.get_text())
+            self.assertIsNone(soup.select_one("#tm-web-settings"))
+            self.assertIsNone(soup.select_one('[data-setting-key="quota_auto_adjust"]'))
+            self.assertIsNotNone(soup.select_one('[data-setting-key="supervisor"]'))
+            self.assertEqual(soup.select_one('.tm-run-settings-link')['href'],
+                             '/settings/?observer_id=' + run['observer_id'])
+            refreshed = BeautifulSoup(run_detail_body(run, fragment=True), "html.parser")
+            self.assertEqual(refreshed.select_one('[data-quota-wait]').get_text(), card.get_text())
             self.assertNotIn("Quota auto waiting_refresh", soup.get_text())
             # Generic refresh preserves <details> by index, including quota card.
             self.assertIn("if(openDetails.has(index))detail.open=true", html)

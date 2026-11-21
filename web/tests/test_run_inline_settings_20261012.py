@@ -122,44 +122,32 @@ class InlineSettingsToolbarTests(unittest.TestCase):
         self.assertIn("状态待确认", soup.get_text())
         self.assertNotIn("当前账号 Codex", soup.get_text())
 
-    def test_full_run_and_fragment_have_one_live_settings_panel(self):
+    def test_full_run_and_fragment_keep_live_supervisor_and_shared_settings(self):
+        from tm_observer.task_settings_ui import task_settings_body
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             cycle = root / "70"
             cycle.mkdir()
-            (cycle/"run_state.json").write_text(json.dumps({
-                "cycle_id":"70", "status":"RUNNING", "max_cycles":75,
-                "quota_auto_adjust_enabled":True,
-                "quota_auto_adjust":{"status":"idle", "enabled":True,
-                                     "selected_account":"1"},
+            (cycle / "run_state.json").write_text(json.dumps({
+                "cycle_id": "70", "status": "RUNNING", "quota_auto_adjust_enabled": True,
             }))
-            run = {"observer_id":"a"*16, "research_root":str(root),
-                   "cycle_dir":str(cycle), "cycle":"70",
-                   "task_name":"Test", "state":"RUNNING", "run_id":1}
-            for fragment in (True,False):
+            run = {"observer_id": "a" * 16, "research_root": str(root), "cycle_dir": str(cycle),
+                   "cycle": "70", "task_name": "Test", "state": "RUNNING", "run_id": 1}
+            for fragment in (True, False):
                 with self.subTest(fragment=fragment):
-                    html = run_detail_body(run, fragment=fragment)
-                    soup = BeautifulSoup(html,"html.parser")
-                    switches = soup.select('.tm-quota-auto-toolbar input[role=switch]')
-                    self.assertEqual(len(switches),2)
-                    self.assertEqual(len(soup.select('[data-setting-key="quota_auto_adjust"]')),1)
-                    self.assertEqual(len(soup.select('.tm-setting-compact')),1)
-                    self.assertEqual(len(soup.select('[data-setting-detail]')),2)
-                    self.assertIsNone(soup.select_one('.tm-setting-gear'))
-                    gear = soup.select_one('.tm-tui-title-actions a.tm-run-settings-link')
-                    self.assertIsNotNone(gear)
-                    self.assertEqual(gear['href'], '/settings/?observer_id=' + 'a'*16)
-                    self.assertEqual(gear['aria-label'], '运行设置')
-                    self.assertIsNone(soup.select_one('.tm-quota-auto-more'))
-                    self.assertEqual(len(soup.select('#tm-web-settings')),1)
-                    self.assertEqual(len(soup.select('.tm-tui-settings')),1)
-                    self.assertEqual(len(soup.select('.tm-quota-auto[data-tui-pane=quota-settings]')),1)
-                    self.assertEqual(len(soup.select('.tm-run-detail > #tm-web-settings')),0)
-                    if not fragment:
-                        self.assertIn("document.addEventListener('change',event=>", html)
-                        self.assertIn("settings.dataset.settingSaving='1'", html)
-                        self.assertIn("oldPanes[n].dataset.tuiPane==='quota-settings'", html)
-                        self.assertIn("document.addEventListener('click',event=>", html)
+                    dom = BeautifulSoup(run_detail_body(run, fragment=fragment), "html.parser")
+                    self.assertIsNone(dom.select_one("#tm-web-settings"))
+                    self.assertEqual([x["data-setting-key"] for x in dom.select("[data-setting-key]")], ["supervisor"])
+                    self.assertEqual(dom.select_one('[data-setting-key="supervisor"]')["data-setting-mode"], "hot")
+                    links = dom.select(".tm-run-settings-link")
+                    self.assertEqual(len(links), 1)
+                    self.assertEqual(links[0]["href"], "/settings/?observer_id=" + run["observer_id"])
+                    self.assertEqual(links[0]["aria-label"], "运行设置")
+            settings = BeautifulSoup(task_settings_body(run), "html.parser")
+            self.assertEqual(len(settings.select("#tm-web-settings")), 1)
+            self.assertEqual({x["data-setting-key"] for x in settings.select("[data-setting-key]")},
+                             {"quota_auto_adjust", "cycle_audit", "skill_learning"})
+            self.assertEqual(len(settings.select('[data-setting-model="supervisor"]')), 1)
 
 
 if __name__ == "__main__":

@@ -32,7 +32,7 @@ class SkillSettingsTests(unittest.TestCase):
             self.assertFalse(switch.has_attr("checked"))
             self.assertIn("不另启模型", dom.get_text())
             self.assertIn("expected_launch_id:page.dataset.launch", page)
-            self.assertIn("key:input.dataset.settingKey", page)
+            self.assertEqual(switch.get("data-setting-mode"), "flag")
             selected = {"kind": "flag", "key": "skill_learning", "value": True}
             self.assertEqual(_validated_value("set_operator_preference", selected), selected)
             self.assertFalse((root / ".theory-master").exists())

@@ -15,6 +15,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 VALIDATOR = "native-complete-delivery-alias/v1"
+# This recovery is approved only for the recorded incident; it is not an open
+# task-level opt-in. Synthetic tests bind the same proof to their own incident.
+_AUDITED_CYCLE = "5"
+_AUDITED_TASK_DIRECTORY = "17-plant-invasion-2b9d7e76c636"
+_AUDITED_SOURCE_GIT_SHA = "db4ad9044bd32cce5f1043ccb601d6e3753e2550"
 MISSING = "explicit handoff file does not exist or is a symlink"
 _OLD_CONTEXT_HOME = b"/home/baixj/gel_network/gs_study/11-18-18:51-test-plant-invasion"
 _NEW_CONTEXT_HOME = b"/home/baixj/gel_network/gs_study/11-19-progression-recheck-plant-invasion"
@@ -154,9 +159,9 @@ def _evidence(cycle: Path, state: dict) -> tuple[dict, dict, dict]:
     historical_contract_ref = {"contract_id": "theory-master/role/investigator/investigate",
                                "contract_version": 10, "schema_hash": _OLD_INVESTIGATOR_SCHEMA}
     current_contract_ref = {**historical_contract_ref, "schema_hash": _CURRENT_INVESTIGATOR_SCHEMA}
-    if (cycle.name != "5" or cycle.parent.parent.name != "17-plant-invasion-2b9d7e76c636"
+    if (cycle.name != _AUDITED_CYCLE or cycle.parent.parent.name != _AUDITED_TASK_DIRECTORY
             or (state.get("runtime_source_provenance") or {}).get("sdk_git_sha")
-                != "db4ad9044bd32cce5f1043ccb601d6e3753e2550"
+                != _AUDITED_SOURCE_GIT_SHA
             or state.get("status") != "needs_attention" or state.get("phase") != "investigator:handoff_invalid"
             or state.get("execution_active") or state.get("active_invocation_id") or state.get("worker_id")
             or state.get("protocol_health") != "valid" or state.get("scientific_verdict") is not None
@@ -286,7 +291,7 @@ def _evidence(cycle: Path, state: dict) -> tuple[dict, dict, dict]:
         "resume_preparation": "saved_delivery_semantic_closure", "invocation_id": invocation,
         "thread_id": thread, "role": "investigator", "stage": "investigate", "logical_key": record["logical_key"],
         "contract_ref": historical_contract_ref, "current_contract_ref": current_contract_ref,
-        "original_source_git_sha": "db4ad9044bd32cce5f1043ccb601d6e3753e2550",
+        "original_source_git_sha": _AUDITED_SOURCE_GIT_SHA,
         "handoff_path": str(path), "handoff_sha256": inputs[str(path)],
         "raw_findings_sha256": stable_hash(mapped), "frozen_objective_sha256": origin["frozen_objective_sha256"],
         "artifact_manifest_path": str(manifest_path), "artifact_manifest_sha256": inputs[str(manifest_path)],

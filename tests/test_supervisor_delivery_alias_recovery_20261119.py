@@ -39,6 +39,15 @@ def alias_case(tmp_path, monkeypatch):
     owner = Workflow(spec, backend, collector=Collector(spec))
     state = owner.run()
     cycle = owner.cycle_dir
+    from theory_master import supervisor_delivery_alias_recovery as recovery
+    production_scope = {key: getattr(recovery, key) for key in (
+        "_AUDITED_CYCLE", "_AUDITED_TASK_DIRECTORY", "_AUDITED_SOURCE_GIT_SHA", "_OLD_INVESTIGATOR_SCHEMA")}
+    monkeypatch.setattr(recovery, "_AUDITED_CYCLE", cycle.name)
+    monkeypatch.setattr(recovery, "_AUDITED_TASK_DIRECTORY", cycle.parent.parent.name)
+    monkeypatch.setattr(recovery, "_AUDITED_SOURCE_GIT_SHA", state["runtime_source_provenance"]["sdk_git_sha"])
+    # This is a synthetic current-contract incident, not the private historical
+    # record. Keep its recorded invocation contract and the proof policy aligned.
+    monkeypatch.setattr(recovery, "_OLD_INVESTIGATOR_SCHEMA", role_contract("investigator", phase="investigate").schema_hash)
     ledger = InvocationLedger(cycle / "invocations.jsonl")
     original = [r for r in ledger.snapshots() if r.get("role") == "investigator"][-1]
     contract = role_contract("investigator", phase="investigate")
@@ -101,6 +110,7 @@ def alias_case(tmp_path, monkeypatch):
     complete = initial.model_copy(update={"status": ThreadGoalStatus.complete, "tokens_used": 200,
                                            "time_used_seconds": 20})
     state.update(status="needs_attention", phase="investigator:handoff_invalid", execution_active=False,
+        supervisor_runtime_resume_count=1,
         active_invocation_id=None, last_invocation_id=monitor, scientific_verdict=None,
         attention={"code": "investigator_handoff_invalid", "reason": "explicit handoff file does not exist or is a symlink",
                    "thread_id": origin["thread_id"]},
@@ -110,10 +120,14 @@ def alias_case(tmp_path, monkeypatch):
                      "origin_binding": {k: v for k, v in origin.items() if k not in {"objective", "setup_context"}},
                      "persistent_goal": goal_identity(complete)})
     state.setdefault("threads", {})["investigator"] = origin["thread_id"]
+    from theory_master.supervisor_native_goal_recovery import reentry_key
+    state["recovery"] = {"action": "error", "kind": "InvalidRequestError",
+                         "message": "JSON-RPC error -32600: thread must be idle before starting a goal: " + origin["thread_id"]}
+    state["supervisor_native_goal_reentries"] = [reentry_key(state)]
     write_json(cycle / "research_state.json", state)
     monkeypatch.setattr("theory_master.supervisor_native_goal_recovery.read_existing_goal", lambda *_: complete)
     monkeypatch.setattr("theory_master.supervisor_repair_receipts.source_manifest", lambda _: {"alias-source": "frozen"})
-    return SimpleNamespace(spec=spec, cycle=cycle, state=state, origin=origin, path=path, monitor=monitor,
+    return SimpleNamespace(production_scope=production_scope, spec=spec, cycle=cycle, state=state, origin=origin, path=path, monitor=monitor,
         wrong_id=wrong_id, owner=owner, complete=complete, detail=detail, rows=rows, backend=backend)
 
 
@@ -216,3 +230,14 @@ def test_new_pause_after_receipt_blocks_commit_without_changing_authored_deliver
     assert (c.cycle / "research_state.json").read_bytes() == state_before
     assert (c.cycle / "invocations.jsonl").read_bytes() == ledger_before
     assert c.path.read_bytes() == handoff_before
+
+
+def test_synthetic_incident_is_refused_by_the_production_scope(alias_case, monkeypatch):
+    from theory_master import supervisor_delivery_alias_recovery as recovery
+    case = alias_case
+    for key, value in case.production_scope.items():
+        monkeypatch.setattr(recovery, key, value)
+    before = (case.cycle / "research_state.json").read_bytes()
+    with pytest.raises(ValueError, match="Not an unclosed"):
+        prepare_completed_delivery_alias(case.spec.config_path)
+    assert (case.cycle / "research_state.json").read_bytes() == before

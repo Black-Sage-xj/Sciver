@@ -156,7 +156,7 @@ class ProjectSetupTests(unittest.TestCase):
         self.addCleanup(lambda: worker.join(timeout=3))
         base = f'http://127.0.0.1:{server.server_address[1]}'
         with urlopen(base + '/research-chat/', timeout=5) as response:
-            self.assertIn('data-setup-welcome', response.read().decode())
+            self.assertIn('data-research-prompt', response.read().decode())
 
         def post(path, payload):
             request = Request(base + path, data=json.dumps(payload).encode(), headers={

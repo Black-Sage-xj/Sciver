@@ -57,7 +57,7 @@ def test_mobile_chat_launcher_is_in_toolbar_and_desktop_position_returns():
             expect(page.locator('#sc-chat-panel')).to_be_visible()
             page.locator('#sc-chat-minimize').click()
             page.set_viewport_size({'width': 1280, 'height': 900})
-            assert launcher.evaluate("e => e.parentElement.id === 'sciver-chat-widget'")
+            page.wait_for_function("document.querySelector('#sc-chat-launcher').parentElement.id === 'sciver-chat-widget'")
             assert launcher.evaluate("e => getComputedStyle(e).position") == 'fixed'
         finally:
             browser.close()
@@ -87,8 +87,10 @@ def test_stage_empty_states_and_sdk_only_records():
             state['warnings'] = []
             state['transitions'] = [{'kind': 'CHECKPOINT', 'seq': 1, 'time': '2026-01-01'}]
             page.reload()
-            expect(page.locator('[data-stage-timeline]')).to_contain_text('SDK · CHECKPOINT')
-            assert page.locator('.tm-stage-empty').count() == 0
+            expect(page.locator('[data-stage-sdk-records]')).to_contain_text('SDK · CHECKPOINT')
+            page.locator('[data-stage-records] > summary').click()
+            expect(page.locator('[data-stage-sdk-records]')).to_be_visible()
+            expect(page.locator('[data-stage-timeline]')).to_contain_text('本轮尚无可读取的 Stage 记录')
             state['transitions'] = []
             state['stages'] = [{'id': 'stage-1', 'role': 'investigator', 'stage': 'investigate',
                                 'state': 'complete', 'start': '2026-01-01', 'count': 0}]

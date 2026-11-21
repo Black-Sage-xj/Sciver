@@ -27,6 +27,8 @@ def created(tmp_path, monkeypatch):
     materials = prep.workspace(state_dir, ident) / "pilot"
     materials.mkdir()
     (materials / "existing.csv").write_text("size,value\n4,0.3\n")
+    # Material changes participate in the reviewed creation revision.
+    saved = prep.snapshot(state_dir, ident)
     receipt = chat.create_prepared_project(state_dir, search, ident,
                                           {"confirm": True, "expected_revision": saved["revision"]})
     return state_dir, search, ident, receipt, collect_state(search, include_git_info=False)

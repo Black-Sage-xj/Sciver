@@ -28,7 +28,7 @@ def test_default_off_minimal_console_bar_and_no_settings_controls(tmp_path):
     assert dom.select_one('[data-worker-request-context]').has_attr('hidden')
     assert len(dom.select('[data-worker-add]')) == 1
     assert dom.select_one('.tm-worker-tabs') is not None
-    assert html.index('class="tm-tui-titlebar"') < html.index('class="tm-worker-tabs"')
+    assert dom.select(".tm-tui-titlebar, .tm-worker-tabs")[0] is dom.select_one(".tm-tui-titlebar")
     assert select_worker(run, 'worker-1') == (run, [], None)
     (root/'.theory-master').mkdir()
     (root/'.theory-master'/'worker_mode.json').write_text(json.dumps({
