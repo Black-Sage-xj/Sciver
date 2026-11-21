@@ -157,14 +157,15 @@ def final_report_backend_options(spec: Any) -> dict[str, Any]:
     return options
 
 
-def launch_final_report_job(spec: Any, *, database: Path | None = None) -> dict[str, Any] | None:
-    """Dispatch a detached report consumer after an actual completion commit.
+def launch_final_report_job(spec: Any, *, database: Path | None = None,
+                            retry_failed: bool = False) -> dict[str, Any] | None:
+    """Dispatch a detached report consumer for a sealed completed task.
 
     Ordinary completion reads only enqueue. A failed attempt needs an explicit
     retry, and this dispatcher never resumes or starts a scientific Cycle.
     """
     job = ensure_final_report_job(spec, database=database)
-    if job is None or job["state"] != "queued":
+    if job is None or job["state"] not in ({"queued", "failed"} if retry_failed else {"queued"}):
         return job
     root = Path(spec.research_root).resolve()
     if not (root / ".theory-master" / "task.json").is_file():
@@ -174,7 +175,7 @@ def launch_final_report_job(spec: Any, *, database: Path | None = None) -> dict[
     from .runtime_manager import process_identity_alive, process_start_ticks
     with _lock(registry / "dispatch.lock"):
         job = _read_job(registry / "jobs" / f"{job['job_id']}.json")
-        if job["state"] != "queued":
+        if job["state"] not in ({"queued", "failed"} if retry_failed else {"queued"}):
             return job
         if receipt.is_symlink():
             raise ValueError("unsafe report launcher receipt")
@@ -182,6 +183,9 @@ def launch_final_report_job(spec: Any, *, database: Path | None = None) -> dict[
             previous = json.loads(receipt.read_text(encoding="utf-8"))
             if process_identity_alive(previous.get("pid"), previous.get("pid_start_ticks")):
                 return {**job, "launch_status": "running", "launcher": previous}
+        if job["state"] == "failed":
+            job.update(state="queued", updated_at=_now())
+            atomic_json(registry / "jobs" / f"{job['job_id']}.json", job)
         command = [sys.executable, "-m", "theory_master.final_report", "--task", str(root), "--generate"]
         source_root = str(Path(__file__).resolve().parent.parent)
         environment = dict(os.environ)

@@ -25,6 +25,13 @@ a.tm-final-report-entry:focus-visible{outline:2px solid var(--tm-link);outline-o
 .tm-final-report-status{color:var(--tm-muted);font-size:11px;white-space:nowrap}
 .tm-final-report-title{color:var(--tm-muted);font-size:12px;line-height:1.6;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .tm-final-report-open{width:18px;height:18px;flex:none;color:var(--tm-link)}
+.tm-final-report-console{flex-wrap:wrap}
+.tm-final-report-console .tm-final-report-copy{flex-basis:180px}
+.tm-final-report-generate{min-height:44px;padding:9px 13px;border:1px solid var(--tm-link);border-radius:7px;background:transparent;color:var(--tm-link);font:inherit;font-size:12px;cursor:pointer}
+.tm-final-report-generate:hover:enabled{background:color-mix(in srgb,var(--tm-link) 12%,var(--tm-panel))}
+.tm-final-report-generate:focus-visible{outline:2px solid var(--tm-link);outline-offset:3px}
+.tm-final-report-generate:disabled{color:var(--tm-muted);border-color:var(--tm-border);cursor:default}
+.tm-final-report-error{flex-basis:100%;margin:0;color:var(--tm-danger,#ef4444);font-size:12px;line-height:1.6}
 .tm-final-report-entry[data-report-state="needs_revision"] .tm-final-report-status{color:var(--tm-warning,#fbbf24)}
 .tm-final-report-entry[data-report-available="false"]{border-color:var(--tm-border)}
 .tm-final-report-entry[data-report-available="false"] .tm-final-report-icon{color:var(--tm-muted)}
@@ -87,6 +94,14 @@ def render_report_entry(run: dict[str, Any], *, placement: str = "list",
     attributes = (f'class="tm-final-report-entry tm-final-report-{placement}" '
                   f'data-report-state="{escape(view["state"])}" '
                   f'data-report-available="{str(bool(view["available"])).lower()}"')
+    if placement == "console" and not view["available"] and view["state"] in {
+        "missing", "failed", "queued", "running", "collecting", "composing", "reviewing"
+    }:
+        active = view["state"] in {"running", "collecting", "composing", "reviewing"}
+        button_label = "生成中…" if active else "重新生成" if view["state"] == "failed" else "生成总报告"
+        content += (f'<button type="button" class="tm-final-report-generate" data-final-report-generate'
+                    f'{" disabled" if active else ""}>{button_label}</button>'
+                    '<p class="tm-final-report-error" data-final-report-error role="alert" hidden></p>')
     entry = (f'<a {attributes} href="{escape(view["href"])}" '
              f'aria-label="{escape(heading + "：" + title + "，" + label)}" '
              f'title="{escape(title)}">{content}</a>' if view["href"] else

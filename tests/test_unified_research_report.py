@@ -426,6 +426,30 @@ def test_task_report_dispatch_is_detached_idempotent_and_does_not_start_cycle(tm
     assert len(launched) == 1
 
 
+def test_failed_report_dispatch_requires_explicit_retry_and_remains_idempotent(tmp_path: Path, monkeypatch):
+    from theory_master import final_report, runtime_manager
+    spec = _final_report_spec(tmp_path)
+    marker = tmp_path / ".theory-master/task.json"
+    marker.parent.mkdir(exist_ok=True)
+    marker.write_text("{}")
+    job = final_report.ensure_final_report_job(spec)
+    path = final_report.report_registry(spec) / "jobs" / f"{job['job_id']}.json"
+    job.update(state="failed", attempt=1)
+    final_report.atomic_json(path, job)
+    launched = []
+    monkeypatch.setattr(final_report.subprocess, "Popen",
+                        lambda command, **kwargs: launched.append(command) or SimpleNamespace(pid=12345))
+    monkeypatch.setattr(runtime_manager, "process_start_ticks", lambda pid: 456)
+    monkeypatch.setattr(runtime_manager, "process_identity_alive", lambda *args: False)
+    assert final_report.launch_final_report_job(spec)["state"] == "failed"
+    assert not launched
+    assert final_report.launch_final_report_job(spec, retry_failed=True)["launch_status"] == "started"
+    assert json.loads(path.read_text())["attempt"] == 1
+    monkeypatch.setattr(runtime_manager, "process_identity_alive", lambda *args: True)
+    assert final_report.launch_final_report_job(spec, retry_failed=True)["launch_status"] == "running"
+    assert len(launched) == 1
+
+
 def test_completion_read_only_repairs_queue_and_dispatch_failure_is_isolated(tmp_path: Path, monkeypatch):
     from theory_master.codex_backend import CodexBackend
     from theory_master.workflow_goal import GoalCompletionMixin
