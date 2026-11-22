@@ -111,6 +111,60 @@ def technical_reentry_key(state: dict) -> str:
     return _digest([state.get('last_invocation_id'), native.get('thread_id'), native.get('objective_sha256')])
 
 
+def _judge_rework_binding(cycle: Path, state: dict, inputs: dict[str, str]) -> dict:
+    """Bind an artifact rescan to the existing, unfulfilled Judge request."""
+    from .scientific_objective import frozen_science_digest
+
+    authorization = state.get('rework_authorization') or {}
+    judge = (state.get('role_outputs') or {}).get('judge') or {}
+    attempt = state.get('investigation_attempt')
+    record = (state.get('investigation_attempts') or {}).get(f'attempt-{attempt:04d}') if type(attempt) is int else None
+    refs = state.get('evidence_refs')
+    if (authorization.get('authorized') is not True
+            or authorization.get('target_executor') != 'investigator'
+            or authorization.get('attempt') != state.get('judge_rework_count')
+            or judge.get('assessment_state') != 'rework_requested'
+            or judge.get('verdict') is not None
+            or authorization.get('judge_request') != judge
+            or not isinstance(judge.get('objections'), list) or not judge['objections']
+            or not isinstance(record, dict) or record.get('judge_feedback') != judge
+            or not isinstance(record.get('objections'), list) or not record['objections']
+            or record.get('outputs') != [] or state.get('next_executor') != 'investigator'
+            or not isinstance(refs, list) or not refs
+            or not all(isinstance(ref, str) and ref for ref in refs)):
+        raise ValueError('Judge artifact rescan requires the original unfulfilled rework and Evidence')
+    inventory = {}
+    for name in ('registry.jsonl', 'registration_batches.jsonl', 'lifecycle.jsonl',
+                 'assessments.jsonl', 'criteria.json'):
+        path = cycle / 'evidence' / name
+        if path.exists() or path.is_symlink():
+            _read(path, inputs, 16_000_000)
+            inventory[str(path)] = inputs[str(path.resolve())]
+        else:
+            inventory[str(path)] = None
+    registry = cycle / 'evidence/registry.jsonl'
+    if inventory[str(registry)] is None:
+        raise ValueError('Judge artifact rescan has no registered Evidence')
+    rows = [json.loads(line) for line in _read(registry, inputs, 16_000_000).splitlines() if line.strip()]
+    if (not all(isinstance(row, dict) for row in rows)
+            or not set(refs).issubset({row.get('evidence_id') for row in rows})):
+        raise ValueError('Judge artifact rescan Evidence identity changed')
+    return {'stage': 'judge_rework',
+            'frozen_objective_sha256': frozen_science_digest(state.get('hypothesis_lock') or {}),
+            'rework_authorization': copy.deepcopy(authorization), 'judge_output': copy.deepcopy(judge),
+            'investigation_attempt': attempt, 'judge_rework_count': state.get('judge_rework_count'),
+            'objections': copy.deepcopy(record['objections']), 'evidence_refs': list(refs),
+            'evidence_inventory': inventory}
+
+
+def _recheck_rework(cycle: Path, state: dict, proof: dict, inputs: dict[str, str]) -> None:
+    if proof.get('stage', 'investigate') != 'judge_rework':
+        return
+    if (proof.get('mode') != ARTIFACT_RESCAN
+            or _judge_rework_binding(cycle, state, inputs) != proof.get('judge_rework_binding')):
+        raise ValueError('Judge artifact rescan changed its original rework or Evidence')
+
+
 def check_authorization(cycle: Path, state: dict, *, goal_reader=None) -> tuple[dict, dict]:
     """Check a stopped failed slot and operator-only authorization, without models."""
     from .invocations import InvocationLedger
@@ -141,7 +195,10 @@ def check_authorization(cycle: Path, state: dict, *, goal_reader=None) -> tuple[
             or resume_blocker(state, for_repair=True, runtime_revalidated=True) is not None
             or control.exists() or control.is_symlink()):
         raise ValueError('not a safely stopped native Goal dependency failure')
-    failure = {'invocation_id': invocation, 'role': 'investigator', 'stage': 'investigate',
+    stage = (state.get('last_invocation_failure') or {}).get('stage')
+    if stage not in {'investigate', 'judge_rework'}:
+        raise ValueError('unsupported technical recovery stage')
+    failure = {'invocation_id': invocation, 'role': 'investigator', 'stage': stage,
                'failure_phase': 'invoke', 'error_type': 'NativeGoalRuntimeFailure'}
     if state.get('last_invocation_failure') != failure:
         raise ValueError('failed invocation identity changed')
@@ -156,6 +213,7 @@ def check_authorization(cycle: Path, state: dict, *, goal_reader=None) -> tuple[
             or authorization.get('cycle') != str(cycle.resolve())
             or authorization.get('failed_invocation_id') != invocation
             or authorization.get('thread_id') != thread
+            or authorization.get('stage', stage) != stage
             or frozen_science_digest(authorization.get('frozen_objective') or {})
                 != frozen_science_digest(science)):
         raise ValueError('operator authorization does not bind this frozen failure')
@@ -163,6 +221,16 @@ def check_authorization(cycle: Path, state: dict, *, goal_reader=None) -> tuple[
     if workspace != workspace.resolve() or not workspace.is_dir():
         raise ValueError('unsafe technical recovery workspace')
     mode = authorization['mode']
+    rework = None
+    if stage == 'judge_rework':
+        if mode != ARTIFACT_RESCAN or authorization.get('stage') != stage:
+            raise ValueError('Judge rework permits only an explicitly bound artifact rescan')
+        rework = _judge_rework_binding(cycle, state, inputs)
+        if authorization.get('judge_rework_binding') != rework:
+            raise ValueError('operator authorization changed its Judge rework binding')
+        persisted = json.loads(_read(cycle / 'research_state.json', {}, 16_000_000))
+        if _judge_rework_binding(cycle, persisted, {}) != rework:
+            raise ValueError('persisted Judge rework differs from the authorized state')
     limits = _continuation_limits(authorization) if mode == BOUNDED_COMPUTATION else None
     locks = _dispatcher_lock_snapshot(workspace, authorization.get('dispatcher_locks', []))
     for key in ('source_script', 'recovery_script'):
@@ -193,7 +261,7 @@ def check_authorization(cycle: Path, state: dict, *, goal_reader=None) -> tuple[
     ledger = InvocationLedger(cycle / 'invocations.jsonl')
     record = ledger.snapshot(invocation) or {}
     if (record.get('state') != 'failed' or record.get('commit_state') != 'not_committed'
-            or record.get('role') != 'investigator' or record.get('stage') != 'investigate'
+            or record.get('role') != 'investigator' or record.get('stage') != stage
             or record.get('error_type') != 'NativeGoalRuntimeFailure'
             or record.get('thread_id') != thread or record.get('closure_hash')
             or any((cycle / folder / (invocation + '.json')).exists()
@@ -208,7 +276,9 @@ def check_authorization(cycle: Path, state: dict, *, goal_reader=None) -> tuple[
         'objective_sha256': previous['objective_sha256']}, previous=previous)
     if observed['status'] != 'blocked':
         raise ValueError('the original native Goal is no longer terminal blocked')
-    return {'resume_preparation': PREPARATION, 'origin_invocation_id': invocation,
+    return {'resume_preparation': PREPARATION, 'stage': stage,
+            **({'judge_rework_binding': rework} if rework is not None else {}),
+            'origin_invocation_id': invocation,
             'origin_exclusion_ids': _retired_origins(ledger, record, observed),
             'blocked_thread_id': thread, 'blocked_goal_identity': observed,
             'frozen_objective_sha256': frozen_science_digest(science),
@@ -240,7 +310,7 @@ def _consumed_proof(cycle: Path, state: dict, inputs: dict[str, str]) -> dict:
     if receipt_path.parent != cycle / 'supervisor/repairs':
         raise ValueError('technical continuation receipt is outside this Cycle')
     receipt = json.loads(_read(receipt_path, inputs, 1_048_576))
-    proof = recheck_receipt_inputs(receipt)
+    proof = recheck_receipt_inputs(receipt, state=state)
     if (receipt.get('schema') != RECEIPT_SCHEMA or receipt.get('cycle') != str(cycle)
             or receipt.get('phase') != 'repair_validated' or _digest(receipt) != ref.get('sha256')
             or receipt.get('repair_identity') != ref.get('repair_identity')
@@ -307,13 +377,18 @@ def _check_setup_retry(cycle: Path, state: dict) -> tuple[dict, dict]:
             or resume_blocker(state, for_repair=True, runtime_revalidated=True) is not None
             or control.exists() or control.is_symlink()):
         raise ValueError('not a safely stopped technical continuation setup')
-    failure = {'invocation_id': invocation, 'role': 'investigator', 'stage': 'investigate',
+    stage = (state.get('last_invocation_failure') or {}).get('stage')
+    if stage not in {'investigate', 'judge_rework'}:
+        raise ValueError('unsupported technical recovery setup stage')
+    failure = {'invocation_id': invocation, 'role': 'investigator', 'stage': stage,
                'failure_phase': 'setup', 'error_type': 'NativeGoalRecoveryConflict'}
     if state.get('last_invocation_failure') != failure:
         raise ValueError('failed setup invocation identity changed')
 
     inputs: dict[str, str] = {}
     proof = _consumed_proof(cycle, state, inputs)
+    if proof.get('stage', 'investigate') != stage:
+        raise ValueError('technical recovery setup changed its original stage')
     blocked = proof['blocked_goal_identity']
     if (proof['blocked_thread_id'] != native.get('thread_id')
             or proof['frozen_objective_sha256'] != frozen_science_digest(science)):
@@ -323,7 +398,7 @@ def _check_setup_retry(cycle: Path, state: dict) -> tuple[dict, dict]:
     setup = ledger.snapshot(invocation) or {}
     if (setup.get('logical_key') != initial.get('logical_key') or not setup.get('logical_key')
             or setup.get('thread_id') != thread or setup.get('role') != 'investigator'
-            or setup.get('stage') != 'investigate' or setup.get('state') != 'failed'
+            or setup.get('stage') != stage or setup.get('state') != 'failed'
             or setup.get('commit_state') != 'not_committed'
             or setup.get('failure_phase') != 'setup'
             or setup.get('error_type') != 'NativeGoalRecoveryConflict'
@@ -380,6 +455,7 @@ def validate_operator_technical_recovery(cycle: Path, state: dict, *, engine: Pa
             proof, inputs = _check_setup_retry(cycle.absolute(), state)
         else:
             proof, inputs = check_authorization(cycle, state)
+        _recheck_rework(cycle, state, proof, inputs)
         if (failure_binding(cycle, state) != binding or source_manifest(engine) != manifest
                 or any(hashlib.sha256(Path(p).read_bytes()).hexdigest() != digest
                        for p, digest in inputs.items())):
@@ -394,14 +470,19 @@ def validate_operator_technical_recovery(cycle: Path, state: dict, *, engine: Pa
 
 
 
-def recheck_receipt_inputs(receipt: dict) -> dict:
+def recheck_receipt_inputs(receipt: dict, *, state: dict | None = None) -> dict:
     proof = json.loads(receipt.get('tests') or '{}')
     if (receipt.get('validator') != VALIDATOR or proof.get('resume_preparation') != PREPARATION
+            or proof.get('stage', 'investigate') not in {'investigate', 'judge_rework'}
             or proof.get('mode') not in {ARTIFACT_RESCAN, BOUNDED_COMPUTATION}
             or (proof.get('blocked_goal_identity') or {}).get('status') != 'blocked'
             or not proof.get('origin_invocation_id') or not proof.get('origin_exclusion_ids')
             or not proof.get('frozen_objective_sha256')):
         raise ValueError('Invalid technical recovery evidence')
+    if state is not None:
+        _recheck_rework(Path(receipt['cycle']), state, proof, {})
+    elif proof.get('stage') == 'judge_rework':
+        raise ValueError('Judge artifact rescan requires current state revalidation')
     return proof
 
 
@@ -421,7 +502,7 @@ def consume_technical_recovery(cycle: Path, state: dict) -> bool:
     receipt = inspect_repair_receipt(cycle, state)
     if receipt.get('validator') != VALIDATOR:
         return False
-    proof = recheck_receipt_inputs(receipt)
+    proof = recheck_receipt_inputs(receipt, state=state)
     blocked_thread = proof['blocked_thread_id']
     blocked_identity = proof['blocked_goal_identity']
     current = read_existing_goal(cycle, {'thread_id': blocked_thread})

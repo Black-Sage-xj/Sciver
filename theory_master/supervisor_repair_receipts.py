@@ -210,7 +210,7 @@ def inspect_repair_receipt(cycle: Path, state: dict, *, engine: Path | None = No
         return receipt
     if receipt['validator'] == TECHNICAL_RECOVERY_VALIDATOR:
         from .operator_technical_recovery import recheck_receipt_inputs
-        recheck_receipt_inputs(receipt)
+        recheck_receipt_inputs(receipt, state=state)
         return receipt
     if receipt['validator'] == QUALIFICATION_REPLY_VALIDATOR:
         from .supervisor_qualification_reentry import recheck_receipt_inputs

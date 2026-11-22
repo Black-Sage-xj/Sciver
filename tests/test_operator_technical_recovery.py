@@ -238,16 +238,20 @@ def test_bounded_recovery_retires_only_proven_older_generations(stopped):
     assert set(proof['origin_exclusion_ids']) == {state['last_invocation_id'], 'inv-old-60', 'inv-old-80'}
 
 
-@pytest.mark.parametrize('variant', ['valid', 'modified_history', 'replacement_has_goal', 'exact_missing_thread'])
-def test_consumed_continuation_resumes_after_exact_setup_conflict(stopped, monkeypatch, variant):
+@pytest.mark.parametrize('variant', ['valid', 'modified_history', 'replacement_has_goal', 'exact_missing_thread', 'changed_stage'])
+@pytest.mark.parametrize('stage', ['investigate', 'judge_rework'])
+def test_consumed_continuation_resumes_after_exact_setup_conflict(stopped, monkeypatch, variant, stage):
     from unittest.mock import patch
     from theory_master.invocations import InvocationLedger
     from theory_master.native_goal_recovery import find_native_goal_origin
     from theory_master.resume_preparation import consume_resume_repairs, prepare_resume_recovery
 
+    if stage == 'judge_rework':
+        set_judge_rework(stopped)
     logical_key = add_old_generations(stopped)
     cycle, state, goal, _, _ = stopped
-    set_bounded_continuation(stopped)
+    if stage == 'investigate':
+        set_bounded_continuation(stopped)
     origin = state['last_invocation_id']
     replacement = 'replacement-setup-only'
     sdk_errors = pytest.importorskip('openai_codex.errors') if variant == 'exact_missing_thread' else None
@@ -272,7 +276,7 @@ def test_consumed_continuation_resumes_after_exact_setup_conflict(stopped, monke
     consume_resume_repairs(cycle, state)
     original_audit = copy.deepcopy(state['supervisor_technical_reentry_audit'][0])
     invocation = 'inv-replacement-failed-setup'
-    failure = {'invocation_id': invocation, 'role': 'investigator', 'stage': 'investigate',
+    failure = {'invocation_id': invocation, 'role': 'investigator', 'stage': stage,
                'failure_phase': 'setup', 'error_type': 'NativeGoalRecoveryConflict'}
     state['threads']['investigator'] = replacement
     state.update(last_invocation_id=invocation, last_invocation_failure=failure,
@@ -287,8 +291,11 @@ def test_consumed_continuation_resumes_after_exact_setup_conflict(stopped, monke
         stream.write('{"event":"RUN_FAILED"}\n')
     if variant == 'modified_history':
         (cycle / 'events.jsonl').write_text('{"event":"changed"}\n')
+    elif variant == 'changed_stage':
+        state['last_invocation_failure']['stage'] = 'judge_rework' if stage == 'investigate' else 'investigate'
+        write_json(cycle / 'research_state.json', state)
     retried = recovery.validate_operator_technical_recovery(cycle, state, engine=engine)
-    if variant in {'replacement_has_goal', 'modified_history'}:
+    if variant in {'replacement_has_goal', 'modified_history', 'changed_stage'}:
         assert retried is None
         assert state['supervisor_technical_reentry_audit'] == [original_audit]
         return
@@ -305,5 +312,100 @@ def test_consumed_continuation_resumes_after_exact_setup_conflict(stopped, monke
         owner=SimpleNamespace(cycle_dir=cycle), state=state,
         invocation_ledger=InvocationLedger(cycle / 'invocations.jsonl'),
         identifier='next-investigator-thread', invocation_id='inv-next',
-        logical_key=logical_key, stage='investigate',
+        logical_key=logical_key, stage=stage,
     )) is None
+
+
+def set_judge_rework(stopped):
+    cycle, state, _, auth_path, _ = stopped
+    judge = {'assessment_state': 'rework_requested', 'verdict': None,
+             'objections': [{'objection_id': 'J-1', 'requested_resolution': 'Resolve the frozen comparison'}]}
+    state['last_invocation_failure']['stage'] = 'judge_rework'
+    state.update(next_executor='investigator', judge_rework_count=1, investigation_attempt=2,
+                 role_outputs={'judge': copy.deepcopy(judge)}, evidence_refs=['E-1'],
+                 rework_authorization={'authorized': True, 'target_executor': 'investigator',
+                    'attempt': 1, 'judge_request': copy.deepcopy(judge)},
+                 investigation_attempts={'attempt-0002': {'outputs': [],
+                    'judge_feedback': copy.deepcopy(judge), 'objections': copy.deepcopy(judge['objections'])}})
+    ledger = cycle / 'invocations.jsonl'
+    entries = [json.loads(line) for line in ledger.read_text().splitlines()]
+    for row in entries:
+        row['stage'] = 'judge_rework'
+    ledger.write_text(''.join(json.dumps(row) + '\n' for row in entries))
+    write_json(cycle / 'research_state.json', state)
+    registry = cycle / 'evidence/registry.jsonl'
+    registry.parent.mkdir(exist_ok=True)
+    registry.write_text(json.dumps({'evidence_id': 'E-1', 'statement': 'original result'}) + '\n')
+    auth = json.loads(auth_path.read_text())
+    auth.update(stage='judge_rework', judge_rework_binding=recovery._judge_rework_binding(cycle, state, {}))
+    write_json(auth_path, auth)
+
+
+def test_judge_rework_rescan_keeps_original_judge_evidence_and_budget(stopped, monkeypatch):
+    from theory_master.resume_preparation import consume_resume_repairs, prepare_resume_recovery
+    from theory_master.runtime_supervisor_review import review_runtime_failure
+
+    set_judge_rework(stopped)
+    cycle, state, goal, _, _ = stopped
+    monkeypatch.setattr('theory_master.supervisor_native_goal_recovery.read_existing_goal', lambda *_: goal)
+    before = copy.deepcopy(state)
+    result = review_runtime_failure(backend=None, research_root=cycle.parent, cycle_dir=cycle,
+        state=state, state_path=cycle / 'research_state.json', incident_id='test', scheduler_locked=True)
+    assert result['action'] == 'resume', result
+    receipt = inspect_repair_receipt(cycle, state)
+    proof = json.loads(receipt['tests'])
+    assert proof['stage'] == 'judge_rework'
+    assert proof['mode'] == recovery.ARTIFACT_RESCAN
+    assert proof['limits'] is None
+    consume_resume_repairs(cycle, state)
+    prepare_resume_recovery(state, cycle)
+    for key in ('cycle_id', 'hypothesis_lock', 'role_outputs', 'evidence_refs', 'investigation_attempts',
+                'rework_authorization', 'judge_rework_count', 'investigator_budget',
+                'scientific_verdict', 'native_goal', 'last_invocation_failure'):
+        assert state[key] == before[key]
+    assert 'investigator' not in state['threads']
+    assert state['operator_guidance_pending']
+    with pytest.raises(ValueError):
+        recovery.consume_technical_recovery(cycle, state)
+
+
+@pytest.mark.parametrize('change', ['bounded_computation', 'wrong_stage', 'missing_binding',
+    'changed_judge', 'changed_objection', 'changed_rework', 'changed_evidence',
+    'new_lifecycle', 'submitted_attempt', 'changed_frozen', 'changed_refs', 'unpersisted_rework'])
+def test_judge_rework_rescan_rejects_changed_science_and_compute(stopped, change):
+    set_judge_rework(stopped)
+    cycle, state, goal, auth_path, _ = stopped
+    auth = json.loads(auth_path.read_text())
+    if change == 'bounded_computation':
+        set_bounded_continuation(stopped)
+        auth = json.loads(auth_path.read_text())
+    elif change == 'wrong_stage': auth['stage'] = 'investigate'
+    elif change == 'missing_binding': auth.pop('judge_rework_binding')
+    elif change == 'changed_judge': state['role_outputs']['judge']['verdict'] = 'open'
+    elif change == 'changed_objection':
+        state['investigation_attempts']['attempt-0002']['objections'][0]['requested_resolution'] = 'other'
+    elif change == 'changed_rework': state['rework_authorization']['attempt'] += 1
+    elif change == 'changed_evidence': (cycle / 'evidence/registry.jsonl').write_text('{"evidence_id":"E-1","statement":"changed"}\n')
+    elif change == 'new_lifecycle': (cycle / 'evidence/lifecycle.jsonl').write_text('{}\n')
+    elif change == 'submitted_attempt': state['investigation_attempts']['attempt-0002']['outputs'] = [{}]
+    elif change == 'changed_frozen': state['hypothesis_lock']['scope'] = 'new scope'
+    elif change == 'changed_refs': state['evidence_refs'] = ['E-other']
+    elif change == 'unpersisted_rework':
+        state['investigation_attempts']['attempt-0002']['objections'][0]['requested_resolution'] = 'new authorized request'
+        auth['judge_rework_binding'] = recovery._judge_rework_binding(cycle, state, {})
+    write_json(auth_path, auth)
+    with pytest.raises((ValueError, OSError)):
+        recovery.check_authorization(cycle, state, goal_reader=lambda *_: goal)
+
+
+@pytest.mark.parametrize('change', ['state', 'evidence', 'absence'])
+def test_judge_rework_receipt_rechecks_live_binding_before_consumption(stopped, monkeypatch, change):
+    set_judge_rework(stopped)
+    cycle, state, goal, _, _ = stopped
+    monkeypatch.setattr('theory_master.supervisor_native_goal_recovery.read_existing_goal', lambda *_: goal)
+    receipt = recovery.validate_operator_technical_recovery(cycle, state, engine=Path(recovery.__file__).parent)
+    assert receipt is not None
+    if change == 'state': state['investigation_attempts']['attempt-0002']['objections'][0]['reason'] = 'changed'
+    elif change == 'evidence': (cycle / 'evidence/registry.jsonl').write_text('{"evidence_id":"E-1","statement":"changed"}\n')
+    else: (cycle / 'evidence/lifecycle.jsonl').write_text('{}\n')
+    with pytest.raises(ValueError): recovery.consume_technical_recovery(cycle, state)
