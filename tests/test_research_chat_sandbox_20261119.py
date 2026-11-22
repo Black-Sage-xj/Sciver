@@ -184,8 +184,13 @@ print(json.dumps(results))
     assert result["exitCode"] == 0, result
     observed = json.loads(result["stdout"])
     print("SANDBOX_PROBE " + json.dumps(observed))
+    nested_tool = observed.pop("nested_tool")
     assert observed == {
         "workspace": "writable", "state": "writable", "runtime": "writable",
         "other_account": "denied", "source": "denied", "home": "denied", "global_tmp": "denied",
-        "temporary_directory": str(scoped_tmp), "nested_sdk": "initialized", "nested_tool": "writable",
+        "temporary_directory": str(scoped_tmp), "nested_sdk": "initialized",
     }, json.dumps(observed)
+    if (isinstance(nested_tool, dict) and nested_tool.get("exitCode") == 1
+            and "bwrap: No permissions to create a new namespace" in str(nested_tool.get("stderr"))):
+        pytest.skip("runner kernel denies nested unprivileged user namespaces")
+    assert nested_tool == "writable", nested_tool
