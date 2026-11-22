@@ -306,3 +306,5 @@ JSON 规范化在顶层数组漏写结束符、随后出现当前 Schema 已知�
 当原 Investigator 调用因 Native Goal blocked 失败且没有提交科研交付时，操作员可在该 Cycle 的 `attention/technical-recovery-authorization.json` 明确登记一次已完成的技术产物恢复。该授权位于 Agent 可写工作区之外，绑定原失败调用、线程、冻结科学对象、原脚本/恢复脚本和已恢复产物的 SHA-256，并记录必要的资源例外；必须同时向原 Investigator 提供待消费的操作员说明。SDK验证原 Goal 的终局身份、既有停机/预算/协议约束及全部文件身份，才生成一次性修复凭据并允许新 Goal 检查已恢复产物。旧失败、已花额度、原 Goal 身份和所有科学判据保留；凭据不代替 Investigator 交付或 Judge 裁决，不自行增加科研 Cycle 或额度，也不授权后续额外计算。没有完整操作员授权及产物证明时维持原有 hold。
 
 Judge 返工中的终局 blocked Goal 可使用同一操作员产物恢复入口，但只允许 `verified_artifact_rescan`，不开放新的有界计算。授权必须显式绑定 `judge_rework`、原 Judge 输出和 objections、原返工授权、当前未交付 attempt、既有 Evidence 清单与字节身份、冻结 H；验证、消费和 setup-only 重试均重新核对这些绑定。恢复后的 Investigator 按原返工步骤核查已保存产物，保留原失败和累计预算，通过正常交付再由 Judge 独立裁定。此次恢复不扩展 Investigator 或 Judge 的科学权限。
+
+若 blocked 调用已经写出本调用专属 `.tm-handoff` 文件，只有 `judge_rework` 的产物重读授权同时列出该文件路径与 SHA-256，并以 `prior_handoff_sha256` 显式绑定时，才可将它作为新 Investigator Goal 的只读候选材料。blocked Goal 和该文件均不构成已完成交付；新调用必须自行核查并写入自己的交付路径，SDK 才能按正常合同送 Judge。没有此绑定、文件缺失或字节变化时拒绝恢复。

@@ -369,6 +369,47 @@ def test_judge_rework_rescan_keeps_original_judge_evidence_and_budget(stopped, m
         recovery.consume_technical_recovery(cycle, state)
 
 
+def test_blocked_handoff_is_bound_material_not_completed_delivery(stopped):
+    set_judge_rework(stopped)
+    cycle, state, goal, auth_path, _ = stopped
+    handoff = cycle / 'workspace/.tm-handoff' / (state['last_invocation_id'] + '.json')
+    handoff.parent.mkdir()
+    handoff.write_text('{"findings":[{"statement":"Executed gate failed"}]}')
+    auth = json.loads(auth_path.read_text())
+    auth['artifact_manifest'][str(handoff)] = sha(handoff)
+    auth['prior_handoff_sha256'] = sha(handoff)
+    write_json(auth_path, auth)
+
+    before = copy.deepcopy(state)
+    proof, inputs = recovery.check_authorization(cycle, state, goal_reader=lambda *_: goal)
+    assert state == before
+    assert proof['prior_handoff_sha256'] == sha(handoff)
+    assert inputs[str(handoff)] == sha(handoff)
+    assert proof['blocked_goal_identity']['status'] == 'blocked'
+    assert proof['scientific_verdict'] is None
+
+
+@pytest.mark.parametrize('change', ['missing_authorization', 'missing_manifest',
+    'changed_handoff', 'missing_handoff', 'compute_mode'])
+def test_blocked_handoff_requires_exact_rescan_binding(stopped, change):
+    set_judge_rework(stopped)
+    cycle, state, goal, auth_path, _ = stopped
+    handoff = cycle / 'workspace/.tm-handoff' / (state['last_invocation_id'] + '.json')
+    handoff.parent.mkdir()
+    handoff.write_text('{"findings":[{"statement":"Executed gate failed"}]}')
+    auth = json.loads(auth_path.read_text())
+    auth['artifact_manifest'][str(handoff)] = sha(handoff)
+    auth['prior_handoff_sha256'] = sha(handoff)
+    if change == 'missing_authorization': auth.pop('prior_handoff_sha256')
+    elif change == 'missing_manifest': auth['artifact_manifest'].pop(str(handoff))
+    elif change == 'changed_handoff': handoff.write_text('{"findings":[]}')
+    elif change == 'missing_handoff': handoff.unlink()
+    elif change == 'compute_mode': auth['mode'] = recovery.BOUNDED_COMPUTATION
+    write_json(auth_path, auth)
+    with pytest.raises((ValueError, OSError)):
+        recovery.check_authorization(cycle, state, goal_reader=lambda *_: goal)
+
+
 @pytest.mark.parametrize('change', ['bounded_computation', 'wrong_stage', 'missing_binding',
     'changed_judge', 'changed_objection', 'changed_rework', 'changed_evidence',
     'new_lifecycle', 'submitted_attempt', 'changed_frozen', 'changed_refs', 'unpersisted_rework'])

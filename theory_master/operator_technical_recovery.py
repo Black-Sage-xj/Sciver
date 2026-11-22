@@ -249,6 +249,18 @@ def check_authorization(cycle: Path, state: dict, *, goal_reader=None) -> tuple[
                 or not isinstance(expected, str) or not re.fullmatch('[0-9a-f]{64}', expected)
                 or hashlib.sha256(_read(source, inputs)).hexdigest() != expected):
             raise ValueError('repaired artifact identity changed')
+    handoff = workspace / '.tm-handoff' / (invocation + '.json')
+    prior_handoff_sha = authorization.get('prior_handoff_sha256')
+    if handoff.exists() or handoff.is_symlink():
+        # A blocked Goal cannot deliver Findings. Its file is only a bounded
+        # source for a new Investigator Goal, which must author its own handoff.
+        if (mode != ARTIFACT_RESCAN or stage != 'judge_rework'
+                or not isinstance(prior_handoff_sha, str)
+                or artifacts.get(str(handoff)) != prior_handoff_sha
+                or hashlib.sha256(_read(handoff, inputs, 1_048_576)).hexdigest() != prior_handoff_sha):
+            raise ValueError('blocked handoff is not explicitly bound as rescan material')
+    elif prior_handoff_sha is not None:
+        raise ValueError('authorized blocked handoff is missing')
     guidance_path = cycle / 'attention/operator_guidance.json'
     guidance = json.loads(_read(guidance_path, inputs, 1_048_576))
     guidance_text = _read(cycle / 'attention/operator_guidance.md', inputs, 1_048_576).decode().strip()
@@ -264,8 +276,7 @@ def check_authorization(cycle: Path, state: dict, *, goal_reader=None) -> tuple[
             or record.get('role') != 'investigator' or record.get('stage') != stage
             or record.get('error_type') != 'NativeGoalRuntimeFailure'
             or record.get('thread_id') != thread or record.get('closure_hash')
-            or any((cycle / folder / (invocation + '.json')).exists()
-                   for folder in ('semantic_closure', 'workspace/.tm-handoff'))):
+            or (cycle / 'semantic_closure' / (invocation + '.json')).exists()):
         raise ValueError('the failed invocation already changed or committed')
     previous = record.get('native_goal_identity') or (record.get('native_goal_origin') or {}).get('persistent_goal')
     if not isinstance(previous, dict) or previous.get('thread_id') != thread:
@@ -283,6 +294,7 @@ def check_authorization(cycle: Path, state: dict, *, goal_reader=None) -> tuple[
             'blocked_thread_id': thread, 'blocked_goal_identity': observed,
             'frozen_objective_sha256': frozen_science_digest(science),
             'operator_authorization': str(path), 'artifact_manifest': artifacts,
+            'prior_handoff_sha256': prior_handoff_sha,
             'mode': mode, 'limits': limits, 'dispatcher_locks': locks,
             'scientific_verdict': None, 'new_scientific_cycle': False}, inputs
 
