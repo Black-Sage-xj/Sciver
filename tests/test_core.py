@@ -8,6 +8,7 @@ from theory_master.core import CYCLE_MARKER, CONTEXT_VALUE_MAX_CHARS, CodexBacke
 from theory_master.__main__ import print_runs, resumable_runs, spec_from_resume_identifier
 from theory_master.science_graph_store import ScienceGraphStore
 from theory_master.task import bootstrap
+from theory_master.backend_fakes import _fixture_prompt_context
 
 
 class OpenJudgeBackend(FakeBackend):
@@ -471,7 +472,7 @@ class TheoryMasterTest(unittest.TestCase):
                 self.frontier_contexts = []
 
             def invoke(self, role, prompt, thread_id, model, provider):
-                context = json.JSONDecoder().raw_decode(prompt.split("Context:\n", 1)[1])[0] if "Context:\n" in prompt else {}
+                context = _fixture_prompt_context(prompt)
                 if role == "research_lead" and self._prompt_stage(prompt) == "frontier_proposal":
                     self.frontier_calls += 1
                     self.frontier_contexts.append(json.loads(json.dumps(context)))
@@ -1042,7 +1043,7 @@ class TheoryMasterTest(unittest.TestCase):
                 self.repairs = 0
 
             def invoke(self, role, prompt, thread_id, model, provider):
-                context = json.JSONDecoder().raw_decode(prompt.split('Context:\n', 1)[1])[0] if 'Context:\n' in prompt else {}
+                context = _fixture_prompt_context(prompt)
                 if role == 'challenger' and context.get('repaired_candidate'):
                     thread = self.ensure_thread(role, thread_id, model, provider)
                     return thread, json.dumps({'candidate_id': context['repaired_candidate']['id'],
@@ -1090,7 +1091,7 @@ class TheoryMasterTest(unittest.TestCase):
                 self.calls = []
 
             def invoke(self, role, prompt, thread_id, model, provider):
-                context = json.JSONDecoder().raw_decode(prompt.split('Context:\n', 1)[1])[0] if 'Context:\n' in prompt else {}
+                context = _fixture_prompt_context(prompt)
                 self.calls.append(role)
                 if role == 'research_lead' and context.get('repair_options'):
                     thread = self.ensure_thread(role, thread_id, model, provider)
@@ -1422,6 +1423,9 @@ class TheoryMasterTest(unittest.TestCase):
             lead = json.loads(backend.prompts['research_lead'][0].split('Context:\n', 1)[1])
             update = lead["lead_stage_update"]
             self.assertLess(int(update["since_cycle"]), int(update["current_cycle"]))
+            graph_changes = [edit for edit in update["changes"]
+                             if any(edit.get(op, [])[:1] == ["agent_graph"] for op in ("set", "append"))]
+            self.assertIn(first["hypothesis_lock"]["id"], json.dumps(graph_changes))
             snapshot = json.loads(Path(update["stage_snapshot"]).read_text())
             self.assertIn("agent_graph", snapshot["context"])
             self.assertNotIn("prior_cycle_summary", snapshot["context"])
