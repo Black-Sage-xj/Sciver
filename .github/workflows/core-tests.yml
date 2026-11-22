@@ -50,5 +50,5 @@ jobs:
         run: |
           python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/sciver-wheels" . ./web
           python -m venv "$RUNNER_TEMP/sciver-smoke"
-          "$RUNNER_TEMP/sciver-smoke/bin/python" -I -m pip install --no-deps "$RUNNER_TEMP/sciver-wheels/"*.whl
+          "$RUNNER_TEMP/sciver-smoke/bin/python" -I -m pip install "$RUNNER_TEMP/sciver-wheels/"*.whl
           python scripts/smoke_install.py --python "$RUNNER_TEMP/sciver-smoke/bin/python"
