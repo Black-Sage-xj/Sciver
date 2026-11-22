@@ -169,9 +169,16 @@ def test_browser_preparation_both_routes_save_conflict_and_create_real_task(tmp_
                 page.locator('[data-prep-title]').fill("Periodic observation " + entry)
                 page.locator('[data-prep-intent]').fill("Clarify and compare the competing explanations.")
                 page.locator('[data-prep-draft]').fill(plan)
+                if index == 0:
+                    error = "筹备对话记录无效，尚未创建项目"
+                    page.route(base + "/create-project", lambda request: request.fulfill(status=409, json={"error": error}))
+                    page.locator('[data-prep-create]').click()
+                    expect(page.locator('[data-prep-status]')).to_have_text(error)
+                    expect(page.locator('[data-prep-draft]')).to_have_value(plan)
+                    page.unroute(base + "/create-project")
                 page.locator('[data-prep-create]').evaluate("button => {button.click();button.click();}")
                 expect(page.locator('[data-prep-status]')).to_contain_text("项目已创建")
-                assert len(created_requests) == index + 1
+                assert len(created_requests) == index + 2
                 assert len(calls) == index + 1
                 assert len(discover_tasks(tmp_path)) == index + 1
                 page.locator('[data-prep-close]').click()

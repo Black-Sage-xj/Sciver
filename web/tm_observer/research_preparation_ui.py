@@ -148,7 +148,8 @@ PREPARATION_SCRIPT = r"""<script>
    const data=await request(base+'/preparation',{title:title.value,intent:intent.value,draft:draft.value,expected_revision:revision});
    apply(data);say('草稿已保存，可以返回讨论继续完善。');return data;
  };
- const failed=error=>say(error.status===409?error.message+' 当前输入已保留；请读取最新草稿后整合，再保存。':
+ const failed=error=>say(error.status===409&&error.message==='计划草稿已变化，请刷新并重新审阅'?
+   error.message+' 当前输入已保留；请读取最新草稿后整合，再保存。':
    error.name==='AbortError'?'请求结果尚未确认。可读取最新草稿或重试；创建操作会返回同一个项目。':error.message);
  [title,intent,draft].forEach(field=>field.addEventListener('input',()=>{dirty=true;say('有未保存修改。');}));
  root.querySelectorAll('[data-preparation-review]').forEach(button=>button.addEventListener('click',async()=>{

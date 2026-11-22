@@ -135,6 +135,86 @@ def test_creates_fresh_task_with_empty_science_and_immutable_material_snapshots(
         prep.update(state, IDENT, {"expected_revision": current["revision"], "draft": "do not overwrite"})
 
 
+def save_chat_record(state, messages, **extra):
+    chat_dir = state / "research-chat"
+    chat_dir.mkdir()
+    record = {"id": IDENT, "mode": "preparation", "messages": messages, **extra}
+    path = chat_dir / (IDENT + ".json")
+    path.write_text(json.dumps(record), encoding="utf-8")
+    return path
+
+
+def test_creates_from_large_chat_record_and_literature_collection(project):
+    state, search = project
+    current = ready(project)
+    messages = [{"role": "user", "content": "Keep this exact message."}]
+    saved = save_chat_record(state, messages, model_metadata="m" * prep._LIMIT)
+    assert saved.stat().st_size > prep._LIMIT
+    material = prep.workspace(state, IDENT) / "literature" / "study"
+    material.mkdir(parents=True)
+    for index in range(273):
+        (material / f"record-{index}.txt").write_text(str(index), encoding="utf-8")
+
+    current = prep.snapshot(state, IDENT)
+    receipt = prep.create_project(state, search, IDENT, confirm(current), conversation=[])
+    snapshot = Path(receipt["snapshot_path"])
+    assert json.loads((snapshot / "conversation.json").read_text()) == messages
+    manifest_bytes = (snapshot / "manifest.json").read_bytes()
+    assert len(json.loads(manifest_bytes)["files"]) == 276
+    assert prep._verify_snapshot(Path(receipt["task_root"]), current["draft_revision"],
+                                 hashlib.sha256(manifest_bytes).hexdigest(), current["revision"]) == PLAN
+
+
+@pytest.mark.parametrize("limit, message", [
+    ("record", "筹备对话记录超过 8 MiB"),
+    ("messages", "筹备对话快照超过 1 MiB"),
+    ("entries", "筹备快照条目过多"),
+    ("bytes", "筹备快照总大小超过 32 MiB"),
+])
+def test_oversized_preparation_is_rejected_before_creation(project, limit, message):
+    state, search = project
+    current = ready(project)
+    if limit == "record":
+        path = save_chat_record(state, [])
+        with path.open("r+b") as handle:
+            handle.truncate(prep._CHAT_RECORD_LIMIT + 1)
+    elif limit == "messages":
+        save_chat_record(state, [{"role": "assistant", "content": "m" * prep._LIMIT}])
+    else:
+        material = prep.workspace(state, IDENT) / "literature"
+        material.mkdir()
+        if limit == "entries":
+            for index in range(prep._SNAPSHOT_FILE_LIMIT - 2):
+                (material / f"record-{index}.txt").touch()
+        else:
+            for index in range(2):
+                with (material / f"record-{index}.txt").open("wb") as handle:
+                    handle.truncate(prep._MATERIAL_LIMIT // 2)
+
+    current = prep.snapshot(state, IDENT)
+    with pytest.raises(prep.PreparationError, match=message) as error:
+        prep.create_project(state, search, IDENT, confirm(current))
+    assert error.value.status == 413
+    assert prep.snapshot(state, IDENT) == current
+    assert not (search / "projects").exists()
+
+
+@pytest.mark.parametrize("invalid, message", [
+    ("not JSON", "筹备对话记录无效"),
+    ('{"id":"other","mode":"preparation","messages":[]}', "筹备对话绑定无效"),
+])
+def test_invalid_chat_record_still_prevents_creation(project, invalid, message):
+    state, search = project
+    current = ready(project)
+    save_chat_record(state, []).write_text(invalid, encoding="utf-8")
+
+    with pytest.raises(prep.PreparationError, match=message) as error:
+        prep.create_project(state, search, IDENT, confirm(current))
+    assert error.value.status == 409
+    assert prep.snapshot(state, IDENT) == current
+    assert not (search / "projects").exists()
+
+
 def test_duplicate_and_concurrent_creation_return_one_task(project):
     state, search = project
     current = ready(project)

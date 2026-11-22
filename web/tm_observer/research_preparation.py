@@ -26,7 +26,9 @@ from .task_names import task_name, validate_task_name
 SCHEMA = "sciver/research-preparation/v1"
 _IDENT = re.compile(r"[0-9a-f]{32}\Z")
 _LIMIT = 1_048_576
+_CHAT_RECORD_LIMIT = 8 * _LIMIT
 _MATERIAL_LIMIT = 32 * _LIMIT
+_SNAPSHOT_FILE_LIMIT = 512
 
 
 class PreparationError(ValueError):
@@ -266,6 +268,26 @@ def _valid_plan(draft: str) -> None:
         raise PreparationError("计划尚未完成：" + str(exc), 422) from exc
 
 
+def _saved_conversation(state_dir: Path, ident: str, fallback: Any) -> Any:
+    chat_path = Path(state_dir) / "research-chat" / (ident + ".json")
+    if not chat_path.exists() and not chat_path.is_symlink():
+        return fallback
+    try:
+        raw_chat = _read(chat_path, _CHAT_RECORD_LIMIT)
+    except PreparationError as exc:
+        if exc.status == 413:
+            raise PreparationError("筹备对话记录超过 8 MiB，尚未创建项目", 413) from exc
+        raise
+    try:
+        chat = json.loads(raw_chat)
+    except (ValueError, RecursionError) as exc:
+        raise PreparationError("筹备对话记录无效，尚未创建项目", 409) from exc
+    if (not isinstance(chat, dict) or chat.get("id") != ident
+            or chat.get("mode") != "preparation" or not isinstance(chat.get("messages"), list)):
+        raise PreparationError("筹备对话绑定无效，尚未创建项目", 409)
+    return chat["messages"]
+
+
 def _freeze(root: Path, value: dict, draft: str, conversation: Any) -> dict[str, bytes]:
     try:
         dialogue = json.dumps(conversation if conversation is not None else [], ensure_ascii=False, indent=2).encode()
@@ -287,25 +309,29 @@ def _freeze(root: Path, value: dict, draft: str, conversation: Any) -> dict[str,
             raise PreparationError("筹备材料包含符号链接，不能自动迁移", 403)
         if path.is_dir() or str(relative) in {"metadata.json", "research_plan.md"}:
             continue
+        if len(files) >= _SNAPSHOT_FILE_LIMIT:
+            raise PreparationError("筹备快照条目过多，请缩小迁移范围", 413)
         data = _read(path, 16 * _LIMIT)
         total += len(data)
-        if total > _MATERIAL_LIMIT or len(files) >= 200:
-            raise PreparationError("筹备材料过多，请缩小迁移范围", 413)
+        if total > _MATERIAL_LIMIT:
+            raise PreparationError("筹备快照总大小超过 32 MiB，请缩小迁移范围", 413)
         files["materials/" + relative.as_posix()] = data
     return files
 
 
 def _publish_snapshot(target: Path, files: dict[str, bytes]) -> str:
-    home = target / "preparation_snapshot"
-    home.mkdir(mode=0o700, exist_ok=False)
     manifest = {"schema": "sciver/preparation-snapshot/v1",
                 "files": [{"path": name, "sha256": _sha(data), "bytes": len(data)} for name, data in sorted(files.items())]}
+    manifest_bytes = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode()
+    if len(manifest_bytes) > _LIMIT:
+        raise PreparationError("筹备快照清单超过 1 MiB，请缩小迁移范围", 413)
+    home = target / "preparation_snapshot"
+    home.mkdir(mode=0o700, exist_ok=False)
     for name, data in files.items():
         path = home / name
         path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         _atomic(path, data)
         path.chmod(0o400)
-    manifest_bytes = (json.dumps(manifest, ensure_ascii=False, indent=2) + "\n").encode()
     _atomic(home / "manifest.json", manifest_bytes)
     (home / "manifest.json").chmod(0o400)
     return _sha(manifest_bytes)
@@ -453,16 +479,7 @@ def create_project(state_dir: Path, search_root: Path, ident: str, payload: dict
             if payload["expected_revision"] != current["revision"]:
                 raise PreparationError("计划草稿或文献资料已变化，请刷新并重新审阅", 409)
             _valid_plan(current["draft"])
-            chat_path = Path(state_dir) / "research-chat" / (ident + ".json")
-            if chat_path.exists() or chat_path.is_symlink():
-                try:
-                    chat = json.loads(_read(chat_path))
-                except (ValueError, UnicodeError) as exc:
-                    raise PreparationError("筹备对话记录无效，尚未创建项目", 409) from exc
-                if (not isinstance(chat, dict) or chat.get("id") != ident
-                        or chat.get("mode") != "preparation" or not isinstance(chat.get("messages"), list)):
-                    raise PreparationError("筹备对话绑定无效，尚未创建项目", 409)
-                conversation = chat["messages"]
+            conversation = _saved_conversation(state_dir, ident, conversation)
             files = _freeze(root, {**value, "material_revision": current["material_revision"]}, current["draft"], conversation)
             _directory(search / "projects", create=True)
             if target.exists() or target.is_symlink():

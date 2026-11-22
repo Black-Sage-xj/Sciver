@@ -33,6 +33,8 @@ def material_roots(spec: Any) -> tuple[Path, ...]:
         Path(spec.document).parent.resolve(),
         Path(spec.branch_canvas).parent.resolve(),
     }
+    if getattr(spec, "task_home", None) is not None:
+        roots.add(Path(spec.task_home).resolve())
     benchmark = getattr(spec, "benchmark_root", None)
     if benchmark is not None:
         roots.add(Path(benchmark).resolve())
