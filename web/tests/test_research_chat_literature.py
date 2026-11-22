@@ -449,7 +449,8 @@ def test_status_ui_is_a_read_only_hook_for_real_research_sessions():
     assert 'data-chat-literature-session' in page_body({'session': {'id': 'a' * 32, 'mode': 'project'}, 'tasks': []})
 
 
-def test_browser_reads_actual_literature_status_and_report_without_model(prepared):
+@pytest.mark.parametrize('stateful_move', [True, False])
+def test_browser_reads_actual_literature_status_and_report_without_model(prepared, stateful_move):
     from playwright.sync_api import expect, sync_playwright
     state, search, ident = prepared
     backend, retrieve = LiteratureBackend(), Retriever()
@@ -471,14 +472,32 @@ def test_browser_reads_actual_literature_status_and_report_without_model(prepare
             page = browser.new_page(viewport={'width': 1100, 'height': 900})
             errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
+            if not stateful_move:
+                page.add_init_script('Element.prototype.moveBefore = undefined;')
             page.goto(base + '/research-chat/?session=' + ident)
             expect(page.locator('[data-chat-literature-label]')).to_have_text('Literature · 已交付报告')
             expect(page.locator('[data-chat-literature-counts]')).to_contain_text('可读正文 2 篇')
             card = page.locator('[data-chat-literature-open]')
             card.focus()
+            # React may replace the toolbar destination after the control has focus.
+            page.locator('[data-chat-literature-slot]').evaluate("""slot => {
+                const next = document.createElement('div');
+                next.dataset.chatLiteratureSlot = '';
+                slot.before(next);
+                slot.removeAttribute('data-chat-literature-slot');
+            }""")
+            expect(card).to_be_focused()
             page.keyboard.press('Enter')
             detail = page.locator('[data-chat-literature-dialog]')
             expect(detail).to_be_visible()
+            page.locator('[data-chat-literature-slot]').evaluate("""slot => {
+                const next = document.createElement('div');
+                next.dataset.chatLiteratureSlot = '';
+                slot.before(next);
+                slot.removeAttribute('data-chat-literature-slot');
+            }""")
+            expect(detail).to_be_visible()
+            assert detail.evaluate("dialog => dialog.matches(':modal')")
             expect(page.locator('[data-chat-literature-detail-query]')).to_have_text(QUERY)
             expect(page.locator('[data-chat-literature-scope]')).to_have_text(SCOPE)
             expect(page.locator('[data-chat-literature-activity] li')).to_have_count(4)

@@ -100,7 +100,16 @@ def literature_panel(session: dict) -> str:
       let pending=false,controller=null,jobs=[],selected='',detailController=null,detailVersion=0,detailLoading=false,optionsSignature='';
       function present(){
         const slot=root?.querySelector('[data-chat-literature-slot]');
-        if(slot&&panel.parentElement!==slot)slot.append(panel);
+        if(slot&&panel.parentElement!==slot){
+          if(typeof slot.moveBefore==='function')slot.moveBefore(panel,null);
+          else{
+            const focused=panel.contains(document.activeElement)?document.activeElement:null;
+            const modal=dialog.matches(':modal');
+            slot.append(panel);
+            if(modal&&!dialog.matches(':modal')){dialog.removeAttribute('open');dialog.showModal();}
+            focused?.focus({preventScroll:true});
+          }
+        }
         panel.hidden=!slot||!jobs.length;
       }
       const layout=new MutationObserver(present);
