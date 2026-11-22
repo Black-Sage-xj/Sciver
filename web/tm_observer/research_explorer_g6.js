@@ -1527,68 +1527,86 @@ function resolve(target,source){
       anchor:target.split('#')[1]?.split('|')[0]||''};
   }}return null;
 }
-function mdHtml(text,source){
-  if(!window.marked||!window.DOMPurify)return '<pre>'+esc(text)+'</pre>';
-  const math=[];
-  let protectedText=text.replace(/(```[\s\S]*?```|~~~[\s\S]*?~~~|`+[^`\n]*`+)|(\$\$[\s\S]*?\$\$|(?<!\\)\$(?!\$)[^\n$]+(?<!\\)\$)/g,(raw,code)=>{
-    if(code)return code;
-    const block=raw.startsWith('$$');math.push({value:raw.slice(block?2:1,block?-2:-1),block});
-    return 'TMKATEXPLACEHOLDER'+(math.length-1)+'END';
-  });
-  protectedText=protectedText.replace(/(```[\s\S]*?```|~~~[\s\S]*?~~~|`+[^`\n]*`+)|!\[\[([^\]\n]+)\]\]/g,(full,code,link)=>{
-    if(code)return code;
-    const [target,label]=link.split('|'),width=/^\d{1,4}$/.test(label||'')?Number(label):null;
-    if(target.split('#')[0].toLowerCase().endsWith('.md'))return '[['+link+']]';
-    return '<img src="'+esc(target)+'" alt="'+esc(width?target:(label||target))+
-      '" data-vault-image="1"'+(width?' width="'+width+'"':'')+'>';
-  });
-  protectedText=protectedText.replace(/(?<!!)\[\[([^\]\n]+)\]\]/g,(full,link)=>{
-    const label=link.split('|')[1]||link.split('|')[0],ref=resolve(link,source);
-    return ref?'['+label.replace(/[\[\]]/g,'')+'](#tmref='+encodeURIComponent(ref.kind+':'+ref.id)+
-      (ref.anchor?'%23'+encodeURIComponent(ref.anchor):'')+')':esc(label);
-  });
-  const result=window.DOMPurify.sanitize(window.marked.parse(protectedText));
-  const doc=new DOMParser().parseFromString('<div id="parsed">'+result+'</div>','text/html');
-  const wrap=doc.getElementById('parsed');
-  if(window.Prism)wrap.querySelectorAll('pre code[class*="language-"]').forEach(code=>{
-    window.Prism.highlightElement(code);
-  });
-  wrap.querySelectorAll('img').forEach(img=>{
-    const raw=img.getAttribute('src')||'';
-    if(!/^https?:\/\//i.test(raw)){
-      if(!raw||/^[a-z][a-z\d+.-]*:/i.test(raw)||raw.startsWith('//')){img.remove();return}
-      let target;try{target=decodeURIComponent(raw.split('#')[0])}catch{img.remove();return}
-      img.setAttribute('src',base()+'/image?path='+encodeURIComponent(target)+
-        '&source='+encodeURIComponent(source||'')+(img.dataset.vaultImage?'&vault=1':''));
-    }
-    img.removeAttribute('srcset');img.removeAttribute('sizes');
-    img.setAttribute('loading','lazy');img.setAttribute('referrerpolicy','no-referrer');
-  });
-  wrap.querySelectorAll('a').forEach(a=>{
-    const href=a.getAttribute('href')||'';
-    if(href.startsWith('#tmref=')){a.dataset.ref=decodeURIComponent(href.slice(7));a.removeAttribute('href')}
-    else if(href.startsWith('#')){}
-    else if(/^https?:\/\//i.test(href)){a.target='_blank';a.rel='noopener noreferrer'}
-    else{const ref=resolve(href,source);if(ref){
-      a.dataset.ref=uri(ref.kind,ref.id)+(ref.anchor?'#'+ref.anchor:'');a.removeAttribute('href');
-    }else a.removeAttribute('href')}
-  });
-  wrap.querySelectorAll('*').forEach(el=>{for(const child of Array.from(el.childNodes)){
-    if(child.nodeType!==3||!child.textContent.includes('TMKATEXPLACEHOLDER'))continue;
-    const fragment=doc.createDocumentFragment(),re=/TMKATEXPLACEHOLDER(\d+)END/g;
-    let pos=0,m;
-    while((m=re.exec(child.textContent))){
-      fragment.append(doc.createTextNode(child.textContent.slice(pos,m.index)));
-      const spec=math[Number(m[1])],box=doc.createElement(spec.block?'div':'span');
-      try{if(window.katex)box.innerHTML=window.katex.renderToString(spec.value,{
-        displayMode:spec.block,throwOnError:false,trust:false,output:'html'
-      });else box.textContent=spec.value}catch{box.textContent=spec.value}
-      fragment.append(box);pos=re.lastIndex;
-    }
-    fragment.append(doc.createTextNode(child.textContent.slice(pos)));child.replaceWith(fragment);
-  }});
-  return wrap.innerHTML;
+const taskReportSources=new Map();
+function taskReportSourceId(version,ref){return encodeURIComponent(JSON.stringify({version,ref}))}
+function unpackTaskReportSource(id){
+  try{const value=JSON.parse(decodeURIComponent(id));
+    return typeof value.version==='string'&&typeof value.ref==='string'?value:null;
+  }catch{return null}
 }
+function taskReportVersion(source){return /^final-reports\/([^/]+)\//.exec(source||'')?.[1]||null}
+function taskReportMarkdownContext(source){
+  const version=taskReportVersion(source),sources=taskReportSources.get(version)||{};
+  if(!version)return {};
+  const keys=Object.keys(sources);
+  return {imageUrl:(target,origin,isVaultEmbed)=>base()+'/image?path='+encodeURIComponent(target)+
+    '&source='+encodeURIComponent(origin)+(isVaultEmbed&&origin!=='final-reports/'+version+'/report.md'?'&vault=1':''),
+    resolve:(target,origin)=>{
+    const graphRef=resolve(target,origin);
+    let key;try{key=decodeURIComponent(String(target).split('|')[0].split('#')[0])}catch{return graphRef}
+    if(!Object.hasOwn(sources,key)){
+      key=keys.find(ref=>sources[ref]?.path===key||sources[ref]?.id===key)||key;
+    }
+    if(!Object.hasOwn(sources,key))return graphRef;
+    const isCycle=sources[key]?.kind==='cycle';
+    const label=isCycle?(sources[key].title||'Cycle '+sources[key].id):'['+(keys.indexOf(key)+1)+']';
+    return graphRef&&!isCycle?{...graphRef,label}:{kind:'task-report-source',
+      id:taskReportSourceId(version,key),anchor:String(target).split('#')[1]||'',label};
+  }};
+}
+function ensureTaskReportButton(){
+  let button=$('ex-task-report');
+  if(!index||!Object.hasOwn(index,'final_report')||index.final_report?.task_complete===false){if(button)button.hidden=true;return}
+  if(!button){
+    const toolbar=$('ex-vault-open')?.parentElement||document.querySelector('.ex-toolbar-main');
+    if(!toolbar)return;
+    button=document.createElement('button');button.id='ex-task-report';button.type='button';
+    toolbar.insertBefore(button,$('ex-vault-open')?.nextSibling||null);
+    button.onclick=()=>navigate('task-report',String(index?.final_report?.version||'current'));
+  }
+  const report=index?.final_report||{},running=['queued','running','collecting','composing','reviewing'].includes(report.state);
+  button.hidden=false;
+  button.textContent=running?'总报告 · 生成中':'总报告';
+  button.title=report.available?'在右侧阅读任务总报告':running?'总报告生成中，点击查看状态':
+    report.state==='failed'?'总报告生成失败，点击查看状态':'查看任务总报告与生成状态';
+  button.dataset.state=report.state||'missing';
+}
+function taskReportUnavailable(state,message){
+  const text=message||(['queued','running','collecting','composing','reviewing'].includes(state)?
+    '总报告正在生成，可以继续查看图谱，稍后刷新报告状态。':state==='failed'?
+    '总报告暂未就绪，研究结果已经保留。刷新后可查看新的报告状态。':
+    '当前任务尚无总报告。任务完成后会独立整理研究结果。');
+  return '<button class="ex-ref" type="button" data-doc-back="1">← 返回图谱位置</button>'+
+    '<h2 class="ex-document-title">任务总报告</h2><p class="ex-reader-empty">'+esc(text)+'</p>'+
+    '<button class="ex-ref" type="button" data-task-report-refresh="1">刷新报告状态</button>';
+}
+function taskReportContents(doc){
+  const version=String(doc.version||''),target=uri('task-report',version);
+  const versions=index?.final_report?.versions||[];
+  return '<button class="ex-ref" type="button" data-doc-back="1">← 返回图谱位置</button>'+
+    '<h2 class="ex-document-title">'+esc(doc.title||'任务总报告')+'</h2>'+
+    (doc.state==='needs_revision'?'<p class="ex-reader-notice">这份报告还有审核意见，当前显示待修订稿。</p>':'')+
+    (versions.length>1?'<label class="ex-meta">报告版本 <select data-task-report-version="1" aria-label="选择总报告版本">'+
+      versions.map(item=>'<option value="'+esc(item.version)+'"'+(String(item.version)===version?' selected':'')+'>'+esc(item.title||item.version)+
+        (item.created_at?' · '+esc(item.created_at):'')+'</option>').join('')+'</select></label>':'')+
+    (doc.section?'<button class="ex-ref" data-ref="'+esc(target)+'">查看完整报告</button>':'')+
+    '<details class="ex-report-toc"><summary>报告目录 · 按章节阅读</summary><nav aria-label="总报告章节">'+
+    (doc.sections||[]).filter(section=>section.level===2).map(section=>'<button class="ex-ref" data-ref="'+
+      esc(target+'#'+section.id)+'">'+esc(section.title)+'</button>').join('')+'</nav></details>'+
+    '<div class="ex-md" data-doc-content="1">'+mdHtml(withoutRepeatedTitle(doc.content||'',doc.title),doc.id)+'</div>'+
+    (doc.next_offset!==null&&doc.next_offset!==undefined?'<button class="ex-ref" data-task-report-more="'+doc.next_offset+'">加载后续报告内容 ↓</button>':'')+
+    '<details class="ex-report-toc" data-task-report-cycles="1"><summary>研究轮次</summary><div>'+Object.entries(doc.source_index||{}).map(([ref,item],i)=>
+      '<button class="ex-ref" data-ref="'+esc(uri('task-report-source',taskReportSourceId(version,ref)))+'">'+
+      (item.kind==='cycle'?'':'['+(i+1)+'] ')+esc(item.title||ref)+'</button>').join('')+'</div></details>';
+}
+let markdownReader=null;
+function mdHtml(text,source){
+  if(!markdownReader&&globalThis.SciverMarkdown)
+    markdownReader=globalThis.SciverMarkdown.create({escape:esc,resolve,base});
+  return markdownReader?markdownReader.render(text,source,taskReportMarkdownContext(source)):
+    '<pre>'+esc(text)+'</pre>';
+}
+
 function refsBlock(key){
   const refs=index.backlinks[key]||[];
   return '<div class="ex-section"><strong>反向引用 ('+refs.length+')</strong><div>'+
@@ -1835,13 +1853,16 @@ window.addEventListener('sciver-chat-reference-result',event=>{
 });
 async function navigate(kind,id,anchor='',options={}){
   if(!index)return;
+  if(['task-report','task-report-source'].includes(kind)&&index.final_report?.task_complete===false)return;
+  if(!['node','edge','doc','report','task-report','task-report-source'].includes(kind))return;
   discussionStatusTarget=null;
   if(kind==='node'&&!index.nodes.some(n=>n.id===id))return;
   if(kind==='edge'&&!index.edges.some(e=>ID(e.id||e.fromNode+'->'+e.toNode)===id))return;
-  if(['doc','report'].includes(kind))mobileReadingRequested=true;
+  const readingKinds=['doc','report','task-report','task-report-source'];
+  if(readingKinds.includes(kind))mobileReadingRequested=true;
   else showMobileGraph();
   const request=++navSerial;
-  if(['doc','report'].includes(kind)&&!['doc','report'].includes(selected?.kind))docOriginView=captureView();
+  if(readingKinds.includes(kind)&&!readingKinds.includes(selected?.kind))docOriginView=captureView();
   if(options.record!==false)rememberBefore();
   selected={kind,id,anchor};
   readingSourceVersion='';
@@ -1929,6 +1950,41 @@ async function navigate(kind,id,anchor='',options={}){
         (doc.next_offset!==null&&doc.next_offset!==undefined?'<button class="ex-ref" data-report-more="'+doc.next_offset+'">加载后续报告内容 ↓</button>':'');
       await updateSelectionWithoutLayout();
     }catch(e){reader.textContent='无法加载研究报告：'+e.message}
+  }else if(kind==='task-report'){
+    try{
+      const version=id&&id!=='current'?'&version='+encodeURIComponent(id):'';
+      const doc=await api(base()+'/final-report?section='+encodeURIComponent(anchor)+version);
+      if(request!==navSerial||selected?.kind!==kind||selected.id!==id)return;
+      if(doc.available===false||!doc.content){
+        reader.innerHTML=taskReportUnavailable(doc.state||index.final_report?.state,doc.message);
+      }else{
+        const actual=String(doc.version||id);selected.id=actual;
+        taskReportSources.set(actual,doc.source_index||{});
+        readingSourceVersion=doc.source_sha256||'';
+        reader.innerHTML=taskReportContents({...doc,version:actual,section:anchor});
+      }
+      await updateSelectionWithoutLayout();
+    }catch(e){reader.innerHTML=taskReportUnavailable(index.final_report?.state,'无法加载总报告：'+e.message)}
+  }else if(kind==='task-report-source'){
+    const source=unpackTaskReportSource(id);
+    if(!source){reader.textContent='无法读取报告来源：来源定位无效。';return}
+    try{
+      const doc=await api(base()+'/final-report-source?version='+encodeURIComponent(source.version)+
+        '&ref='+encodeURIComponent(source.ref)+'&section='+encodeURIComponent(anchor));
+      if(request!==navSerial||selected?.kind!==kind||selected.id!==id)return;
+      if(doc.source_index)taskReportSources.set(source.version,doc.source_index);
+      readingSourceVersion=doc.source_sha256||'';
+      reader.innerHTML='<button class="ex-ref" type="button" data-task-report-back="'+esc(source.version)+'">← 返回总报告</button>'+
+        '<h2 class="ex-document-title">'+esc(doc.title||source.ref)+'</h2>'+
+        '<div class="ex-md" data-doc-content="1">'+mdHtml(withoutRepeatedTitle(doc.content||'',doc.title),doc.id)+'</div>'+
+        (doc.next_offset!==null&&doc.next_offset!==undefined?
+          '<button class="ex-ref" type="button" data-task-report-source-more="'+doc.next_offset+'">加载后续来源内容 ↓</button>':'');
+      await updateSelectionWithoutLayout();
+    }catch(e){
+      if(request!==navSerial||selected?.kind!==kind||selected.id!==id)return;
+      reader.innerHTML='<button class="ex-ref" type="button" data-task-report-back="'+esc(source.version)+'">← 返回总报告</button>'+
+        '<p class="ex-reader-empty">无法读取冻结来源：'+esc(e.message)+'</p>';
+    }
   }
   if(request!==navSerial)return;
   if(['node','doc','report'].includes(kind))reader.insertAdjacentHTML('afterbegin',discussionTools());
@@ -1945,7 +2001,7 @@ async function navigate(kind,id,anchor='',options={}){
       positionSourceRail();pulseNode(nodeId);
     }
   }
-  if(['doc','report'].includes(kind)&&mobileReadingRequested)layout.dataset.mobileReading='true';
+  if(readingKinds.includes(kind)&&mobileReadingRequested)layout.dataset.mobileReading='true';
   reader.scrollTop=0;
   if(anchor){
     const outcomeTarget=anchor==='outcome'&&kind==='node'?
@@ -1999,7 +2055,68 @@ document.addEventListener('selectionchange',()=>{
 reader.addEventListener('pointerdown',e=>{
   if(e.target.closest('[data-selection-popover] button'))e.preventDefault();
 });
+reader.addEventListener('keydown',event=>{
+  if(!['Enter',' '].includes(event.key))return;
+  const reference=event.target.closest('a[data-ref]');
+  if(reference){event.preventDefault();reference.click()}
+});
 reader.addEventListener('click',async e=>{
+  if(e.target.closest('[data-task-report-refresh]')){await load();return;}
+  const reportBack=e.target.closest('[data-task-report-back]');
+  if(reportBack){
+    const previous=trail[trailPosition()-1];
+    if(previous?.selected?.kind==='task-report'&&previous.selected.id===reportBack.dataset.taskReportBack)
+      await restoreView(-1);
+    else await navigate('task-report',reportBack.dataset.taskReportBack);
+    return;
+  }
+  const taskReportSourceMore=e.target.closest('[data-task-report-source-more]');
+  if(taskReportSourceMore&&selected?.kind==='task-report-source'){
+    if(taskReportSourceMore.disabled)return;
+    const target={...selected},source=unpackTaskReportSource(target.id),request=navSerial,
+      offset=Number(taskReportSourceMore.dataset.taskReportSourceMore);
+    if(!source||!Number.isSafeInteger(offset)||offset<0)return;
+    const current=()=>request===navSerial&&selected?.kind===target.kind&&selected.id===target.id&&
+      selected.anchor===target.anchor&&taskReportSourceMore.isConnected;
+    taskReportSourceMore.disabled=true;
+    taskReportSourceMore.setAttribute('aria-busy','true');
+    taskReportSourceMore.textContent='正在加载后续来源内容…';
+    try{
+      const page=await api(base()+'/final-report-source?version='+encodeURIComponent(source.version)+
+        '&ref='+encodeURIComponent(source.ref)+'&section='+encodeURIComponent(target.anchor||'')+'&offset='+offset);
+      if(!current())return;
+      if(page.source_index)taskReportSources.set(source.version,page.source_index);
+      reader.querySelector('[data-doc-content]')?.insertAdjacentHTML('beforeend',mdHtml(page.content,page.id));
+      if(page.next_offset===null||page.next_offset===undefined)taskReportSourceMore.remove();
+      else{
+        taskReportSourceMore.dataset.taskReportSourceMore=String(page.next_offset);
+        taskReportSourceMore.disabled=false;
+        taskReportSourceMore.removeAttribute('aria-busy');
+        taskReportSourceMore.textContent='加载后续来源内容 ↓';
+      }
+    }catch(err){
+      if(!current())return;
+      taskReportSourceMore.disabled=false;
+      taskReportSourceMore.removeAttribute('aria-busy');
+      taskReportSourceMore.textContent='读取失败，点击重试：'+err.message;
+    }
+    return;
+  }
+  const taskReportMore=e.target.closest('[data-task-report-more]');
+  if(taskReportMore&&selected?.kind==='task-report'){
+    const target={...selected},offset=Number(taskReportMore.dataset.taskReportMore);
+    taskReportMore.disabled=true;
+    try{
+      const page=await api(base()+'/final-report?version='+encodeURIComponent(target.id)+
+        '&section='+encodeURIComponent(target.anchor||'')+'&offset='+offset);
+      if(selected?.kind!=='task-report'||selected.id!==target.id||selected.anchor!==target.anchor)return;
+      if(page.source_index)taskReportSources.set(target.id,page.source_index);
+      reader.querySelector('[data-doc-content]')?.insertAdjacentHTML('beforeend',mdHtml(page.content,page.id));
+      if(page.next_offset===null||page.next_offset===undefined)taskReportMore.remove();
+      else{taskReportMore.dataset.taskReportMore=String(page.next_offset);taskReportMore.disabled=false}
+    }catch(err){taskReportMore.disabled=false;taskReportMore.textContent='读取失败，点击重试：'+err.message}
+    return;
+  }
   const cycle=e.target.closest('[data-discuss-cycle]');
   if(cycle){discussReading({kind:'report',id:cycle.dataset.discussCycle,section:'',quote:''});return;}
   if(e.target.closest('[data-discuss-selection]')){
@@ -2075,6 +2192,10 @@ reader.addEventListener('click',async e=>{
   const v=el.dataset.ref,split=v.indexOf(':'),hash=v.indexOf('#');
   if(split>0)navigate(v.slice(0,split),v.slice(split+1,hash<0?undefined:hash),hash<0?'':v.slice(hash+1));
 });
+reader.addEventListener('change',event=>{
+  const selector=event.target.closest('[data-task-report-version]');
+  if(selector)navigate('task-report',selector.value);
+});
 function decodeHash(value=location.hash){
   let hash;try{hash=decodeURIComponent(value.slice(1))}catch{return null}
   const i=hash.indexOf(':');if(i<1)return null;
@@ -2085,7 +2206,7 @@ let pendingChatTarget=null;
 window.addEventListener('sciver-explorer-navigate',event=>{
   let url;try{url=new URL(event.detail.href)}catch{return}
   const target=decodeHash(url.hash);
-  if(!target||!['node','edge','doc','report'].includes(target.kind))return;
+  if(!target||!['node','edge','doc','report','task-report','task-report-source'].includes(target.kind))return;
   event.preventDefault();
   if(!index){pendingChatTarget=target;return}
   navigate(target.kind,target.id,target.anchor,{focus:true,animateFocus:true,highlight:true})
@@ -2101,6 +2222,7 @@ async function load({fresh=false}={}){
   try{
     const newIndex=await api(base()+'/index'),previous=index;
     index=newIndex;
+    ensureTaskReportButton();
     overviewRender();
     ++tipWorkerRequest;$('ex-tip-panel').hidden=true;
     $('ex-stats').textContent=index.stats.node_count+' 节点 · '+
@@ -2108,10 +2230,13 @@ async function load({fresh=false}={}){
       (index.edges.some(isDiscussionContext)?index.edges.filter(isDiscussionContext).length+' 讨论关联 · ':'')+
       index.stats.doc_count+' 文档';
     $('ex-index-warning').hidden=!index.stats.partial;
-    const hash=pendingChatTarget||decodeHash();pendingChatTarget=null;
+    const hash=pendingChatTarget||decodeHash()||
+      (Object.hasOwn(index,'final_report')&&index.final_report?.task_complete!==false&&new URLSearchParams(location.search).get('final_report')==='1'?
+        {kind:'task-report',id:String(index.final_report?.version||'current'),anchor:''}:null);
+    pendingChatTarget=null;
     const hashValid=hash&&((hash.kind==='node'&&index.nodes.some(n=>n.id===hash.id))||
       (hash.kind==='edge'&&index.edges.some(e=>ID(e.id||e.fromNode+'->'+e.toNode)===hash.id))||
-      ['doc','report'].includes(hash.kind));
+      (['doc','report'].includes(hash.kind)||(['task-report','task-report-source'].includes(hash.kind)&&index.final_report?.task_complete!==false)));
     const saved=history.state?.tmExplorerView;
     if(fresh&&!hashValid){
       // A new direct visit or a task switch has no explicit document target.
@@ -2125,7 +2250,7 @@ async function load({fresh=false}={}){
     }else if(saved?.taskId===taskId&&(!saved.selected||
       (saved.selected.kind==='node'&&index.nodes.some(n=>n.id===saved.selected.id))||
       (saved.selected.kind==='edge'&&index.edges.some(e=>ID(e.id||e.fromNode+'->'+e.toNode)===saved.selected.id))||
-      ['doc','report'].includes(saved.selected.kind))){
+      (['doc','report'].includes(saved.selected.kind)||(['task-report','task-report-source'].includes(saved.selected.kind)&&index.final_report?.task_complete!==false)))){
       await restoreSnapshot(saved,history.state?.tmExplorerIndex);
     }else if(hashValid){
       await navigate(hash.kind,hash.id,hash.anchor,{record:false,focus:false});
@@ -2395,7 +2520,7 @@ $('ex-query').addEventListener('input',()=>{
     }
   },250);
 });
-window.addEventListener('DOMContentLoaded',()=>{initPaneControls();load({fresh:true})});
+window.addEventListener('DOMContentLoaded',()=>{ensureTaskReportButton();initPaneControls();load({fresh:true})});
 if(typeof MutationObserver!=='undefined'&&document.documentElement){
   new MutationObserver(()=>{
     if(graphReady)updateSelectionWithoutLayout().catch(err=>showError(err.message));

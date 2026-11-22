@@ -89,7 +89,25 @@ class GoalCompletionMixin:
             return None
         if terminal["source"] == "legacy_receipt":
             return terminal["state"]
-        return self._sealed_goal_state(terminal)
+        state = self._sealed_goal_state(terminal)
+        self._queue_final_report(state)
+        return state
+
+    def _queue_final_report(self, state: dict[str, Any], *, launch: bool = False) -> None:
+        """A separate publication job cannot invalidate scientific completion."""
+        try:
+            from .codex_backend import CodexBackend
+            from .final_report import ensure_final_report_job, launch_final_report_job
+            live_backend = isinstance(getattr(self, "backend", None), CodexBackend)
+            operation = launch_final_report_job if launch and live_backend else ensure_final_report_job
+            job = operation(self.spec, database=self._graph_database_path())
+            if job is not None:
+                state["final_report"] = {key: job[key] for key in ("job_id", "state", "attempt")}
+                if job.get("launch_status"):
+                    state["final_report"]["launch_status"] = job["launch_status"]
+        except Exception as error:
+            state["final_report"] = {"state": "unavailable", "retryable": True,
+                                     "error": f"{type(error).__name__}: {error}"}
 
     def _sealed_goal_state(self, terminal: dict[str, Any]) -> dict[str, Any]:
         """research_state of the sealing Cycle, or a minimal view of the SQLite seal."""
@@ -215,6 +233,7 @@ class GoalCompletionMixin:
                 "closed_frontier_ids": closed_ids,
                 "goal_completed_stop_ids": list(seal.get("goal_completed_stop_ids") or []),
             })
+            self._queue_final_report(state, launch=True)
             return result
 
         # not_passed allows another Cycle. It does not write a planner gap.

@@ -14,6 +14,19 @@ GitHub branch. Keep Graph Research integration on the local
 remain local. Integrate common reviewed repairs into `main`. Use an existing
 appropriate checkout or an isolated detached worktree when isolation is needed.
 
+Final-report generation is a required Sciver feature on public `main`. Its writer,
+reviewer, frozen sources and reader are bundled in Sciver and must work without
+installing `graph-research`. Separating that experimental integration never
+authorizes removing report generation or other existing features. Validate both
+installed-wheel report generation and the live Console entry before deployment.
+
+Before publishing, compare the proposed tree with the actual daily-development
+checkout, including its uncommitted changes, and record which changes are already
+included, being integrated, private or still in progress. A clean checkout and
+passing CI alone do not establish that it contains the latest local features.
+Do not switch live services between checkouts without verifying their retained
+features and recording the running commit.
+
 Historical versions belong in commits, tags, detached worktrees or private
 recovery bundles. After verifying incorporation and preserving recovery material,
 remove redundant repair branch names. Default SDK, Web and Supervisor launch

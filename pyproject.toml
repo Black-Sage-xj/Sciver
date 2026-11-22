@@ -17,6 +17,7 @@ theory_master = "theory_master.__main__:main"
 TheoryMaster = "theory_master.__main__:main"
 tm = "theory_master.__main__:main"
 tm-audit = "theory_master.audit_queue:main"
+sciver-final-report = "theory_master.final_report:main"
 
 [project.optional-dependencies]
 # Private Goal/Turn capabilities are tested only against this SDK release.
@@ -36,6 +37,10 @@ theory_master = [
   "model_profiles/advanced.toml",
   "model_profiles/README.md",
   "resources/identities/*.md",
+  "report_synthesis/LICENSE",
+  "report_synthesis/assets/*.js",
+  "report_synthesis/assets/vendor/*",
+  "report_synthesis/assets/vendor/fonts/*",
   "resources/identities/research_chat/AGENTS.md",
   "resources/skills/*/*",
   "resources/skills/*/*/*",

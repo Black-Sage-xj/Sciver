@@ -9,7 +9,8 @@ from typing import Any
 
 @lru_cache(maxsize=1)
 def _asset() -> str:
-    return Path(__file__).with_name("run_console.js").read_text(encoding="utf-8")
+    return "\n".join(Path(__file__).with_name(name).read_text(encoding="utf-8")
+                     for name in ("run_console.js", "final_report_actions.js"))
 
 
 def script(observer_id: str, *, selected_worker: str | None, selected_history_cycle: str,

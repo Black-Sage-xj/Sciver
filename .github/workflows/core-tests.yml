@@ -46,6 +46,10 @@ jobs:
           fi
       - name: Run deterministic core tests
         run: python scripts/run_tests.py -q
+      - name: Verify standalone report publication
+        run: |
+          python -c "import importlib.util; assert importlib.util.find_spec('graph_research') is None"
+          python -m pytest -q tests/test_report_synthesis_*.py tests/test_unified_research_report.py web/tests/test_final_report_generation.py
       - name: Verify installed wheels and Test0 Web startup
         run: |
           python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/sciver-wheels" . ./web

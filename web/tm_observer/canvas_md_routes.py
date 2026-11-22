@@ -30,6 +30,12 @@ def canvas_md_image_get(route: str, raw_query: str, search_root: Path,
     source = (query.get("source") or [""])[0]
     if not target or "\x00" in target or "\x00" in source:
         raise ExplorerError("无效图片路径", 400)
+    if source.startswith("final-reports/"):
+        from .final_report_routes import report_image
+        from .final_report_ui import task_is_complete
+        if not task_is_complete(run):
+            raise ExplorerError("任务完成后才提供总报告", 404)
+        return report_image(research, source, target, vault=(query.get("vault") or [""])[0] == "1")
     # Only the registered task and its bound research directory are readable.
     roots = (root, research)
     candidates = [root / target, research / target, search_root.resolve() / target]
@@ -110,15 +116,31 @@ def canvas_md_get(
     if len(parts) != 5 or parts[:3] != ["api", "canvas-md", "tasks"]:
         raise ExplorerError("API 不存在", 404)
     observer_id, action = parts[3:]
-    if action not in {"index", "document", "report", "search", "workers"}:
+    if action not in {"index", "document", "report", "search", "workers", "final-report", "final-report-source"}:
         raise ExplorerError("API 不存在", 404)
     root = vault_root(search_root, observer_id, state)
     query = parse_qs(raw_query, keep_blank_values=True)
     if action == "workers":
         result = {"workers": running_worker_markers(root, observer_id, state)}
     elif action == "index":
-        # Reuse the serialized graph payload as well as the parsed index.
-        return build_index_payload(root, observer_id), 200
+        from .final_report_routes import report_metadata
+        from .final_report_ui import task_is_complete
+        run = next(row for row in state["runs"] if row.get("observer_id") == observer_id)
+        complete = task_is_complete(run)
+        metadata = ({**report_metadata(Path(run["research_root"])), "task_complete": True} if complete else
+                    {"available": False, "state": "not_complete", "task_complete": False, "versions": []})
+        payload = build_index_payload(root, observer_id).rstrip()
+        # Keep publication changes outside the scientific graph cache. The host
+        # ETag still changes whenever the report descriptor changes.
+        return (payload[:-1] + b',"final_report":' + json.dumps(metadata, ensure_ascii=False,
+                separators=(",", ":")).encode() + b"}\n"), 200
+    elif action in {"final-report", "final-report-source"}:
+        from .final_report_routes import report_get
+        from .final_report_ui import task_is_complete
+        run = next(row for row in state["runs"] if row.get("observer_id") == observer_id)
+        if not task_is_complete(run):
+            raise ExplorerError("任务完成后才提供总报告", 404)
+        result = report_get(Path(run["research_root"]), action, raw_query)
     elif action in {"document", "report"}:
         raw_offset = (query.get("offset") or ["0"])[0]
         try:
