@@ -83,6 +83,13 @@ th { position: sticky; top: 0; background: var(--tm-panel); font-weight: 550; co
 .tm-sidebar-toggle .tm-sidebar-pane { fill:rgba(212,212,216,.18); stroke:none; transition:fill .14s ease; }
 /* Edge hover summons the full navigation without reserving page width. */
 .tm-sidebar-edge { display:none; }
+.tm-sidebar-reopen { display:none; align-items:center; gap:7px; flex:none;
+  border:1px solid var(--tm-border); border-radius:8px; background:var(--tm-side);
+  color:var(--tm-text); padding:7px 10px; font:inherit; cursor:pointer; }
+.tm-sidebar-reopen:hover { background:var(--tm-hover); }
+.tm-sidebar-reopen:focus-visible { outline:2px solid #93c5fd; outline-offset:2px; }
+.tm-sidebar-reopen svg { width:16px; height:16px; fill:none; stroke:currentColor;
+  stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
 .tm-breadcrumb-workspace { appearance:none; border:0; background:transparent;
   padding:3px 0; font:inherit; color:#a1a1aa; cursor:pointer; border-radius:3px; }
 .tm-breadcrumb-workspace:hover { color:#e4e4e7; }
@@ -95,6 +102,7 @@ th { position: sticky; top: 0; background: var(--tm-panel); font-weight: 550; co
    visibility:visible; pointer-events:auto; box-shadow:12px 0 34px #0009; }
  body.tm-sidebar-collapsed .tm-sidebar-edge { position:fixed; top:0; bottom:0;
    left:0; width:10px; z-index:39; display:block; }
+ body.tm-sidebar-collapsed .tm-sidebar-reopen { display:inline-flex; }
 }
 body.stage-height-focus .tm-sidebar-edge { display:none!important; }
 
@@ -1357,7 +1365,7 @@ def dashboard_shell(title: str, body: str, active: str = "workflow", *,
   <div class="tm-sidebar-foot"><span class="tm-indicator" aria-hidden="true"></span><span class="tm-sidebar-foot-text">Observatory Console</span></div>
 </aside>
 <div class="tm-main">
-  <header class="tm-topbar"><nav class="tm-breadcrumb" aria-label="页面导航">{back_link}{crumb_html}</nav><div class="tm-topbar-actions"><div class="tm-topbar-right">Sciver · Monitor</div>{BELL_HTML}</div></header>
+  <header class="tm-topbar"><button class="tm-sidebar-reopen" type="button" data-sidebar-reopen aria-label="展开导航菜单" title="展开导航菜单"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>菜单</span></button><nav class="tm-breadcrumb" aria-label="页面导航">{back_link}{crumb_html}</nav><div class="tm-topbar-actions"><div class="tm-topbar-right">Sciver · Monitor</div>{BELL_HTML}</div></header>
   <div class="tm-content">
     <section class="tm-page-head" aria-label="Page introduction"><div>
       <div class="tm-page-label">Overview / {view_name}</div><h1>{view_name}</h1>
@@ -1394,6 +1402,7 @@ def dashboard_shell(title: str, body: str, active: str = "workflow", *,
   "use strict";
   const key="tm-observer-sidebar-collapsed-v1";
   const toggle=document.querySelector("[data-sidebar-toggle]");
+  const reopen=document.querySelector("[data-sidebar-reopen]");
   const sidebar=document.querySelector(".tm-sidebar");
   const workspace=document.querySelector("[data-workspace-nav]");
   const edge=document.querySelector("[data-sidebar-edge]");
@@ -1417,6 +1426,11 @@ def dashboard_shell(title: str, body: str, active: str = "workflow", *,
   toggle.addEventListener("click",()=>{{
     apply(!collapsed);
     try {{ localStorage.setItem(key,collapsed?"1":"0"); }} catch(_err) {{}}
+  }});
+  reopen?.addEventListener("click",()=>{{
+    apply(false);
+    try {{ localStorage.setItem(key,"0"); }} catch(_err) {{}}
+    toggle.focus();
   }});
   workspace.addEventListener("click",event=>{{
     if(!desktop()){{ mobileMenu?.click();return; }}
