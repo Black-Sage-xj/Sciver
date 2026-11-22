@@ -30,8 +30,11 @@ features and recording the running commit.
 Historical versions belong in commits, tags, detached worktrees or private
 recovery bundles. After verifying incorporation and preserving recovery material,
 remove redundant repair branch names. Default SDK, Web and Supervisor launch
-entries must resolve to the shared `main` checkout rather than historical repair
-snapshots. Preserve recorded historical runtime provenance and stopped research.
+entries must resolve to reviewed `main` code or a clean deployment checkout pinned
+to that same published commit. Never deploy an uncommitted working tree or an
+unrelated historical repair snapshot. Deployment checkouts are not development
+directories; record their source commit and actual service paths. Preserve
+recorded historical runtime provenance and stopped research.
 Develop and review changes in this public history directly; do not maintain a
 separate development tree that must be copied into a public release tree.
 
