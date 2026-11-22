@@ -725,7 +725,7 @@ class CodexBackend:
                 extra["developer_instructions"] = developer_instructions(
                     role,
                     " ".join(part for part in (writer_guard, compute_rule, navigation_rule) if part),
-                    cycle_id=self.cycle_id,
+                    cycle_id=None if role == "research_lead" else self.cycle_id,
                     task_config_path=self.task_config_path,
                 )
             # Gateway enforcement is independent of Codex's model-backed reviewer.
@@ -752,6 +752,8 @@ class CodexBackend:
                 # SDK thread_resume must pin BOTH model and provider; omitting
                 # model_provider can silently use api.openai.com on a resumed
                 # API-backed thread, bypassing the configured auth.
+                if role == "research_lead":
+                    extra.update(cwd=str(thread_cwd), sandbox=Sandbox.read_only)
                 thread = client.thread_resume(
                     thread_id, model=model, model_provider=model_provider, **extra
                 )

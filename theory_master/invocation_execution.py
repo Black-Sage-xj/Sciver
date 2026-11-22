@@ -63,6 +63,8 @@ class InvocationSession:
     skill_addendum: Any = None
     predecessor_id: Any = None
     artifact_tracker: InvocationArtifactTracker | None = None
+    lead_prompt_receipt: tuple[Path, dict] | None = None
+    lead_prompt_metrics: dict[str, Any] = field(default_factory=dict)
     prompt: str | None = None
     use_native_goal: bool | None = None
     native_objective: str | None = None

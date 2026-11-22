@@ -108,49 +108,47 @@ class InvocationPreparation:
                     and self.session.actual not in fresh_roles
                 ):
                     fresh_roles.append(self.session.actual)
-        lead_new_cycle = False
-        if self.session.actual == "research_lead" and (not self.session.fresh_thread):
-            persisted = self.session.owner._load_research_lead_state()
-            current_cycle_id = str(
-                self.session.owner.cycle_dir.name
-                if self.session.owner.cycle_dir
-                else ""
-            )
-            same_cycle_thread = (
-                bool(self.session.thread_id)
-                and str(persisted.get("last_cycle_id") or "") == current_cycle_id
-            )
-            rollover_reason = (
-                None
-                if same_cycle_thread
-                else self.session.owner._research_lead_rollover_reason(
-                    self.session.state, persisted, self.session.route
-                )
-            )
-            if rollover_reason:
-                old = self.session.threads.pop(self.session.actual, None)
-                drop = getattr(self.session.owner.backend, "drop_thread", None)
-                if callable(drop):
-                    drop(old or persisted.get("thread_id"))
+        if self.session.actual == "research_lead" and not self.session.fresh_thread:
+            owner = self.session.owner
+            persisted = owner._load_research_lead_state()
+            epoch = owner._research_lead_reset_epoch()
+            state = self.session.state
+            cycle = owner.cycle_dir.name
+            local = self.session.thread_id
+            source = persisted.get("thread_id")
+            restore = (not local and source and persisted.get("last_cycle_id") != cycle
+                       and owner._research_lead_can_continue(persisted, cycle))
+            reason = state.pop("research_lead_reset_reason", None)
+            if local and state.get("research_lead_reset_epoch") != epoch:
+                reason = "human_reset"
+            if restore:
+                reason = reason or owner._research_lead_rollover_reason(state, persisted, self.session.route)
+                if not reason:
+                    # In-memory reservations cannot verify that a previous process's
+                    # history came from the required prequalification permissions.
+                    if callable(qualify_thread) and qualify_thread("research_lead", source) != source:
+                        reason = "qualification_scope_changed"
+                    else:
+                        self.session.thread_id = source
+                        # Codex reports lifetime totals for this thread. Charge
+                        # only new usage to this Cycle's independent collector.
+                        projection = getattr(getattr(owner, "collector", None), "state", None)
+                        baseline = persisted.get("thread_usage_baseline")
+                        if isinstance(projection, dict) and isinstance(baseline, dict):
+                            projection.setdefault("thread_usage_baselines", {}).setdefault(source, baseline)
+                        # The SDK must reattach with the new Cycle's read-only cwd.
+                        drop = getattr(owner.backend, "drop_thread", None)
+                        if callable(drop):
+                            drop(source)
+            if reason:
+                self.session.threads.pop(self.session.thread_key, None)
                 self.session.thread_id = None
-                self.session.state["research_lead_rollover_reason"] = rollover_reason
-                self.session.state["research_lead_context_chars"] = 0
+                state["research_lead_rollover_reason"] = reason
                 history = list(persisted.get("rollover_history") or [])
-                history.append(
-                    {
-                        "cycle_id": (
-                            self.session.owner.cycle_dir.name
-                            if self.session.owner.cycle_dir
-                            else ""
-                        ),
-                        "reason": rollover_reason,
-                        "at": now(),
-                    }
-                )
-                self.session.state["research_lead_rollover_history"] = history[-20:]
-        self.session.continuation = bool(self.session.thread_id) and (
-            not lead_new_cycle
-        )
+                history.append({"cycle_id": cycle, "reason": reason, "at": now()})
+                state["research_lead_rollover_history"] = history[-20:]
+            state["research_lead_reset_epoch"] = epoch
+        self.session.continuation = bool(self.session.thread_id)
 
     def _prepare_skills(self):
         from .skill_evolution.runtime import (
@@ -304,6 +302,9 @@ class InvocationPreparation:
                 if self.session.continuation
                 else new_thread_prompt
             )
+            if self.session.actual == "research_lead":
+                from .lead_prompt_history import prepare_lead_prompt
+                self.session.prompt = prepare_lead_prompt(self.session, self.session.prompt)
             self.session.prompt += self.session.skill_addendum
         if (
             self.session.native_preflight_goal is None
@@ -336,6 +337,7 @@ class InvocationPreparation:
                     self.session.contract.prompt_projection(self.session.prompt_context)
                 ),
                 "continuation": self.session.continuation,
+                **self.session.lead_prompt_metrics,
                 **(
                     {
                         "native_goal_chars": len(self.session.native_preflight_goal),

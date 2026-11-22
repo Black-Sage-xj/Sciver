@@ -162,9 +162,10 @@ class WorkflowScienceMixin:
         if lead is None:
             state["scientific_model_patch_status"] = "pending"
             state["scientific_model_update_status"] = "pending"
-            # Qualification and long-term synthesis are distinct epistemic
-            # episodes. Runtime keeps the full model/manifest for validation, while
-            # stage_context includes the full previous Model and stable file anchors.
+            # Under a qualification holdout, keep post-lock evidence in a separate
+            # conversation. Ordinary Lead synthesis continues the proposal thread.
+            from .prequalification_holdout import holdout_files
+            reserved = holdout_files(getattr(self.spec, "config_path", None))
             lead = self._call(state, "research_lead", {
                 "mode": "cycle_end",
                 "scientific_model": input_model,
@@ -173,7 +174,7 @@ class WorkflowScienceMixin:
                 "judge_decision": judge,
                 **({"scientific_model_pending": pending_context} if pending_ids else {}),
                 **evidence_context,
-            }, fresh_thread=True)
+            }, fresh_thread=bool(reserved))
             write_json(synthesis_path, lead)
 
         synthesis = lead.get("scientific_synthesis")
@@ -270,14 +271,6 @@ class WorkflowScienceMixin:
         state["current_state"] = state["scientific_model_current_state"] or state.get("current_state", "")
 
         self._persist(state)
-
-        route = self.routes["research_lead"]
-        self._save_research_lead_state(
-            thread_id=state.get("threads", {}).get("research_lead"), route=route, cycle_id=cycle_id,
-            rollover_reason=state.get("research_lead_rollover_reason"),
-            rollover_history=state.get("research_lead_rollover_history"),
-            context_chars=state.get("research_lead_context_chars"),
-        )
 
     def _scientific_model_pending_context(self, cycle_id: str, *, recovered: bool) -> dict[str, Any]:
         """Pending CAS-conflicted syntheses frozen per Cycle for crash-safe replay."""

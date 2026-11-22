@@ -821,29 +821,58 @@ class TheoryMasterTest(unittest.TestCase):
                     "status": status, "next_start_node_id": "H-next",
                 }))
 
-    def test_each_cycle_gets_fresh_conversations_for_every_role(self):
-        class CapturingBackend(FakeBackend):
+    def test_two_cycles_share_only_the_research_lead_conversation(self):
+        import collections
+
+        class CapturingBackend(OpenJudgeBackend):
             def __init__(self):
                 super().__init__(reworks=0)
-                self.calls = []
+                self.calls = collections.defaultdict(set)
 
             def invoke(self, role, prompt, thread_id, model, provider):
                 result = super().invoke(role, prompt, thread_id, model, provider)
-                context = json.JSONDecoder().raw_decode(prompt.split("Context:\n", 1)[1])[0] if "Context:\n" in prompt else {}
-                self.calls.append((role, str(context.get("cycle_dir") or ""), result[0]))
+                self.calls[role].add(result[0])
                 return result
 
         with tempfile.TemporaryDirectory() as temp:
             spec, _ = self.make(Path(temp), max_cycles=2)
             backend = CapturingBackend()
             Workflow(spec, backend).run()
-            by_role = {}
-            for role, _cycle_dir, thread_id in backend.calls:
-                by_role.setdefault(role, []).append(thread_id)
-            self.assertGreaterEqual(len(by_role), 1)
-            for role, thread_ids in by_role.items():
-                self.assertGreaterEqual(len(thread_ids), 2, role)
-                self.assertGreaterEqual(len(set(thread_ids)), 2, f"{role} must use fresh conversations across Cycle/stage contexts")
+            self.assertEqual(len(list_cycle_dirs(spec.research_root)), 2)
+            self.assertEqual(len(backend.calls["research_lead"]), 1)
+            for role in ("challenger", "judge", "investigator", "reporter"):
+                self.assertGreaterEqual(len(backend.calls[role]), 2, role)
+
+    def test_unavailable_prior_lead_thread_bootstraps_once_from_current_state(self):
+        class ColdBackend(OpenJudgeBackend):
+            def __init__(self, unavailable):
+                super().__init__(reworks=0)
+                self.unavailable = unavailable
+                self.resume_attempts = 0
+                self.first_proposal = None
+
+            def ensure_thread(self, role, thread_id, model, provider):
+                if role == "research_lead" and thread_id == self.unavailable:
+                    self.resume_attempts += 1
+                    raise RuntimeError("archived thread unavailable")
+                return super().ensure_thread(role, thread_id, model, provider)
+
+            def invoke(self, role, prompt, thread_id, model, provider):
+                if role == "research_lead" and self.first_proposal is None:
+                    self.first_proposal = prompt
+                return super().invoke(role, prompt, thread_id, model, provider)
+
+        with tempfile.TemporaryDirectory() as temp:
+            spec, _ = self.make(Path(temp), max_cycles=1)
+            first = Workflow(spec, OpenJudgeBackend(reworks=0)).run()
+            first_lead = first["threads"]["research_lead"]
+            cold = ColdBackend(first_lead)
+            second = Workflow(spec, cold).run()
+            self.assertEqual(cold.resume_attempts, 1)
+            self.assertNotEqual(second["threads"]["research_lead"], first_lead)
+            self.assertIn("agent_graph", cold.first_proposal)
+            self.assertIn("scientific_model_summary", cold.first_proposal)
+            self.assertIn("Current task:", cold.first_proposal)
 
     def test_max_cycles_is_per_invocation_and_ids_continue_history(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -1391,8 +1420,11 @@ class TheoryMasterTest(unittest.TestCase):
             backend = CapturingBackend()
             Workflow(spec, backend).run()
             lead = json.loads(backend.prompts['research_lead'][0].split('Context:\n', 1)[1])
-            self.assertNotIn('prior_cycle_summary', lead)
-            self.assertIn('agent_graph', lead)
+            update = lead["lead_stage_update"]
+            self.assertLess(int(update["since_cycle"]), int(update["current_cycle"]))
+            snapshot = json.loads(Path(update["stage_snapshot"]).read_text())
+            self.assertIn("agent_graph", snapshot["context"])
+            self.assertNotIn("prior_cycle_summary", snapshot["context"])
             self.assertNotIn('canvas_access', lead)
 
     def test_cycle_dir_uses_incrementing_master_run_id(self):
@@ -1496,7 +1528,7 @@ class TheoryMasterTest(unittest.TestCase):
             spec, _ = self.make(Path(temp), reworks=1)
             backend = CapturingBackend()
             Workflow(spec, backend).run()
-            self.assertEqual(len(set(backend.live_threads['research_lead'])), 2)
+            self.assertEqual(len(set(backend.live_threads['research_lead'])), 1)
             # Judge adjudication and task-level Goal Completion are separate SDK stages.
             self.assertEqual(len(set(backend.live_threads['judge'])), 2)
             self.assertEqual(len(set(backend.live_threads['reporter'])), 1)
@@ -1702,8 +1734,8 @@ class TheoryMasterTest(unittest.TestCase):
             self.assertTrue(any('cycle_synthesis' in prompt for prompt in resumed_lead_prompts))
             self.assertFalse(any('frontier_planning' in prompt for prompt in resumed_lead_prompts))
             self.assertTrue(resumed_lead_threads)
-            self.assertTrue(all(thread_id != failed['threads']['research_lead'] for thread_id in resumed_lead_threads))
-            self.assertNotEqual(resumed['threads']['research_lead'], failed['threads']['research_lead'])
+            self.assertTrue(all(thread_id == failed['threads']['research_lead'] for thread_id in resumed_lead_threads))
+            self.assertEqual(resumed['threads']['research_lead'], failed['threads']['research_lead'])
             self.assertEqual(len(list_cycle_dirs(spec.research_root)), 1)
             self.assertEqual(resumed['master_id'], spec.master_id)
             self.assertEqual(resumed['cycle_id'], cycle.name)

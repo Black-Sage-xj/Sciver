@@ -199,6 +199,8 @@ MODULE_CATEGORIES: dict[str, str] = {
     "test_contract_refactor_baseline": "regression",
     "test_contracts": "architecture",
     "test_cross_cycle_evidence_continuity": "architecture",
+    "test_lead_prompt_history": "regression",
+    "test_research_lead_continuity": "regression",
     "test_core": "architecture",
     "test_repair_verification_state_machine_20261022": "architecture",
     "test_cycle_anomalies": "regression",

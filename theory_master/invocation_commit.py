@@ -97,19 +97,6 @@ class InvocationCommit:
                     self.session.state.setdefault("research_lead_reads", []).extend(
                         turn_reads
                     )
-            if self.session.owner.cycle_dir is not None:
-                self.session.owner._save_research_lead_state(
-                    thread_id=self.session.identifier,
-                    route=self.session.route,
-                    cycle_id=self.session.owner.cycle_dir.name,
-                    rollover_reason=self.session.state.get(
-                        "research_lead_rollover_reason"
-                    ),
-                    rollover_history=self.session.state.get(
-                        "research_lead_rollover_history"
-                    ),
-                    context_chars=self.session.state.get("research_lead_context_chars"),
-                )
         lead_frontier_grounding = (
             self.session.role == "literature"
             and str(self.session.validation_context.get("routing_source") or "")
@@ -281,6 +268,23 @@ class InvocationCommit:
                 else None
             ),
         )
+        if self.session.actual == "research_lead":
+            from .lead_prompt_history import confirm_lead_prompt
+            confirm_lead_prompt(self.session)
+            if self.session.owner.cycle_dir is not None:
+                self.session.owner._save_research_lead_state(
+                    thread_id=self.session.identifier,
+                    route=self.session.route,
+                    cycle_id=self.session.owner.cycle_dir.name,
+                    rollover_reason=self.session.state.get(
+                        "research_lead_rollover_reason"
+                    ),
+                    rollover_history=self.session.state.get(
+                        "research_lead_rollover_history"
+                    ),
+                    reset_epoch=self.session.state.get("research_lead_reset_epoch"),
+                    account=self.session.state.get("runtime_codex_account"),
+                )
         self.session.owner._finish_skill_memory(
             self.session.state,
             self.session.actual,

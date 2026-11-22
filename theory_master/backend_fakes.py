@@ -16,6 +16,16 @@ def _prompt_stage(prompt: str) -> str:
     tail = prompt.split(marker, 1)[1]
     return tail.split(" ", 1)[0].strip()
 
+def _fixture_prompt_context(prompt: str) -> dict[str, Any]:
+    context = json.JSONDecoder().raw_decode(prompt.split("Context:\n", 1)[1])[0] if "Context:\n" in prompt else {}
+    update = context.get("lead_stage_update")
+    if isinstance(update, dict):
+        # The offline fixture has no model memory. Resolve the same frozen,
+        # stage-scoped snapshot available to a compacted real Lead.
+        return json.loads(Path(update["stage_snapshot"]).read_text())["context"]
+    return context
+
+
 def _fake_sqlite_lineage(context: dict[str, Any]) -> dict[str, Any]:
     """Offline Lead fixture derives H lineage only from the injected SQLite view."""
     graph = context.get("agent_graph") if isinstance(context.get("agent_graph"), dict) else {}
@@ -61,7 +71,7 @@ class FakeBackend:
         return
     def invoke(self, role: str, prompt: str, thread_id: str | None, model: str, provider: str) -> tuple[str, str]:
         thread = self.ensure_thread(role, thread_id, model, provider)
-        context = json.JSONDecoder().raw_decode(prompt.split("Context:\n", 1)[1])[0] if "Context:\n" in prompt else {}
+        context = _fixture_prompt_context(prompt)
         stage = _prompt_stage(prompt)
         if self.collector is not None:
             self.collector.on_codex(
@@ -218,7 +228,7 @@ class CanonicalFakeBackend(FakeBackend):
 
     def invoke(self, role: str, prompt: str, thread_id: str | None, model: str, provider: str) -> tuple[str, str]:
         if role == "research_lead":
-            context = json.JSONDecoder().raw_decode(prompt.split("Context:\n", 1)[1])[0] if "Context:\n" in prompt else {}
+            context = _fixture_prompt_context(prompt)
             stage = _prompt_stage(prompt)
             thread = self.ensure_thread(role, thread_id, model, provider)
             if context.get("qualified_candidates"):

@@ -161,7 +161,7 @@ Challenger 的 scientific_checks 分别记录来源忠实性、定义/公式一�
 
 普通显式 `repair-delivery` 重建可复用绑定当前 canonical assessment 的严格行政等价核对：后续已结束且没有 H/Evidence 的资格空轮及其他字段完全一致的 frontier 投影时间戳，不单独构成科学权威变化。该分支核对原快照、原源文件及 Model；真实 Plan、冻结命题、Outcome、Evidence 或其他 frontier 字段变化仍拒绝。等价绑定只传入本次显式修复及其 Goal 冻结/CAS，不为普通材料读取添加回退，不扩大 Goal 可评资格或自动触发评委。相同交付修订复用原评估。
 
-终局 Judge 之后，Lead 的 fresh `cycle_synthesis` 直接取得上一版 Model 完整正文和版本，只综合认识并给出 Scientific Model `keep|replace`；`replace` 提交完整新正文。不同人群、响应量或模型的新结果不自动取代旧认识，仍有效且与 Goal 有关的比较和限制须合并保留。SDK 校验、预览并原子提交版本。同一 episode 的 `frontier_maintenance` 只维护现有分支的 `active / parked / closed`，不创建下一轮 H。active/parked 必须说明 H 自身可执行的 remaining_question；parked 另需 dependency；closed 重开必须给 source-grounded reopen_basis。整体 Goal 未完不构成 H 重开理由。完全相同的更新不写事件，状态不变但机会描述改变记 frontier.annotated，不刷新状态 changed_at。旧数据只读兼容，不回填科学含义。
+终局 Judge 之后，Lead 的 `cycle_synthesis` 根据上一版 Model 正文、版本和本轮新增裁决，只综合认识并给出 Scientific Model `keep|replace`；`replace` 提交完整新正文。不同人群、响应量或模型的新结果不自动取代旧认识，仍有效且与 Goal 有关的比较和限制须合并保留。SDK 校验、预览并原子提交版本。同一 episode 的 `frontier_maintenance` 只维护现有分支的 `active / parked / closed`，不创建下一轮 H。active/parked 必须说明 H 自身可执行的 remaining_question；parked 另需 dependency；closed 重开必须给 source-grounded reopen_basis。整体 Goal 未完不构成 H 重开理由。完全相同的更新不写事件，状态不变但机会描述改变记 frontier.annotated，不刷新状态 changed_at。旧数据只读兼容，不回填科学含义。
 
 Lead 可用互斥的 `no_new_science(kind, requirement, basis)` 表明仅剩交付修复或不可用必要材料；SDK 保持 H 未锁定并进入 needs_attention，不伪造 Candidate 或科学 open。交付修复由现有 terminal Cycle 的 repair-delivery 路径承担，不自动启动额外科研 Cycle。
 
@@ -200,7 +200,7 @@ Cycle 完成与 Task Goal 完成独立。本轮 `supported / rejected / open` �
 
 SDK 提供最小必要上下文和稳定导航入口，Agent 按科学需要自行查阅。可从路径读取的完整材料不反复展开；selection / repair 等续轮只给必要 delta。读取与写入遵守执行 sandbox、隐藏数据隔离和审批边界。Stage 读取 SQLite 的 `agent_graph`、H 档案和 Outcome，不能解析 Canvas 作为科研事实源。
 
-线程以 Cycle 内 epistemic episode 管理：资格提案与选择复用；综合 fresh；Investigator 连续研究优先 resume；外部 Literature task 独立；Judge 本轮裁决和 reassessment 复用，Goal Completion fresh。跨 Cycle 从 Research Plan、Scientific Model 与图谱重建认识。线程丢失可从持久化检查点重建，并记录恢复来源。
+同一任务及工作分支内，Research Lead 在访问边界和运行身份兼容时跨 Cycle 延续会话，提案、综合与维护共享已见研究历史。再次进入同一阶段时，SDK 根据上次成功交付的上下文追加变更，随轮更新工作目录和证据路径。首次进入阶段或需要重新建立上下文时，从当前 Research Plan、Scientific Model 和权威图谱取得完整阶段输入。长会话使用 Codex 原生上下文压缩。Investigator 连续研究优先 resume，外部 Literature task 独立，Judge 本轮裁决和 reassessment 复用，Goal Completion fresh。
 
 Contract 以 `contract_id/version/hash` 绑定输入、输出、校验与闭合。Agent JSON 经校验后才成为 durable state。当前 runtime 只注册当前 Stage Contracts，运行时不提供历史合同查询；旧记录保留来源，经显式迁移才能进入当前执行链。
 

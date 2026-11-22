@@ -956,7 +956,34 @@ class WorkflowStateMixin:
         return self._evidence_registry().context()
 
     def _research_lead_state_path(self) -> Path:
-        return self.spec.research_root / "research_lead_state.json"
+        root = self.spec.research_root
+        if worker := getattr(self, "worker_id", None):
+            from .worker_store import worker_dir
+            return worker_dir(root, worker) / "research_lead_state.json"
+        return root / "research_lead_state.json"
+
+    def _research_lead_reset_epoch(self) -> str | None:
+        try:
+            return (self.spec.research_root / ".theory-master" / "lead-reset").read_text().strip()
+        except FileNotFoundError:
+            return None
+
+    def _research_lead_can_continue(self, persisted: dict[str, Any], cycle: str) -> bool:
+        prior = str(persisted.get("last_cycle_id") or "")
+        number = cycle_number(prior)
+        if number is None or (cycle_number(cycle) or 0) <= number:
+            return False
+        try:
+            previous = json.loads((self.spec.research_root / prior / "research_state.json").read_text())
+        except (OSError, ValueError):
+            return False
+        if (not isinstance(previous, dict) or previous.get("status") not in {"over", "no_qualified_candidate"}
+                or (previous.get("cycle_execution_context") or {}).get("worker_id") != getattr(self, "worker_id", None)):
+            return False
+        # Post-lock synthesis may have seen restricted measurements. That
+        # conversation is never admissible as input for a new blind proposal.
+        from .prequalification_holdout import holdout_files
+        return not holdout_files(getattr(self.spec, "config_path", None))
 
     def _load_research_lead_state(self) -> dict[str, Any]:
         path = self._research_lead_state_path()
@@ -970,21 +997,24 @@ class WorkflowStateMixin:
 
     def reset_research_lead(self, reason: str = "human_reset") -> dict[str, Any]:
         """Explicit operator reset for a contaminated or obsolete long-lived RL thread."""
+        import uuid
+        atomic(self.spec.research_root / ".theory-master" / "lead-reset", uuid.uuid4().hex)
         previous = self._load_research_lead_state()
         history = list(previous.get("rollover_history") or [])
         event = {"cycle_id": self.cycle_dir.name if self.cycle_dir else "", "reason": reason, "at": now()}
         history.append(event)
         route = self.routes["research_lead"]
         self._save_research_lead_state(thread_id=None, route=route, cycle_id=event["cycle_id"],
-                                       rollover_reason=reason, rollover_history=history[-20:], context_chars=0)
+                                       rollover_reason=reason, rollover_history=history[-20:], reset_epoch=self._research_lead_reset_epoch())
         return {"thread_id": None, "rollover_reason": reason, "rollover_history": history[-20:]}
 
     def _save_research_lead_state(self, *, thread_id: str | None, route: RoleRoute, cycle_id: str,
                                   rollover_reason: str | None = None, rollover_history: list[Any] | None = None,
-                                  context_chars: int | None = None) -> None:
+                                  reset_epoch: str | None = None, account: str | None = None) -> None:
         previous = self._load_research_lead_state()
         history = list(rollover_history if rollover_history is not None else previous.get("rollover_history") or [])
         reason = rollover_reason if rollover_reason is not None else previous.get("rollover_reason")
+        projection = getattr(getattr(self, "collector", None), "state", None) or {}
         write_json(self._research_lead_state_path(), {
             "schema": "theory-master/research-lead-state/v1",
             "thread_id": thread_id,
@@ -993,24 +1023,25 @@ class WorkflowStateMixin:
             "last_cycle_id": cycle_id,
             "updated_at": now(),
             "last_start_node_id": self.branch_parent_id or self.spec.branch_anchor_id,
-            "context_chars": int(context_chars if context_chars is not None else previous.get("context_chars") or 0),
-            "rollover_policy": {"max_context_chars": 200000, "major_branch_shift": True,
+            "goal_id": self.spec.goal_id,
+            "account": account,
+            "reset_epoch": reset_epoch,
+            "thread_usage_baseline": (projection.get("thread_usage_baselines") or {}).get(thread_id),
+            "rollover_policy": {"context_management": "native_compaction", "major_branch_shift": True,
                                 "human_reset": "recovery_control.json action=reset_research_lead"},
             "rollover_history": history[-20:],
             "rollover_reason": reason,
         })
 
     def _research_lead_rollover_reason(self, state: dict[str, Any], persisted: dict[str, Any], route: RoleRoute) -> str | None:
-        if state.get("research_lead_reset_reason"):
-            return str(state.pop("research_lead_reset_reason"))
+        if persisted.get("goal_id") != self.spec.goal_id:
+            return "project_identity_changed"
+        if persisted.get("reset_epoch") != self._research_lead_reset_epoch():
+            return "human_reset"
+        if persisted.get("account") != state.get("runtime_codex_account"):
+            return "account_changed"
         if persisted.get("model") and (persisted.get("model") != route.model or persisted.get("provider") != route.provider):
             return "provider_changed"
-        context_chars = int(persisted.get("context_chars") or 0) + len(
-            json.dumps(state.get("role_outputs") or {}, ensure_ascii=False, default=str)
-        )
-        state["research_lead_context_chars"] = context_chars
-        if context_chars > 200000:
-            return "context_budget"
         prior_start = str(persisted.get("last_start_node_id") or "")
         current_start = str(self.branch_parent_id or self.spec.branch_anchor_id or "")
         if prior_start and current_start and prior_start != current_start:
