@@ -478,6 +478,7 @@ def test_browser_reads_actual_literature_status_and_report_without_model(prepare
             expect(page.locator('[data-chat-literature-label]')).to_have_text('Literature · 已交付报告')
             expect(page.locator('[data-chat-literature-counts]')).to_contain_text('可读正文 2 篇')
             card = page.locator('[data-chat-literature-open]')
+            expect(card).to_be_visible()
             card.focus()
             # React may replace the toolbar destination after the control has focus.
             page.locator('[data-chat-literature-slot]').evaluate("""slot => {
