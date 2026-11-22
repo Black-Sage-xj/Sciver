@@ -80,12 +80,14 @@ class TaskSettingsTests(unittest.TestCase):
                 self.assertEqual([x.get_text(strip=True) for x in landing.select(
                     '.tm-breadcrumb .tm-breadcrumb-workspace, '
                     '.tm-breadcrumb strong[aria-current]')], ['Workspace','Settings'])
-                self.assertEqual(len(landing.select('nav#tm-main-nav a.tm-nav-link')),8)
+                self.assertEqual(len(landing.select('nav#tm-main-nav a.tm-nav-link')),6)
                 self.assertEqual(
                     {a['href'] for a in landing.select('nav#tm-main-nav a.tm-nav-link')},
                     {'/research-chat/', '/run/', '/task-console/', '/research-plan/',
-                     '/workflow-stage-preview/', '/architecture/', '/services/', '/settings/'},
+                     '/services/', '/settings/'},
                 )
+                self.assertIsNotNone(landing.select_one('.tm-settings-nav a[href="/workflow-stage-preview/"]'))
+                self.assertIsNotNone(landing.select_one('.tm-settings-nav a[href="/architecture/"]'))
                 self.assertEqual(landing.select_one('nav#tm-main-nav a[href="/task-console/"]').get_text(strip=True),
                                  'Task Console')
                 self.assertEqual(landing.select_one('a.tm-nav-link[aria-current="page"]')['href'],

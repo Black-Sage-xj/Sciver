@@ -84,7 +84,9 @@ def _settings_navigation() -> str:
             '<a href="#settings-browser">浏览器外观</a>'
             '<a href="#settings-access">网页登录</a>'
             '<a href="#settings-conversion">PDF 转换</a>'
-            '<a href="#settings-task">当前任务</a></nav>')
+            '<a href="#settings-task">当前任务</a>'
+            '<a href="/workflow-stage-preview/">Workflow</a>'
+            '<a href="/architecture/">Architecture</a></nav>')
 
 
 def workspace_settings_body(runs: Sequence[dict[str, Any]], selected: dict[str, Any] | None, *, access: dict[str, Any] | None = None) -> str:

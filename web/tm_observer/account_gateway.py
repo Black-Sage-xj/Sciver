@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import http.client
+import hashlib
+import json
+from http.cookies import SimpleCookie
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs
@@ -9,7 +12,7 @@ from urllib.parse import parse_qs
 from .access_settings import is_local_host
 from .auth import (
     AuthRealm, SESSION_COOKIE, SESSION_TTL_S, account_from_cookie,
-    account_from_header, issue_session_token, match_account,
+    account_from_header, issue_session_token, match_account, auth_accounts, verify_session_token,
 )
 
 MAX_BODY_BYTES = 32 * 1024 * 1024
@@ -20,6 +23,20 @@ _HOP_HEADERS = frozenset({
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
     "proxy-connection", "te", "trailer", "transfer-encoding", "upgrade",
 })
+
+def _saved_name(username: str) -> str:
+    return "tm_saved_" + hashlib.sha256(username.encode()).hexdigest()[:24]
+
+def _saved_accounts(header, auth):
+    jar = SimpleCookie()
+    try:
+        jar.load(header or "")
+    except Exception:
+        return {}
+    return {account.username: jar[_saved_name(account.username)].value
+            for account in auth_accounts(auth)
+            if _saved_name(account.username) in jar
+            and verify_session_token(jar[_saved_name(account.username)].value, account)}
 
 
 def _hop_headers(headers) -> set[str]:
@@ -132,6 +149,7 @@ def make_gateway_handler(auth: AuthRealm, targets: dict[str, tuple[str, int]]):
                 cookie += "Secure; "
             self._send(HTTPStatus.SEE_OTHER, headers=(
                 ("Location", "/"), ("Set-Cookie", cookie + "SameSite=Strict"),
+                ("Set-Cookie", cookie.replace(SESSION_COOKIE + "=", _saved_name(account.username) + "=", 1) + "SameSite=Strict"),
             ))
 
         def _proxy(self, target: tuple[str, int], body: bytes) -> None:
@@ -186,6 +204,45 @@ def make_gateway_handler(auth: AuthRealm, targets: dict[str, tuple[str, int]]):
             if length is None:
                 return
             path = self.path.partition("?")[0]
+            saved = _saved_accounts(self.headers.get("Cookie"), auth)
+            current = account_from_cookie(self.headers.get("Cookie"), auth)
+            if path == "/api/account-sessions" and self.command == "GET":
+                headers = ()
+                if current and current.username not in saved:
+                    token = issue_session_token(current)
+                    saved[current.username] = token
+                    secure = "Secure; " if not is_local_host(self.headers.get("Host", "")) else ""
+                    headers = (("Set-Cookie", f"{_saved_name(current.username)}={token}; Path=/; Max-Age={SESSION_TTL_S}; HttpOnly; {secure}SameSite=Strict"),)
+                self._send(HTTPStatus.OK, json.dumps({"accounts": list(saved), "current": current.username if current else None}, ensure_ascii=False).encode(), content_type="application/json; charset=utf-8", headers=headers)
+                return
+            if path == "/api/account-sessions/switch" and self.command == "POST":
+                host, origin = self.headers.get("Host"), self.headers.get("Origin")
+                if not host or origin not in {f"http://{host}", f"https://{host}"} or self.headers.get("X-TM-Operator-Intent") != "1" or length > 8192:
+                    self._send(HTTPStatus.FORBIDDEN, b"forbidden\n")
+                    return
+                body = self._body(length)
+                try:
+                    username = json.loads(body).get("username")
+                    token = saved.get(username)
+                except (ValueError, TypeError, AttributeError):
+                    token = None
+                if not token:
+                    self._send(HTTPStatus.UNAUTHORIZED, b"account session unavailable\n")
+                    return
+                secure = "Secure; " if not is_local_host(host) else ""
+                self._send(HTTPStatus.OK, b'{}', content_type="application/json", headers=(("Set-Cookie", f"{SESSION_COOKIE}={token}; Path=/; Max-Age={SESSION_TTL_S}; HttpOnly; {secure}SameSite=Strict"),))
+                return
+            if path == "/logout" and self.command == "POST":
+                body = self._body(length)
+                if body is not None:
+                    headers = [
+                        ("Location", "/login"),
+                        ("Set-Cookie", f"{SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict"),
+                    ]
+                    if current:
+                        headers.append(("Set-Cookie", f"{_saved_name(current.username)}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict"))
+                    self._send(HTTPStatus.SEE_OTHER, headers=tuple(headers))
+                return
             if path == "/login":
                 if self.command == "POST":
                     self._login(length)

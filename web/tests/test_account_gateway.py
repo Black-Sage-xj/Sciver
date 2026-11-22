@@ -193,6 +193,35 @@ class AccountGatewayTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(self.events, [])
 
+    def test_logout_then_login_to_another_workspace(self):
+        status, headers, _ = self.request("POST", "/logout", headers={"Cookie": cookie(self.owner)}, body="")
+        self.assertEqual((status, headers["Location"]), (303, "/login"))
+        self.assertIn("Max-Age=0", headers["Set-Cookie"])
+        self.assertIsNone(account_from_cookie(headers["Set-Cookie"], self.realm))
+        status, headers, _ = self.request("POST", "/login", body=urlencode({
+            "username": self.second.username, "password": self.second.password,
+        }))
+        self.assertEqual(status, 303)
+        status, _, body = self.request("GET", "/", headers={"Cookie": headers["Set-Cookie"]})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["account"], self.second.username)
+
+    def test_remembered_accounts_can_switch_without_password(self):
+        saved = []
+        for account in (self.owner, self.second):
+            status, headers, _ = self.request("POST", "/login", body=urlencode({"username": account.username, "password": account.password}))
+            self.assertEqual(status, 303)
+            saved.append(headers.get_all("Set-Cookie")[1].split(";", 1)[0])
+        cookies = "; ".join(saved + [cookie(self.second)])
+        status, _, body = self.request("GET", "/api/account-sessions", headers={"Cookie": cookies})
+        self.assertEqual(json.loads(body), {"accounts": ["owner", "sciver1"], "current": "sciver1"})
+        headers = {"Cookie": cookies, "Host": "127.0.0.1:8787", "Origin": "http://127.0.0.1:8787", "X-TM-Operator-Intent": "1"}
+        status, response, _ = self.request("POST", "/api/account-sessions/switch", headers=headers, body=json.dumps({"username": "owner"}))
+        self.assertEqual(status, 200)
+        self.assertIs(account_from_cookie(response["Set-Cookie"], self.realm), self.owner)
+        status, _, _ = self.request("POST", "/api/account-sessions/switch", headers={"Cookie": cookies}, body='{"username":"owner"}')
+        self.assertEqual(status, 403)
+
     def test_account_comes_only_from_verified_credentials(self):
         for account in (self.owner, self.second):
             for headers in ({"Cookie": cookie(account)}, {"Authorization": basic(account.username, account.password)}):

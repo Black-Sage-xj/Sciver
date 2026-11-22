@@ -10,7 +10,7 @@ import time
 from http import HTTPStatus
 from pathlib import Path
 from urllib.parse import quote
-from .auth import authorize_header, session_from_cookie
+from .auth import SESSION_COOKIE, authorize_header, session_from_cookie
 from .vault_files import local_file_actions
 from .workspace_scope import host_route
 from .http_context import RequestContext
@@ -34,6 +34,36 @@ class ObserverRequestHandler(BaseHTTPRequestHandler):
         ctx = self.context
         freshness = getattr(self, "_snapshot_meta", None) or {}
         if content_type.startswith("text/html"):
+            if ctx.auth is not None and b'<!-- sciver-account-menu -->' in payload:
+                account_menu = '''<div class="tm-account-menu">
+                  <button type="button" class="tm-account-trigger" data-account-open aria-haspopup="dialog">
+                    <span class="tm-account-avatar" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg></span>
+                    <span class="tm-account-identity"><strong data-account-current>正在读取账号…</strong><small>管理账号</small></span><span aria-hidden="true">⋯</span>
+                  </button>
+                  <dialog class="tm-account-dialog" aria-labelledby="tm-account-dialog-title">
+                    <div class="tm-account-dialog-head"><div><h2 id="tm-account-dialog-title">账号</h2><p>选择已登录的账号切换工作区</p></div><button type="button" class="tm-account-close" data-account-close aria-label="关闭">×</button></div>
+                    <div class="tm-account-list" data-account-list aria-live="polite">正在读取账号…</div>
+                    <div class="tm-account-error" data-account-error role="status"></div>
+                    <div class="tm-account-actions"><a href="/login">＋ 登录其他账号</a><form method="post" action="/logout"><button type="submit">退出当前账号</button></form></div>
+                  </dialog></div>
+                  <script>(()=>{const list=document.querySelector('[data-account-list]'),current=document.querySelector('[data-account-current]'),dialog=document.querySelector('.tm-account-dialog'),error=document.querySelector('[data-account-error]');
+                  const refresh=()=>fetch('/api/account-sessions').then(r=>{if(!r.ok)throw Error();return r.json()}).then(data=>{
+                    current.textContent=data.current||'当前账号';list.replaceChildren();error.textContent='';
+                    if(!data.accounts.length){list.textContent='暂无已保存账号';return}
+                    data.accounts.forEach(name=>{const b=document.createElement('button');b.type='button';b.className='tm-account-row';
+                    const label=document.createElement('span');label.textContent=name;b.append(label);
+                    if(name===data.current){const badge=document.createElement('small');badge.textContent='当前账号 ✓';b.append(badge);b.disabled=true}
+                    else {const hint=document.createElement('small');hint.textContent='切换';b.append(hint)}
+                    b.onclick=async()=>{b.disabled=true;error.textContent='';try{const r=await fetch('/api/account-sessions/switch',
+                    {method:'POST',headers:{'Content-Type':'application/json','X-TM-Operator-Intent':'1'},body:JSON.stringify({username:name})});
+                    if(!r.ok)throw Error();location.assign('/')}catch(e){error.textContent='切换失败，请重新登录';b.disabled=false}};list.append(b)})
+                  }).catch(()=>{current.textContent='账号';list.textContent='无法读取账号，请刷新页面重试'});
+                  document.querySelector('[data-account-open]').addEventListener('click',()=>{dialog.showModal();refresh()});
+                  document.querySelector('[data-account-close]').addEventListener('click',()=>dialog.close());
+                  dialog.addEventListener('click',e=>{if(e.target===dialog)dialog.close()});refresh();})();</script>'''.encode()
+                payload = payload.replace(b'<!-- sciver-account-menu -->', account_menu, 1)
+            elif ctx.auth is None:
+                payload = payload.replace(b'<!-- sciver-account-menu -->', b'<div class="tm-sidebar-foot"><span class="tm-indicator" aria-hidden="true"></span><span class="tm-sidebar-foot-text">Observatory Console</span></div>', 1)
             if freshness.get("refresh_error"):
                 age = max(0, int(freshness.get("cache_age_s") or 0))
                 warning = (f'<aside class="card warning" data-state-stale role="status">'
@@ -283,6 +313,14 @@ class ObserverRequestHandler(BaseHTTPRequestHandler):
         ctx = self.context
         services = self.services_provider()
         path = self.path.split("?", 1)[0]
+        if path == "/logout" and ctx.auth is not None:
+            self.send_response(HTTPStatus.SEE_OTHER)
+            self.send_header("Location", "/login")
+            self.send_header("Set-Cookie", f"{SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         # Another tab may have changed this origin's login cookie. Bind
         # browser writes to the workspace that rendered the current page.
         scope = self.headers.get("X-Sciver-Workspace")

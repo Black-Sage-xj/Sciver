@@ -128,6 +128,28 @@ body.stage-height-focus .tm-sidebar-edge { display:none!important; }
 
 .tm-breadcrumb { flex-wrap:wrap; row-gap:4px; min-width:0; }
 .tm-topbar-right { font-size:11px; color:var(--tm-muted); border:1px solid var(--tm-border); border-radius:999px; padding:4px 10px; }
+.tm-account-menu { margin-top:auto; padding:10px 11px; border-top:1px solid var(--tm-border); }
+.tm-account-trigger { display:flex; align-items:center; gap:10px; width:100%; padding:9px; border:0; border-radius:8px; background:transparent; text-align:left; }
+.tm-account-trigger:hover { background:var(--tm-hover); }
+.tm-account-avatar { display:grid; place-items:center; flex:0 0 34px; height:34px; border-radius:50%; background:var(--tm-hover); color:var(--tm-muted); }
+.tm-account-avatar svg { width:18px; height:18px; stroke:currentColor; fill:none; stroke-width:1.6; }
+.tm-account-identity { display:grid; gap:3px; flex:1; min-width:0; }
+.tm-account-identity strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+.tm-account-identity small { color:var(--tm-muted); font-size:11px; }
+.tm-account-dialog { width:min(420px, calc(100vw - 32px)); max-height:min(80vh, 600px); padding:22px; border:1px solid var(--tm-border); border-radius:14px; background:var(--tm-panel); color:var(--tm-text); box-shadow:0 20px 70px #0008; }
+.tm-account-dialog::backdrop { background:rgba(0,0,0,.62); }
+.tm-account-dialog-head { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; }
+.tm-account-dialog-head h2 { margin:0; }
+.tm-account-dialog-head p { margin:6px 0 18px; color:var(--tm-muted); font-size:12px; }
+.tm-account-close { border:0; background:transparent; color:var(--tm-muted); font-size:22px; line-height:1; padding:0 4px; }
+.tm-account-list { display:grid; gap:6px; }
+.tm-account-row { display:flex; justify-content:space-between; gap:12px; align-items:center; width:100%; text-align:left; background:transparent; border:1px solid var(--tm-border); padding:12px; overflow-wrap:anywhere; }
+.tm-account-row small { flex:none; color:var(--tm-muted); }
+.tm-account-row:disabled { opacity:1; cursor:default; background:var(--tm-hover); }
+.tm-account-error { color:#fca5a5; font-size:12px; }
+.tm-account-actions { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:18px; padding-top:16px; border-top:1px solid var(--tm-border); font-size:12px; }
+.tm-account-actions a { text-decoration:none; }
+.tm-account-actions button { border:0; background:transparent; color:var(--tm-muted); padding:5px; font-size:12px; }
 .tm-content { width:100%; max-width:1800px; margin:0 auto; padding:32px 30px 45px; min-width:0; }
 .tm-page-head { margin-bottom:23px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
 .tm-page-head p { color:var(--tm-muted); margin:0; font-size:13px; }
@@ -174,11 +196,7 @@ body.stage-height-focus .tm-sidebar-edge { display:none!important; }
 .tm-quota-heading .tm-refresh-button:focus-visible { outline:2px solid #a1a1aa; outline-offset:3px; }
 @media (max-width:1300px) { .tm-quota-section #usage .grid { grid-template-columns:1fr; } }
 @media (max-width:680px) { .tm-quota-section #usage { grid-template-columns:1fr; } .tm-quota-heading { flex-direction:column; align-items:stretch; gap:10px; } .tm-quota-heading .tm-update-status { justify-content:space-between; } }
-.tm-workflow-view .tm-nav-label, .tm-workflow-view .tm-sidebar-foot { display:none; }
 .tm-workflow-view .tm-content { max-width:none; padding:18px 22px 32px; }
-.tm-workflow-view .tm-page-head { margin:0 0 13px; }
-.tm-workflow-view .tm-page-head h1 { margin:0; font-size:24px; }
-.tm-workflow-view .tm-page-label, .tm-workflow-view .tm-page-head p { display:none; }
 .tm-workflow-view .stage-preview-head { background:transparent; border:0; border-radius:0; padding:0; display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 6px; }
 .tm-workflow-view .workflow-version-form { margin:0; flex:0 0 auto; }
 .tm-workflow-view .workflow-version-form label { display:inline-flex; align-items:center; gap:9px; font-size:12px; color:var(--tm-muted); }
@@ -1164,6 +1182,8 @@ body.stage-height-focus .tm-content { padding:0; max-width:none; }
   .tm-nav-label, .tm-sidebar-foot { display:none; }
   .tm-nav { display:none; flex-direction:column; width:100%; min-width:0; gap:3px; padding:2px 12px 12px; }
   .tm-sidebar.tm-mobile-nav-open .tm-nav { display:flex; }
+  .tm-account-menu { display:none; }
+  .tm-sidebar.tm-mobile-nav-open .tm-account-menu { display:block; margin:0; padding:0 12px 12px; }
   .tm-nav-link { min-height:41px; padding:8px 12px; gap:11px; width:100%; min-width:0; }
   .tm-main { margin-left:0; width:100%; min-width:0; max-width:100%; }
   .tm-topbar { height:auto; min-height:50px; padding:8px 17px; gap:8px; }
@@ -1246,13 +1266,14 @@ def _secondary_back_link(back_href: str | None) -> str:
     import re
 
     target = str(back_href or "")
-    allowed = (target in {"/run/", "/workflow-stage-preview/", "/services/"}
+    allowed = (target in {"/run/", "/workflow-stage-preview/", "/services/", "/settings/"}
                or re.fullmatch(r"/run/[0-9a-f]{16}/", target) is not None)
     if not allowed:
         return ""
     name = ("任务概览" if re.fullmatch(r"/run/[0-9a-f]{16}/", target) else
             "Task List" if target == "/run/" else
-            "Workflow" if target == "/workflow-stage-preview/" else "Services")
+            "Workflow" if target == "/workflow-stage-preview/" else
+            "Settings" if target == "/settings/" else "Services")
     return (f'<a class="tm-secondary-back" href="{html.escape(target, quote=True)}"'
             f' aria-label="返回{name}" title="返回{name}">'
             '<svg viewBox="0 0 24 24" aria-hidden="true">'
@@ -1282,6 +1303,9 @@ def _breadcrumb(active: str, parent: str | None, leaf: str | None = None) -> tup
         if task_parent:
             segments += [("Task List", "/run/"), ("Task Console", task_parent)]
         segments.append(("图谱", None))
+    elif active in {"workflow", "architecture"} and parent == "/settings/":
+        segments += [("Settings", "/settings/"),
+                     ("Workflow" if active == "workflow" else "Architecture", None)]
     elif active == "workflow":
         if parent == "/workflow-stage-preview/":
             segments += [("Workflow", "/workflow-stage-preview/"),
@@ -1322,10 +1346,9 @@ def dashboard_shell(title: str, body: str, active: str = "workflow", *,
 
     active = active if active in _ICONS else "workflow"
     view_name = next((label for key, label, _ in _VIEWS if key == active), "Explore map")
-    # Main Workflow is the workspace landing page. All other top-level
-    # pages have a consistent workspace parent, while nested pages override it.
+    # Top-level workspace views have no implicit page parent.
     parent = back_href if back_href is not None else (
-        "/workflow-stage-preview/" if active != "workflow" else None)
+        "/settings/" if active in {"workflow", "architecture"} else None)
     back_link = _secondary_back_link(parent)
     crumb_html, view_name = _breadcrumb(active, parent, breadcrumb_leaf)
     task_console = parent if re.fullmatch(r"/run/[0-9a-f]{16}/", parent or "") else None
@@ -1336,12 +1359,12 @@ def dashboard_shell(title: str, body: str, active: str = "workflow", *,
         + (' aria-current="page"' if (
             (active == "explorer" and key == ("console" if task_console else "run"))
             or (viewing_console and key == "console")
-            or (not viewing_console and active != "explorer" and key == active)
+            or (not viewing_console and active != "explorer" and (key == active or (key == "settings" and active in {"workflow", "architecture"})))
         ) else "")
         + f' aria-label="{html.escape(label, quote=True)}" title="{html.escape(label, quote=True)}">'
         + f'<svg class="tm-nav-icon" viewBox="0 0 24 24" aria-hidden="true">{_ICONS[key]}</svg>'
         + f'<span class="tm-nav-text">{label}</span></a>'
-        for key, label, url in _VIEWS
+        for key, label, url in _VIEWS if key not in {"workflow", "architecture"}
     )
     chat_widget = widget_html(task_console.removeprefix("/run/").strip("/") if task_console else "") if active != "research_chat" else ""
     chat_style = WIDGET_STYLE if chat_widget else ""
@@ -1362,7 +1385,7 @@ def dashboard_shell(title: str, body: str, active: str = "workflow", *,
     <span>菜单</span>
   </button></div>
   <div class="tm-nav-label">Workspace</div><nav class="tm-nav" id="tm-main-nav" aria-label="Main navigation">{links}</nav>
-  <div class="tm-sidebar-foot"><span class="tm-indicator" aria-hidden="true"></span><span class="tm-sidebar-foot-text">Observatory Console</span></div>
+  <!-- sciver-account-menu -->
 </aside>
 <div class="tm-main">
   <header class="tm-topbar"><button class="tm-sidebar-reopen" type="button" data-sidebar-reopen aria-label="展开导航菜单" title="展开导航菜单"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><span>菜单</span></button><nav class="tm-breadcrumb" aria-label="页面导航">{back_link}{crumb_html}</nav><div class="tm-topbar-actions"><div class="tm-topbar-right">Sciver · Monitor</div>{BELL_HTML}</div></header>
