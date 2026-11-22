@@ -291,7 +291,7 @@ def services_html(state: dict, manager: StaticViewManager | None,
     """Show last-good quota immediately while the live account controls load.
 
     back_href is the visitor's last still-existing Task Console when known.
-    None keeps the workspace default parent (Workflow).
+    None leaves this top-level workspace view without a page parent.
     """
     return _page("Sciver Observatory — Services",
                  codex_usage_body(quota_snapshot)
