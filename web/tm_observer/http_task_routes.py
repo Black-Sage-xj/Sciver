@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from http import HTTPStatus
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode
@@ -160,6 +162,48 @@ def post_task(self, path: str, ctx: RequestContext, services: RouteServices) -> 
     if path.startswith("/api/run/") and path.endswith("/final-report/generate"):
         from .final_report_routes import post_report_generation
         return post_report_generation(self, path, ctx)
+    if path.startswith("/api/run/") and path.endswith("/rename"):
+        if not self._authorized():
+            self._send_unauthorized()
+            return True
+        origin, host = self.headers.get("Origin"), self.headers.get("Host")
+        if not host or origin not in {f"http://{host}", f"https://{host}"} or self.headers.get("X-TM-Operator-Intent") != "1":
+            self._send(b'{"error":"forbidden"}', "application/json", HTTPStatus.FORBIDDEN)
+            return True
+        parts = path.strip("/").split("/")
+        ident = parts[2] if len(parts) == 4 and parts[:2] == ["api", "run"] else ""
+        run = next ( (r for r in ctx.cache.get().get("runs", []) if r.get("observer_id") == ident), None)
+        if not run or len(ident) != 16 or any(c not in "0123456789abcdef" for c in ident):
+            self._send(b'{"error":"task not found"}', "application/json", HTTPStatus.NOT_FOUND)
+            return True
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 1 <= size <= 4096 or not self.headers.get("Content-Type", "").startswith("application/json"):
+                raise ValueError()
+            data = json.loads(self.rfile.read(size))
+            name = data.get("name")
+            if not isinstance(name, str) or not name.strip() or len(name.strip()) > 120 or any(ord(c) < 32 for c in name):
+                raise ValueError()
+            root = Path(run["task_root"]).resolve()
+            directory = root / ".theory-master"
+            if not directory.is_dir() or directory.resolve().parent != root:
+                raise OSError("invalid task directory")
+            fd, temp = tempfile.mkstemp(prefix=".display-name-", dir=directory)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump({"name": name.strip()}, f, ensure_ascii=False)
+                os.replace(temp, directory / "display-name.json")
+            finally:
+                if os.path.exists(temp):
+                    os.unlink(temp)
+            ctx.cache.include_created_task(root)
+            result, status = {"name": name.strip()}, HTTPStatus.OK
+        except (ValueError, TypeError, UnicodeError, AttributeError):
+            result, status = {"error": "名称须为 1–120 个字符，且不能包含换行"}, HTTPStatus.BAD_REQUEST
+        except OSError:
+            result, status = {"error": "保存失败，请检查任务目录权限"}, HTTPStatus.SERVICE_UNAVAILABLE
+        self._send(json.dumps(result, ensure_ascii=False).encode(), "application/json; charset=utf-8", status)
+        return True
     if path.startswith("/api/run/") and path.endswith("/research-plan"):
         if not self._authorized():
             self._send_unauthorized()

@@ -12,6 +12,13 @@
       }
       runFreshness('页面快照 · '+lastRunSync+' · 每 8 秒检查');
       const selectedWorker=config.selectedWorker;
+      if(/(?:[?&])worker_actions(?:=|&|$)/.test(window.location?.search||'')){
+        const workerDialogUrl=new URL(window.location.href);
+        workerDialogUrl.searchParams.delete('worker_actions');
+        history.replaceState(history.state,'',workerDialogUrl);
+        const dialog=host?.querySelector('#tm-worker-state-dialog');
+        if(dialog&&!dialog.open)dialog.showModal();
+      }
       const selectedHistoryCycle=config.selectedHistoryCycle;
       const cycleHistoryLoads=new Set();
       if(selectedWorker) document.addEventListener('tm-cycle-max-save',async event=>{
@@ -950,6 +957,20 @@
         if(field){routeChoiceLabels(field,false);submitAgentModel(field);}
       });
       document.addEventListener('click', event=>{
+        const workerTab=event.target.closest('.tm-worker-tab[href]');
+        if(workerTab && !event.defaultPrevented && event.button===0 &&
+           !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey){
+          if(workerTab.classList.contains('is-selected')){
+            const dialog=host.querySelector('#tm-worker-state-dialog');
+            if(dialog){event.preventDefault();if(!dialog.open)dialog.showModal();}
+          }else{
+            event.preventDefault();
+            const url=new URL(workerTab.href);
+            url.searchParams.set('worker_actions','1');
+            window.location.assign(url);
+          }
+          return;
+        }
         const workerOpener=event.target.closest('[data-worker-state-open]');
         if(workerOpener){
           const dialog=host.querySelector('#tm-worker-state-dialog');

@@ -247,6 +247,9 @@ def discover_task_roots(search_root: Path) -> list[Path]:
 
 
 def _task_display_name(location: TaskLocation) -> str:
+    display = _safe_json(location.task_root / ".theory-master" / "display-name.json").get("name")
+    if isinstance(display, str) and display.strip():
+        return display
     explicit = location.config.get("task_name") or location.config.get("name")
     if explicit:
         return str(explicit)

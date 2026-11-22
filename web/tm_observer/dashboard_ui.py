@@ -301,6 +301,9 @@ body.stage-height-focus .tm-sidebar-edge { display:none!important; }
 .tm-tui-eyebrow { color:var(--tm-muted); font-weight:650; font-size:10px; letter-spacing:.11em; }
 .tm-tui-title-main > strong { font-size:23px; font-weight:680; line-height:1.3; letter-spacing:-.025em; overflow-wrap:anywhere; }
 .tm-tui-title-main > strong, .tm-tui-title-main > strong > button { max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tm-task-rename { font:inherit; letter-spacing:inherit; color:inherit; background:none; border:0; padding:0; text-align:left; cursor:pointer; overflow-wrap:anywhere; }
+.tm-task-rename:hover { text-decoration:underline; text-decoration-color:var(--tm-muted); text-underline-offset:5px; }
+.tm-task-rename:focus-visible { outline:2px solid var(--tm-link); outline-offset:4px; }
 .tm-tui-text { display:block; margin:0; padding:0; min-width:0; color:var(--tm-text); background:transparent; font:inherit; white-space:pre-wrap; overflow-wrap:anywhere; }
 .tm-tui-title-main .tm-tui-identity { color:var(--tm-muted); font-size:12px; line-height:1.6; }
 .tm-tui-state-badge { padding:5px 11px; font-size:11px; flex-shrink:0; }
@@ -1402,6 +1405,13 @@ def dashboard_shell(title: str, body: str, active: str = "workflow", *,
 </div></div><script data-mobile-nav-script>
 (function() {{
   "use strict";
+  document.addEventListener('click', async event=>{{
+    const button=event.target.closest('[data-task-rename]'); if(!button)return;
+    const name=prompt('修改任务名称',button.textContent); if(name===null || name.trim()===button.textContent)return;
+    try {{ const response=await fetch('/api/run/'+button.dataset.taskRename+'/rename',{{method:'POST',headers:{{'Content-Type':'application/json','X-TM-Operator-Intent':'1'}},body:JSON.stringify({{name}})}});
+      const data=await response.json(); if(!response.ok)throw Error(data.error || '保存失败'); button.textContent=data.name;
+    }} catch(error) {{ alert(error.message || '保存失败'); }}
+  }});
   const sidebar=document.querySelector(".tm-sidebar");
   const button=document.querySelector("[data-mobile-nav-toggle]");
   const workspace=document.querySelector("[data-workspace-nav]");

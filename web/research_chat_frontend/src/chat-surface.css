@@ -65,6 +65,7 @@ html[data-sciver-theme="white"] :is(.tm-research-chat,.sc-selection-popover){
 #tm-research-chat-app .sc-codex-shell .sc-codex-composer{position:relative;z-index:1;gap:10px;padding:16px 15px 12px 19px;border:1px solid color-mix(in srgb,var(--sc-chat-border) 60%,transparent);border-radius:26px;background:var(--sc-chat-input);box-shadow:0 5px 22px #0000000c;transition:border-color .15s}
 #tm-research-chat-app .sc-codex-shell .sc-codex-composer:focus-within{border-color:color-mix(in srgb,var(--sc-chat-muted) 60%,var(--sc-chat-border));box-shadow:0 5px 22px #0000000c}
 #tm-research-chat-app .sc-codex-shell .sc-codex-composer>.tm-aui-input{min-height:65px;max-height:240px;resize:none;padding:1px 3px 8px!important;font-size:14px;line-height:1.7;color:var(--sc-chat-text)!important;caret-color:var(--sc-chat-text)}
+#tm-research-chat-app .sc-codex-shell textarea.tm-aui-input:focus{outline:0!important;border:0!important;background:transparent!important;box-shadow:none!important}
 #tm-research-chat-app .sc-codex-shell .sc-codex-composer>.tm-aui-input::placeholder{color:var(--sc-chat-muted);opacity:.7}
 #tm-research-chat-app .sc-codex-composer-footer{display:flex;align-items:center;gap:12px;min-height:34px;flex-wrap:nowrap}
 .sc-codex-composer-left,.sc-codex-composer-right{display:flex;align-items:center;gap:3px;min-width:0}

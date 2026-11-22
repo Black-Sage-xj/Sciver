@@ -1741,7 +1741,7 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
     titlebar = f'''<div class="tm-tui-titlebar tm-titlebar-report">
         <div class="tm-tui-title-main">
             <span class="tm-tui-eyebrow">TASK CONSOLE</span>
-            <strong>{_e(run.get("task_name"))}</strong>
+            <strong><button type="button" class="tm-task-rename" data-task-rename="{_e(ident)}" title="点击修改任务名称">{_e(run.get("task_name"))}</button></strong>
             <span class="tm-tui-identity">{_e(short_identity)}</span>
         </div>
         {render_report_entry(master_run, placement="console")}
