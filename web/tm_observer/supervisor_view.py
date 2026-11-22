@@ -138,10 +138,16 @@ SUPERVISOR_STYLE = """
 .tm-incident-bar strong { color:#f4f4f5; }
 .tm-incident-bar time { margin-left:auto; color:#a1a1aa; font-size:11px; }
 body:has(.tm-supervisor-page) .tm-page-head { display:none; }
-body:has(.tm-supervisor-page) .tm-main { height:100vh; display:flex; flex-direction:column; overflow:hidden; }
-body:has(.tm-supervisor-page) .tm-content { flex:1; min-height:0; max-width:none; padding:8px 14px 10px; display:flex; flex-direction:column; overflow:hidden; }
-.tm-supervisor-page { flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
-.tm-supervisor-page .tm-supervisor-session { flex:1; min-height:0; margin:0; display:flex; flex-direction:column; overflow:hidden; }
+body:has(.tm-supervisor-page) .tm-main { min-height:100dvh; }
+body:has(.tm-supervisor-page) #sciver-chat-widget { display:none; }
+body:has(.tm-supervisor-page) .tm-content { max-width:none; padding:8px 14px 24px; }
+.tm-supervisor-page { min-width:0; }
+.tm-supervisor-recovery { overflow-wrap:anywhere; }
+.tm-supervisor-page .tm-supervisor-session { margin:16px 0; display:flex; flex-direction:column; scroll-margin-top:76px; }
+.tm-supervisor-page .tm-incident-bar { flex:none; overflow-wrap:anywhere; }
+.tm-supervisor-page .tm-incident-chat { flex:none; height:clamp(360px,65dvh,720px); min-height:0; }
+.tm-supervisor-page loquix-chat-composer, .tm-supervisor-page .tm-incident-actions { flex:none; }
+@media(max-width:700px) { .tm-supervisor-page .tm-incident-chat { height:70dvh; min-height:340px; } }
 .tm-incident-chat {display:flex; flex-direction:column; flex:1; min-height:0; height:auto; margin:0; border:0; border-radius:0; overflow:hidden; background:#18181c; color:#e4e4e7;
   --loquix-surface-color:#18181c; --loquix-border-color:#3f3f46; --loquix-text-color:#e4e4e7;
   --loquix-composer-bg:#18181c; --loquix-composer-border-color:#3f3f46;
@@ -781,19 +787,8 @@ _STATUS_TITLE = {"active": "接管中", "hold": "已停下", "returned": "已交
 
 
 def _refresh_script(*, active: bool, waiting: bool) -> str:
-    """Refresh live Supervisor sessions without destroying an in-progress draft."""
-    if not active and not waiting:
-        return ""
-    delay = 3000 if waiting else 8000
-    return (
-        '<script>(()=>{'
-        f'const delay={delay};'
-        'const composers=()=>Array.from(document.querySelectorAll("loquix-chat-composer"));'
-        'const hasDraft=()=>composers().some(c=>{const p=c.shadowRoot?.querySelector("loquix-prompt-input");return Boolean(p&&String(p.value||"").trim())});'
-        'const editing=()=>{const a=document.activeElement;return Boolean((a&&a.matches&&a.matches("input,textarea,select,[contenteditable=true],loquix-chat-composer"))||composers().some(c=>Boolean(c.shadowRoot?.activeElement)))};'
-        'function poll(){setTimeout(()=>{if(document.visibilityState!=="hidden"&&!document.querySelector("details[open]")&&!editing()&&!hasDraft())location.reload();poll()},delay)}poll();'
-        '})();</script>'
-    )
+    from .supervisor_polling import refresh_script
+    return refresh_script(active=active, waiting=waiting)
 
 
 def page_body(run: dict[str, Any], cycle: str = "", state: dict[str, Any] | None = None) -> str:
@@ -807,6 +802,7 @@ def page_body(run: dict[str, Any], cycle: str = "", state: dict[str, Any] | None
     ) or '<span>暂无接管记录</span>'
     articles = []
     waiting = False
+    live_dialogue = False
     live_status = str((state or {}).get("status") or run.get("raw_status")
                       or run.get("state") or "").upper() in LIVE_STATUSES
     for session in data["sessions"]:
@@ -829,6 +825,7 @@ def page_body(run: dict[str, Any], cycle: str = "", state: dict[str, Any] | None
             session_waiting = bool(rows and rows[-1]["role"] == "human" and record.get("status") == "active")
             waiting = waiting or session_waiting
             active = record.get("status") == "active"
+            live_dialogue = live_dialogue or active
             thread = dialogue_html(str(record["id"]), rows, active=active, waiting=session_waiting)
             if not active:
                 thread += f'<p class="tm-incident-actions">会话已 {_e(record.get("status"))}，对话保留供审计。</p>'
@@ -867,10 +864,9 @@ def page_body(run: dict[str, Any], cycle: str = "", state: dict[str, Any] | None
                 + '<p>最后验证进展：' + _e(str(job.get('last_verified_progress') or '尚无')) + '</p></section>')
     warnings = "".join(f'<p class="tm-stage-warning">{_e(w)}</p>' for w in data["warnings"])
     refresh = _refresh_script(
-        active=any(s["status"] == "active" for s in data["sessions"]), waiting=waiting,
+        active=live_dialogue or any(s["status"] == "active" for s in data["sessions"]), waiting=waiting,
     )
-    incident_script = (CHAT_MODULE + DIALOGUE_SCRIPT) if any("tm-incident-form" in item for item in articles) else (
-        CHAT_MODULE if any("loquix-message-item" in item for item in articles) else '')
+    incident_script = CHAT_MODULE + DIALOGUE_SCRIPT
     return (
         '<style>' + SUPERVISOR_STYLE + COMPOSER_STYLE + '</style>'
         '<section class="tm-run-workspace tm-supervisor-page" aria-label="Supervisor 接管对话">'

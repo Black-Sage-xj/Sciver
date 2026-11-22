@@ -210,6 +210,13 @@ class SupervisorViewTests(unittest.TestCase):
         self.assertIn("protocol_health=violation", section.get_text())
         composer = section.select_one("loquix-chat-composer")
         self.assertEqual(composer["data-session"], sis)
+        self.assertIn('await fetch', str(dom))
+        # A held SUP can still own an active human chat after its reply.
+        with (folder / f"{sis}.messages.jsonl").open("a") as stream:
+            stream.write(json.dumps({"role":"supervisor","content":"Reply received"}) + "\n")
+        updated = page_body(self.run, "", {"status":"NEEDS_ATTENTION"})
+        self.assertIn('const delay=8000;', updated)
+        self.assertNotIn('location.reload();poll()', updated)
         self.assertIsNotNone(section.select_one("loquix-attachment-panel"))
         self.assertIsNone(section.select_one("textarea"))
 
