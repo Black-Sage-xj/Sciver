@@ -23,12 +23,13 @@ IDENT = "8dd38a9977eef7e5"
 
 class SecondaryBackNavigationTests(unittest.TestCase):
     def test_shared_shell_only_shows_back_on_nested_pages(self):
-        for active in ("run", "explorer", "architecture", "services"):
+        for active in ("run", "explorer", "services", "settings"):
             page = BeautifulSoup(dashboard_shell("Test", "<p>Body</p>", active=active), "html.parser")
+            self.assertEqual(page.select(".tm-breadcrumb a.tm-secondary-back"), [])
+        for active in ("workflow", "architecture"):
+            page = BeautifulSoup(dashboard_shell("Test", "Body", active=active), "html.parser")
             self.assertEqual(page.select_one(".tm-breadcrumb a.tm-secondary-back")["href"],
-                             "/workflow-stage-preview/")
-        workflow = BeautifulSoup(dashboard_shell("Test", "Body", active="workflow"), "html.parser")
-        self.assertEqual(workflow.select("a.tm-secondary-back"), [])
+                             "/settings/")
         tasks = BeautifulSoup(dashboard_shell("Test", "Hi", active="run",
                                              back_href="/run/"), "html.parser")
         back = tasks.select_one(".tm-topbar .tm-breadcrumb > a.tm-secondary-back")
@@ -119,11 +120,9 @@ class SecondaryBackNavigationTests(unittest.TestCase):
                              f"/run/{IDENT}/")
             self.assertEqual(len(from_run.select(".tm-secondary-back")),1)
             general=BeautifulSoup(explorer_html(Path("/tmp"),state),"html.parser")
-            self.assertEqual(general.select_one(".tm-secondary-back")["href"],
-                             "/workflow-stage-preview/")
+            self.assertEqual(general.select(".tm-secondary-back"), [])
             unknown=BeautifulSoup(explorer_html(Path("/tmp"),state,selected="evil"),"html.parser")
-            self.assertEqual(unknown.select_one(".tm-secondary-back")["href"],
-                             "/workflow-stage-preview/")
+            self.assertEqual(unknown.select(".tm-secondary-back"), [])
 
     def test_explorer_selection_uses_explicit_id_or_discovery_order(self):
         class UninspectedPath:
@@ -157,8 +156,7 @@ class SecondaryBackNavigationTests(unittest.TestCase):
             base = f"http://127.0.0.1:{server.server_address[1]}"
             try:
                 bare = BeautifulSoup(urlopen(base + "/services/", timeout=7).read(), "html.parser")
-                self.assertEqual(bare.select_one(".tm-secondary-back")["href"],
-                                 "/workflow-stage-preview/")
+                self.assertEqual(bare.select(".tm-secondary-back"), [])
                 index = BeautifulSoup(urlopen(base + "/run/", timeout=7).read(), "html.parser")
                 task = index.select_one(".tm-run-task-link")
                 self.assertIsNotNone(task)
@@ -172,8 +170,7 @@ class SecondaryBackNavigationTests(unittest.TestCase):
                 stale = Request(base + "/services/",
                                 headers={"Cookie": "tm_last_task_console=0123456789abcdef"})
                 gone = BeautifulSoup(urlopen(stale, timeout=7).read(), "html.parser")
-                self.assertEqual(gone.select_one(".tm-secondary-back")["href"],
-                                 "/workflow-stage-preview/")
+                self.assertEqual(gone.select(".tm-secondary-back"), [])
             finally:
                 server.shutdown()
                 server.server_close()
@@ -181,7 +178,7 @@ class SecondaryBackNavigationTests(unittest.TestCase):
 
     def test_workflow_guide_and_version_have_parent_but_overview_not(self):
         overview=BeautifulSoup(stage_workflow_html(),"html.parser")
-        self.assertEqual(overview.select(".tm-secondary-back"),[])
+        self.assertEqual(overview.select_one(".tm-secondary-back")["href"], "/settings/")
         full=BeautifulSoup(stage_workflow_html(display_mode="full"),"html.parser")
         link=full.select_one(".tm-breadcrumb a.tm-secondary-back")
         self.assertIsNotNone(link)
@@ -204,8 +201,7 @@ class SecondaryBackNavigationTests(unittest.TestCase):
             base=f"http://127.0.0.1:{server.server_address[1]}"
             try:
                 index=BeautifulSoup(urlopen(base+"/run/",timeout=7).read(),"html.parser")
-                self.assertEqual(index.select_one(".tm-breadcrumb a.tm-secondary-back")["href"],
-                                 "/workflow-stage-preview/")
+                self.assertEqual(index.select(".tm-breadcrumb a.tm-secondary-back"), [])
                 task=index.select_one(".tm-run-task-link")
                 self.assertIsNotNone(task)
                 path=task["href"]

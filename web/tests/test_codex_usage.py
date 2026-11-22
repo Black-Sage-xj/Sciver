@@ -539,7 +539,7 @@ class CodexServicesDashboardTests(unittest.TestCase):
             self.skipTest("node is not installed")
         page = services_html({"system": {"task_count": 4}}, None)
         from tm_observer.dashboard_ui import _VIEWS
-        self.assertEqual(page.split('<nav class="tm-nav"', 1)[1].split('</nav>', 1)[0].count('class="tm-nav-link"'), len(_VIEWS))
+        self.assertEqual(page.split('<nav class="tm-nav"', 1)[1].split('</nav>', 1)[0].count('class="tm-nav-link"'), len(_VIEWS) - 2)
         self.assertNotIn("Active account", page)
         self.assertNotIn("Use Codex 1", page)
         self.assertNotIn("Use Codex 2", page)

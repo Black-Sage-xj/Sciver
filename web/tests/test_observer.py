@@ -1398,9 +1398,11 @@ class WebTests(unittest.TestCase):
                     stage_preview = response.read().decode("utf-8")
                 self.assertIn('<nav class="tm-nav"', stage_preview)
                 nav = stage_preview.split('<nav class="tm-nav"', 1)[1].split('</nav>', 1)[0]
-                self.assertEqual(nav.count('class="tm-nav-link"'), 8)
-                for route in ("/run/", "/task-console/", "/research-plan/", "/workflow-stage-preview/", "/architecture/", "/services/", "/settings/"):
+                self.assertEqual(nav.count('class="tm-nav-link"'), 6)
+                for route in ("/run/", "/task-console/", "/research-plan/", "/services/", "/settings/"):
                     self.assertIn(f'href="{route}"', nav)
+                self.assertNotIn('href="/workflow-stage-preview/"', nav)
+                self.assertNotIn('href="/architecture/"', nav)
                 self.assertIn("Task Console", nav)
                 self.assertNotIn("Codex Usage", nav)
                 self.assertNotIn("Change Requests", nav)
