@@ -112,10 +112,7 @@ def _index_state(row: dict[str, Any]) -> str:
 
 
 def run_index_body(state: dict[str, Any], *, query: str = "", status: str = "", page: int = 1) -> str:
-    """Render a bounded task page with read-only registered report entries."""
-    from .final_report_entry_ui import REPORT_ENTRY_CSS, render_report_entry
-
-    report_cache: dict[str, Any] = {}
+    """Render a bounded task page from registered task records."""
     query = str(query or "")[:160].strip()
     status = str(status or "")[:48].strip().upper()
     all_runs = [row for row in state.get("runs", []) if isinstance(row, dict) and _task_url(row)]
@@ -147,18 +144,17 @@ def run_index_body(state: dict[str, Any], *, query: str = "", status: str = "", 
         f'<td data-label="轮次">{_e(row.get("cycle"))}</td>'
         f'<td data-label="状态">{_index_state_badge(row)}</td>'
         f'<td data-label="Agent">{_e(row.get("active_agent"))}</td>'
-        f'<td data-label="最终总报告">{render_report_entry(row, placement="list", cache=report_cache)}</td>'
         f'<td data-label="最近活动">{_e(_relative_time(row.get("last_activity_at")))}</td>'
         '</tr>'
         for row in visible
-    ) or '<tr><td colspan="6" class="tm-run-empty">没有符合条件的任务。</td></tr>'
+    ) or '<tr><td colspan="5" class="tm-run-empty">没有符合条件的任务。</td></tr>'
     pages = (
         f'<a href="{html.escape(_index_url(query, status, page - 1), quote=True)}" rel="prev">上一页</a>' if page > 1 else '<span>上一页</span>'
     ) + f'<span>{page} / {total_pages}</span>' + (
         f'<a href="{html.escape(_index_url(query, status, page + 1), quote=True)}" rel="next">下一页</a>' if page < total_pages else '<span>下一页</span>'
     )
     return f'''
-<style>{SUPERVISOR_STYLE}{REPORT_ENTRY_CSS}</style>
+<style>{SUPERVISOR_STYLE}</style>
 {first_use_panel() if not all_runs else ""}
 <section class="tm-run-workspace" aria-label="Sciver tasks">
   <div class="tm-run-heading"><div><strong>任务清单</strong><p>{len(filtered)} 个任务 · 每页 {PAGE_SIZE} 个 · 只读监控</p></div>{live_link}<a class="tm-run-refresh" href="/research-chat/?new=1">＋ 建立科研项目</a><a class="tm-run-refresh" href="{html.escape(_index_url(query, status, page), quote=True)}">⟳ 刷新</a></div>
@@ -169,7 +165,7 @@ def run_index_body(state: dict[str, Any], *, query: str = "", status: str = "", 
     <a href="/run/">清除</a>
   </form>
   <div class="tm-run-table-wrap"><table class="tm-run-table">
-    <thead><tr><th>Task / Master</th><th>Cycle ID</th><th>State</th><th>Agent</th><th>最终总报告</th><th>最近活动</th></tr></thead>
+    <thead><tr><th>Task / Master</th><th>Cycle ID</th><th>State</th><th>Agent</th><th>最近活动</th></tr></thead>
     <tbody>{rows}</tbody>
   </table></div>
   <nav class="tm-run-pagination" aria-label="任务分页">{pages}</nav>
@@ -1658,7 +1654,6 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
                                  worker_batch_cycle_progress, STYLE as WORKER_STYLE)
     from .worker_settings_ui import top_bar, script as multi_script, STYLE as MULTI_STYLE
     from .model_preset_ui import dialog_html as preset_dialog, script as preset_script, CSS as PRESET_STYLE
-    from .final_report_entry_ui import REPORT_ENTRY_CSS, render_report_entry
     master_run = run
     run, workers, selected_worker = select_worker(run, worker_id)
     worker_cycle_progress = worker_batch_cycle_progress(master_run, selected_worker)
@@ -1744,7 +1739,6 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
             <strong>{_e(run.get("task_name"))}</strong>
             <span class="tm-tui-identity">{_e(short_identity)}</span>
         </div>
-        {render_report_entry(master_run, placement="console")}
         <div class="tm-tui-title-actions">
           <span class="tm-run-freshness" data-run-freshness role="status" aria-live="polite">初始只读快照 · 8 秒自动检查</span>
           {trace_link}
@@ -1874,7 +1868,6 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
     {WORKER_STYLE}
     {MULTI_STYLE}
     {PRESET_STYLE}
-    {REPORT_ENTRY_CSS}
     /* Inline Cycle limit: editing lives inside the Cycle metric card. */
     [data-cycle-max-form][hidden] {{display:none !important;}}
     [data-cycle-max-form]:not([hidden]) {{display:inline-flex;align-items:center;flex-wrap:wrap;gap:6px;margin:7px 0 0;}}

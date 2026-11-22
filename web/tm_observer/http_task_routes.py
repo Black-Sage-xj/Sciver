@@ -157,9 +157,6 @@ def get_task(self, path: str, state: dict, ctx: RequestContext, services: RouteS
 
 
 def post_task(self, path: str, ctx: RequestContext, services: RouteServices) -> bool:
-    if path.startswith("/api/run/") and path.endswith("/final-report/generate"):
-        from .final_report_routes import post_report_generation
-        return post_report_generation(self, path, ctx)
     if path.startswith("/api/run/") and path.endswith("/research-plan"):
         if not self._authorized():
             self._send_unauthorized()

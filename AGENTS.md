@@ -7,12 +7,12 @@ and GitHub remote; private research workspaces have separate histories and remot
 ## Shared public development baseline
 
 `main` tracks `origin/main` and is the shared baseline for everyday SDK,
-Web, tests, documentation and common repairs. The user requires exactly two
-local branches: `main` and `codex/graph-research`. Keep the shared-graph
-implementation on `codex/graph-research`; integrate common reviewed repairs into
-`main`. Do not create another repair or feature branch unless the user explicitly
-requests that additional branch. Use an existing appropriate checkout or an
-isolated worktree without adding branch names when isolation is needed.
+Web, tests, documentation and common repairs. Only `main` is published as a
+GitHub branch. Keep Graph Research integration on the local
+`codex/graph-research` branch until the user explicitly authorizes its release;
+`main` must install and run without that package. Historical branch pointers may
+remain local. Integrate common reviewed repairs into `main`. Use an existing
+appropriate checkout or an isolated detached worktree when isolation is needed.
 
 Historical versions belong in commits, tags, detached worktrees or private
 recovery bundles. After verifying incorporation and preserving recovery material,
