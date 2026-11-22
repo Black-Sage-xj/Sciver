@@ -658,6 +658,7 @@ a.tm-explore-map:focus-visible { outline:2px solid #93c5fd; outline-offset:3px; 
 .tm-cycle-label { font-size:12px; font-weight:690; color:#dbeafe; white-space:nowrap; }
 .tm-cycle-summary time { color:#8996a8; font-size:10px; font-variant-numeric:tabular-nums; }
 .tm-cycle-verdict { color:#93c5fd; font-size:10px; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+.tm-cycle-goal { color:var(--tm-text,#e4e4e7); font-size:10px; font-weight:700; white-space:nowrap; flex-shrink:0; }
 .tm-cycle-count { margin-left:auto; color:#a3aab7; font-size:10px; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .tm-cycle-chevron { font-size:14px; color:#9098a6; transition:transform .15s ease; }
 .tm-cycle-group[open] .tm-cycle-chevron { transform:rotate(180deg); }

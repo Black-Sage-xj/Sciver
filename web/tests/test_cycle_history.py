@@ -46,7 +46,7 @@ class TaskCycleHistoryTests(unittest.TestCase):
         self.assertEqual(summary, {"time": "14:00:00", "verdict": "supported"})
         html = _recent_timeline(raw, events, cycle_catalog=catalog, selected_cycle_id="1",
                                 cycle_summaries={"1": summary})
-        self.assertIn("Judge · supported", html)
+        self.assertIn("假设裁决 · supported", html)
         self.assertIn("已显示 3 / 3 个 Cycle", html)
         self.assertIn('data-history-selected="1"', html)
         self.assertIn('data-cycle-history-lazy="8"', html)
@@ -86,8 +86,8 @@ class TaskCycleHistoryTests(unittest.TestCase):
         latest = groups[-1].select_one("summary.tm-cycle-summary")
         latest_text = latest.get_text(" ", strip=True)
         self.assertIn("14:12:00", latest_text)
-        self.assertIn("Judge · supported", latest_text)
-        self.assertLess(latest_text.index("14:12:00"), latest_text.index("Judge · supported"))
+        self.assertIn("假设裁决 · supported", latest_text)
+        self.assertLess(latest_text.index("14:12:00"), latest_text.index("假设裁决 · supported"))
 
     def test_top_scroll_page_returns_ten_older_cycles_without_duplicate_or_misattribution(self):
         for cid in range(1, 26):
@@ -152,7 +152,7 @@ class TaskCycleHistoryTests(unittest.TestCase):
         self.assertEqual(summary, {"time": "10:23:21", "verdict": "supported"})
         html = _recent_timeline("", [], cycle_catalog=catalog,
                                 cycle_summaries={"174": summary})
-        self.assertIn("Judge · supported", html)
+        self.assertIn("假设裁决 · supported", html)
         self.assertNotIn("Judge · not_passed", html)
 
         self.snapshot("175", [{"event": "CYCLE_STARTED",
@@ -173,6 +173,30 @@ class TaskCycleHistoryTests(unittest.TestCase):
             "assessment_state": "terminal", "scientific_verdict": "rejected"}),
             encoding="utf-8")
         self.assertEqual(cycle_summary(self.root, catalog, "175")["verdict"], "")
+
+    def test_completed_goal_and_open_hypothesis_are_shown_separately_on_source_cycle(self):
+        self.snapshot("1", [self.start("1", 1)])
+        self.snapshot("2", [self.start("2", 2)])
+        for cid in ("1", "2"):
+            (self.root / cid / "research_state.json").write_text(json.dumps({
+                "cycle_id": cid, "status": "over", "assessment_state": "terminal",
+                "scientific_verdict": "open",
+            }), encoding="utf-8")
+        run = {"observer_id": "a" * 16, "run_id": 1, "task_name": "Test",
+               "cycle": "2", "cycle_dir": str(self.root / "2"), "state": "COMPLETE",
+               "research_root": str(self.root)}
+        unsealed = BeautifulSoup(run_detail_body(run), "html.parser")
+        self.assertIsNone(unsealed.select_one(".tm-cycle-goal"))
+        run["sealed_goal_cycle"] = "1"
+        for selected in ("", "1"):
+            page = BeautifulSoup(run_detail_body(run, history_cycle=selected), "html.parser")
+            source = page.select_one('[data-cycle-group-key="cycle-1"] > summary')
+            self.assertEqual(source.select_one(".tm-cycle-goal").get_text(), "Goal 已通过")
+            self.assertIn("COMPLETE", source.select_one(".tm-cycle-goal")["title"])
+            self.assertEqual(source.select_one(".tm-cycle-verdict").get_text(), "假设裁决 · open（未决）")
+            self.assertIsNone(page.select_one('[data-cycle-group-key="cycle-2"] .tm-cycle-goal'))
+            self.assertEqual(page.select_one('[data-goal-passed-cycle]')["data-goal-passed-cycle"], "1")
+        self.assertEqual(cycle_summary(self.root, cycle_catalog(self.root), "1")["verdict"], "open")
 
     def test_persisted_native_events_expose_judge_and_lead_stages(self):
         self.snapshot("176", [
@@ -297,7 +321,7 @@ class TaskCycleHistoryTests(unittest.TestCase):
         self.assertFalse(latest_group.has_attr("open"))
         self.assertIn('data-cycle-history-lazy="12"', latest)
         self.assertIn("14:12:00", latest)
-        self.assertIn("Judge · supported", latest)
+        self.assertIn("假设裁决 · supported", latest)
         self.assertEqual(json.loads(BeautifulSoup(latest, "html.parser").select_one("#tm-run-config").string)["selectedHistoryCycle"], "")
 
     def test_missing_and_untrustworthy_history_is_not_invented(self):

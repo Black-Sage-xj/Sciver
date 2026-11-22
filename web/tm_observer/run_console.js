@@ -346,7 +346,7 @@
       // Historical headers are inserted above the first page; the request is
       // scoped to the task's persisted Cycle catalog and never opens raw paths.
       let olderCycleLoading=false;
-      function makeOlderCycleRow(item) {
+      function makeOlderCycleRow(item, goalPassedCycle) {
         const detail=document.createElement('details');
         detail.className='tm-cycle-group';
         detail.dataset.cycleGroupKey='cycle-'+item.id;
@@ -363,11 +363,19 @@
           clock.textContent=String(item.time);
           summary.append(clock);
         }
+        if(goalPassedCycle&&String(item.id)===goalPassedCycle) {
+          const goal=document.createElement('span');
+          goal.className='tm-cycle-goal';
+          goal.title='任务已完成（COMPLETE）；Goal 通过于此 Cycle';
+          goal.textContent='Goal 已通过';
+          summary.append(goal);
+        }
         if(['supported','rejected','open','unadjudicated'].includes(item.verdict)) {
           const verdict=document.createElement('span');
           verdict.className='tm-cycle-verdict';
-          verdict.title=item.verdict==='unadjudicated'?'本 Cycle 未形成最终科学裁决':'本 Cycle 的最终 Judge 裁决';
-          verdict.textContent=item.verdict==='unadjudicated'?'未裁决':'Judge · '+item.verdict;
+          verdict.title=item.verdict==='unadjudicated'?'本 Cycle 未形成最终科学裁决':'本 Cycle 的假设裁决；任务是否完成由 Goal 验收决定';
+          verdict.textContent=item.verdict==='unadjudicated'?'未裁决':
+            '假设裁决 · '+item.verdict+(item.verdict==='open'?'（未决）':'');
           summary.append(verdict);
         }
         const count=document.createElement('span');
@@ -409,7 +417,7 @@
           for(const item of page.cycles) {
             const id=Number(item.id);
             if(!Number.isSafeInteger(id)||id<0||existing.has('cycle-'+id))continue;
-            const row=makeOlderCycleRow(item);
+            const row=makeOlderCycleRow(item, current.dataset.goalPassedCycle);
             const sibling=[...list.children].find(element=>{
               const detail=element.matches?.('[data-cycle-group-key]')?element:
                 element.querySelector?.('[data-cycle-group-key]');

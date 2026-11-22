@@ -801,8 +801,11 @@ def _run_focus(parts: dict[str, Any], status: Any, activity_detail: Any,
 def _recent_timeline(raw: Any, source_events: Any = None, *,
                      cycle_catalog: list[dict[str, str]] | None = None,
                      selected_cycle_id: str = "", worker_id: str | None = None,
-                     cycle_summaries: dict[str, dict[str, str]] | None = None) -> str:
+                     cycle_summaries: dict[str, dict[str, str]] | None = None,
+                     sealed_goal_cycle: str = "") -> str:
     import re
+    goal_cycle = str(sealed_goal_cycle or "").removeprefix("cycle-").lstrip("0")
+    goal_cycle = goal_cycle if re.fullmatch(r"[1-9][0-9]{0,7}", goal_cycle) else ""
     lines = []
     for line in str(raw or "").splitlines():
         match = re.match(r"^(\d{2}:\d{2}:\d{2})\s{2,}(.+)$", line.strip())
@@ -839,9 +842,14 @@ def _recent_timeline(raw: Any, source_events: Any = None, *,
         verdict_html = (
             '<span class="tm-cycle-verdict" title="本 Cycle 已结束，但没有终局科学 Judge 裁决">'
             '未裁决</span>' if verdict == "unadjudicated" else
-            '<span class="tm-cycle-verdict" title="本 Cycle 的终局科学 Judge 裁决">Judge · ' +
-            _e(verdict) + '</span>' if verdict in {"supported", "rejected", "open"} else ""
+            '<span class="tm-cycle-verdict" title="本 Cycle 的假设裁决；任务是否完成由 Goal 验收决定">假设裁决 · ' +
+            _e(verdict) + ('（未决）' if verdict == "open" else '') + '</span>'
+            if verdict in {"supported", "rejected", "open"} else ""
         )
+        if goal_cycle and str(cycle_id or "").lstrip("0") == goal_cycle:
+            verdict_html = ('<span class="tm-cycle-goal" '
+                            'title="任务已完成（COMPLETE）；Goal 通过于此 Cycle">'
+                            'Goal 已通过</span>' + verdict_html)
         return clock_html, verdict_html
     # All recorded entries are visible in the card's own scroll area.
     def entry(index: int, *, repeated_start: bool = False) -> str:
@@ -1033,7 +1041,8 @@ def _recent_timeline(raw: Any, source_events: Any = None, *,
         heading = ""
         paging = ""
     return ('<div class="tm-run-events-scroll" tabindex="0" role="region" ' +
-            'aria-label="最近进展按 Cycle 分组，可展开折叠和上下滚动"' + paging + '>' +
+            'aria-label="最近进展按 Cycle 分组，可展开折叠和上下滚动"'
+            + (' data-goal-passed-cycle="' + _e(goal_cycle) + '"' if goal_cycle else '') + paging + '>' +
             heading + '<div class="tm-run-cycle-groups">' + recent + '</div></div>')
 
 
@@ -1828,7 +1837,8 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
                                               cycle_source if catalog else projection.get("recent_events"),
                                               cycle_catalog=catalog if catalog else None,
                                               selected_cycle_id=selected_history_cycle, worker_id=selected_worker,
-                                              cycle_summaries=cycle_summaries)}
+                                              cycle_summaries=cycle_summaries,
+                                              sealed_goal_cycle=master_run.get("sealed_goal_cycle") or "")}
                         </div>
                         <div id="tm-history-important" data-history-panel="important" role="tabpanel" aria-labelledby="tm-history-tab-important" hidden>
                             {_important_timeline(history_events, run=run)}
