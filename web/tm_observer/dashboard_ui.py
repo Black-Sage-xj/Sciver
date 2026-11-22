@@ -1228,6 +1228,7 @@ html[data-sciver-theme="blue"] .tm-content .stage-canvas { background:#061226; }
 """ + LIGHT_STYLE
 
 _ICONS = {
+    "reviews": '<path d="M5 3h14v18H5zM8 8h8M8 12h8M8 16h5"/>',
     "research_chat": '<path d="M4 5h16v11H9l-5 4V5z"/><path d="M8 9h8M8 12h5"/>',
     "run": '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m10 8 5 5-5 5"/>',
     "console": '<rect x="3" y="4" width="18" height="14" rx="2"/><path d="M7 8h4M7 12h10M8 21h8M12 18v3"/>',
@@ -1246,9 +1247,11 @@ _VIEWS = (
     ("workflow", "Workflow", "/workflow-stage-preview/"),
     ("architecture", "Architecture", "/architecture/"),
     ("services", "Services", "/services/"),
+    ("reviews", "审查报告", "/reviews/"),
     ("settings", "Settings", "/settings/"),
 )
 _SUBTITLES = {
+    "reviews": "科研质量与消耗的历史审查",
     "research_chat": "讨论研究问题，审阅并执行具体研究方案",
     "run": "任务列表与实时科研监控",
     "console": "当前任务的科研状态、证据与运行控制",

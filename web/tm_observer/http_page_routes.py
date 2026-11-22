@@ -27,6 +27,21 @@ def get_page(self, path: str, state: dict, ctx: RequestContext, services: RouteS
             page=(query.get("page") or ["1"])[0],
         )
         payload = services._page("Sciver Observatory — Task List", body, active="run").encode("utf-8")
+    elif path == "/reviews" or path.startswith("/reviews/"):
+        from .review_reports import attachment, page_body
+        parts = path.strip("/").split("/")
+        try:
+            if len(parts) == 4 and parts[2] == "files":
+                content = attachment(ctx.notes_state_dir, parts[1], parts[3])
+                self._send(content, "text/plain; charset=utf-8", download_name=parts[3])
+                return True
+            if len(parts) > 2:
+                raise ValueError("unknown review route")
+            body = page_body(ctx.notes_state_dir, parts[1] if len(parts) == 2 else "")
+            payload = services._page("Sciver 审查报告", body, active="reviews").encode("utf-8")
+        except (OSError, ValueError, KeyError):
+            self._send(b"review report not found\n", "text/plain; charset=utf-8", HTTPStatus.NOT_FOUND)
+            return True
     elif path in {"/settings", "/settings/"}:
         params = parse_qs(self.path.partition("?")[2], keep_blank_values=True)
         selected_id = (params.get("observer_id") or [""])[0]
