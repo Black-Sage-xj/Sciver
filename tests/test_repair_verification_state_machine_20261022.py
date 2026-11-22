@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from theory_master.backends import FakeBackend
+from theory_master.backend_fakes import _fixture_prompt_context
 from theory_master.contracts import role_contract
 from theory_master.contract_closure import close_agent_output
 from theory_master.prompt_stages import stage_context
@@ -34,9 +35,7 @@ class RepairFixtureBackend(FakeBackend):
         self.verification_calls = 0
 
     def invoke(self, role, prompt, thread_id, model, provider):
-        context = json.JSONDecoder().raw_decode(
-            prompt.split("Context:\n", 1)[1]
-        )[0] if "Context:\n" in prompt else {}
+        context = _fixture_prompt_context(prompt)
         if role == "challenger" and "repaired_candidate" in context:
             self.verification_calls += 1
             thread = self.ensure_thread(role, thread_id, model, provider)
@@ -131,7 +130,7 @@ class BoundedRepairVerificationTest(unittest.TestCase):
             verified_test = None
 
             def invoke(self, role, prompt, thread_id, model, provider):
-                context = json.JSONDecoder().raw_decode(prompt.split("Context:\n", 1)[1])[0]
+                context = _fixture_prompt_context(prompt)
                 if role == "challenger" and "repaired_candidate" in context:
                     self.verified_test = context["repaired_candidate"]["frozen_objective"]["decisive_test"]
                 thread, text = super().invoke(role, prompt, thread_id, model, provider)

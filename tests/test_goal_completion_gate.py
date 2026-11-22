@@ -7,6 +7,7 @@ from pathlib import Path
 
 from theory_master.contracts import role_contract
 from theory_master.core import FakeBackend, TaskSpec, Workflow, list_cycle_dirs
+from theory_master.backend_fakes import _fixture_prompt_context
 from theory_master.task import bootstrap
 
 
@@ -18,9 +19,7 @@ def _stage(prompt: str) -> str:
 
 
 def _context(prompt: str) -> dict:
-    if "Context:\n" not in prompt:
-        return {}
-    return json.JSONDecoder().raw_decode(prompt.split("Context:\n", 1)[1])[0]
+    return _fixture_prompt_context(prompt)
 
 
 def _make_task(root: Path, *, max_cycles: int = 3) -> TaskSpec:
@@ -310,7 +309,11 @@ class GoalCompletionGateTest(unittest.TestCase):
             self.assertEqual(graph["goal_gate_attention"][0][3],
                              "the deterministic smoke trajectory does not yet satisfy the task Final Gate")
             self.assertIn("Read all relevant goal_gate_attention rows",
+                          backend.lead_prompts[0])
+            self.assertIn("previously delivered procedure and output contract",
                           backend.lead_prompts[1])
+            self.assertIn("goal_gate_attention", backend.lead_prompts[1])
+            self.assertIn(graph["goal_gate_attention"][0][3], backend.lead_prompts[1])
             self.assertEqual(backend.challenger_graphs[1]["goal_gate_attention"],
                              graph["goal_gate_attention"])
             self.assertIn("Read current Goal/Contract/Final Gate and goal_gate_attention with linked Outcomes",

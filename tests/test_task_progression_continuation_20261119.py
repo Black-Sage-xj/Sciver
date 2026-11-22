@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from theory_master.backend_fakes import _fixture_prompt_context
 from theory_master.native_goal import (
     NativeGoalExecutionLimit, NativeGoalIncomplete, NativeGoalResult, read_goal_findings,
 )
@@ -32,6 +33,10 @@ def _stage(prompt):
 
 
 def _context(prompt):
+    return _fixture_prompt_context(prompt)
+
+
+def _wire_context(prompt):
     return json.JSONDecoder().raw_decode(prompt.split("Context:\n", 1)[1])[0] if "Context:\n" in prompt else {}
 
 
@@ -78,7 +83,7 @@ class ProgressionBackend(quota_fixture.GoalQuotaBackend):
         stage, context = _stage(prompt), _context(prompt)
         cycle = str(self.cycle_id)
         self.inputs.append({"cycle": cycle, "role": role, "stage": stage,
-                            "thread": thread_id, "context": context})
+                            "thread": thread_id, "context": context, "wire_context": _wire_context(prompt)})
         if cycle == "2" and role == "research_lead" and stage == "frontier_proposal":
             previous = Path(self.cwd).parent.parent / "1"
             self.old_state_at_replan = (previous / "research_state.json").read_bytes()
@@ -173,7 +178,12 @@ def test_run_replans_after_formal_input_limit_and_reaches_independent_goal_gate(
         history = row["context"]["recent_execution_limits"]
         assert history[0]["cycle_id"] == "1" and history[0]["assessment_state"] == "not_adjudicated"
         assert history[0]["frozen_objective_sha256"] == frozen_science_digest(backend.native_science["1"])
-        assert row["thread"] != _rows(backend, cycle=1, role=role, stage=stage)[0]["thread"]
+        previous_thread = _rows(backend, cycle=1, role=role, stage=stage)[0]["thread"]
+        if role == "research_lead":
+            assert row["thread"] == previous_thread
+            assert "lead_stage_update" in row["wire_context"]
+        else:
+            assert row["thread"] != previous_thread
     _assert_old_archive_unchanged(backend, cycles[0])
 
 
@@ -275,7 +285,12 @@ def test_run_replans_after_qualification_exhaustion_without_reopening_old_retry(
         assert history and all(item["cycle_id"] == "1" for item in history)
         assert all(item["review"]["verdict"] == "reject" for item in history)
         assert all(item["frozen_objective_sha256"] == frozen_science_digest(item["frozen_objective"]) for item in history)
-        assert row["thread"] != _rows(backend, cycle=1, role=role, stage=stage)[0]["thread"]
+        previous_thread = _rows(backend, cycle=1, role=role, stage=stage)[0]["thread"]
+        if role == "research_lead":
+            assert row["thread"] == previous_thread
+            assert "lead_stage_update" in row["wire_context"]
+        else:
+            assert row["thread"] != previous_thread
     _assert_old_archive_unchanged(backend, cycles[0])
 
 
