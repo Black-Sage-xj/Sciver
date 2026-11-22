@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import threading
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
@@ -779,13 +780,21 @@ console.log('trackpad pan/pinch assertions passed');
         second = registry / "versions" / job_id / "attempt-0002"
         second.mkdir()
         (second / "status.json").write_text('{"state":"composing"}')
+        from theory_master.final_report import _lock
         for state in ("queued", "running", "failed"):
             job["state"] = state;job_path.write_text(json.dumps(job))
-            current = final_report_descriptor(self.research)
+            # A running writer owns the generation lock, including CLI writers
+            # without a service receipt. Merely persisting 'running' is stale.
+            with _lock(registry / f"{job_id}.lock") if state == "running" else nullcontext():
+                current = final_report_descriptor(self.research)
             self.assertTrue(current["available"])
             self.assertEqual(current["version"], old_version)
             self.assertEqual(current["latest_job_state"], state)
             self.assertEqual(read_final_report(self.research, version=old_version)["content"], old_body)
+        job["state"] = "running";job_path.write_text(json.dumps(job))
+        interrupted = final_report_descriptor(self.research)
+        self.assertTrue(interrupted["available"])
+        self.assertEqual(interrupted["latest_job_state"], "failed")
         self._final_report_fixture(str(second))
         body = (second / "report.md").read_text() + "\nA later clarified scope.\n"
         (second / "report.md").write_text(body)

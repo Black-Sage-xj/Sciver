@@ -253,7 +253,8 @@ def _publications(research_root: Path) -> tuple[list[tuple[dict[str, Any], Path]
                 if (job.get("schema") != "sciver/final-report-job/v1" or job.get("job_id") != path.stem
                         or job.get("research_root") != str(Path(research_root).resolve())):
                     continue
-                jobs.append(job)
+                from .final_report import report_job_status
+                jobs.append(report_job_status(research_root, job))
                 # A regeneration resets output_dir while its new attempt runs.
                 # Discover completed attempts through the validated job binding
                 # so earlier versions remain readable throughout that window.

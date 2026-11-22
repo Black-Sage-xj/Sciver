@@ -397,57 +397,107 @@ def test_task_report_queue_rejects_symlink_registry(tmp_path: Path):
     assert list(outside.iterdir()) == []
 
 
-def test_task_report_dispatch_is_detached_idempotent_and_does_not_start_cycle(tmp_path: Path, monkeypatch):
-    from theory_master import final_report
-    from theory_master import runtime_manager
+def _registered_report_spec(tmp_path):
     spec = _final_report_spec(tmp_path)
-    marker = tmp_path / ".theory-master/task.json"
-    marker.parent.mkdir(exist_ok=True)
-    marker.write_text("{}")
+    (tmp_path / ".theory-master").mkdir(exist_ok=True)
+    (tmp_path / ".theory-master/task.json").write_text("{}")
+    return spec
+
+
+def test_task_report_dispatch_uses_independent_service_and_preserves_environment(tmp_path: Path, monkeypatch):
+    from theory_master import final_report, worker_launch
+    spec = _registered_report_spec(tmp_path)
     launched = []
-    def popen(command, **kwargs):
+    def launch(command, **kwargs):
         launched.append((command, kwargs))
-        return SimpleNamespace(pid=12345)
-    monkeypatch.setattr(final_report.subprocess, "Popen", popen)
-    monkeypatch.setenv("PYTHONPATH", "/synthetic/existing-import-root")
-    monkeypatch.setattr(runtime_manager, "process_start_ticks", lambda pid: 456)
-    monkeypatch.setattr(runtime_manager, "process_identity_alive", lambda *args: False)
+        return "tm-final-report-1234"
+    monkeypatch.setattr(worker_launch, "_launch_detached_service", launch)
+    monkeypatch.setattr(worker_launch, "_task_scoped_process_env", lambda root: {
+        "PYTHONPATH": "/synthetic/existing-import-root", "THEORY_MASTER_EMAIL_TERMINAL": "0"})
+    monkeypatch.setattr(final_report, "_launcher_alive", lambda receipt: bool(receipt))
     result = final_report.launch_final_report_job(spec)
     assert result["launch_status"] == "started"
     command, options = launched[0]
     assert command[1:] == ["-m", "theory_master.final_report", "--task", str(tmp_path), "--generate"]
-    assert options["start_new_session"] is True
-    assert options["stdin"] == final_report.subprocess.DEVNULL
+    assert options["kind"] == "final-report"
     source_root = str(Path(final_report.__file__).resolve().parent.parent)
     assert options["env"]["PYTHONPATH"] == source_root + final_report.os.pathsep + "/synthetic/existing-import-root"
+    assert options["env"]["THEORY_MASTER_EMAIL_TERMINAL"] == "0"
     assert result["launcher"]["source_root"] == source_root
-    monkeypatch.setattr(runtime_manager, "process_identity_alive", lambda *args: True)
+    assert result["launcher"]["unit"] == "tm-final-report-1234"
     assert final_report.launch_final_report_job(spec)["launch_status"] == "running"
     assert len(launched) == 1
 
 
 def test_failed_report_dispatch_requires_explicit_retry_and_remains_idempotent(tmp_path: Path, monkeypatch):
-    from theory_master import final_report, runtime_manager
-    spec = _final_report_spec(tmp_path)
-    marker = tmp_path / ".theory-master/task.json"
-    marker.parent.mkdir(exist_ok=True)
-    marker.write_text("{}")
+    from theory_master import final_report, worker_launch
+    spec = _registered_report_spec(tmp_path)
     job = final_report.ensure_final_report_job(spec)
     path = final_report.report_registry(spec) / "jobs" / f"{job['job_id']}.json"
     job.update(state="failed", attempt=1)
     final_report.atomic_json(path, job)
     launched = []
-    monkeypatch.setattr(final_report.subprocess, "Popen",
-                        lambda command, **kwargs: launched.append(command) or SimpleNamespace(pid=12345))
-    monkeypatch.setattr(runtime_manager, "process_start_ticks", lambda pid: 456)
-    monkeypatch.setattr(runtime_manager, "process_identity_alive", lambda *args: False)
+    monkeypatch.setattr(worker_launch, "_launch_detached_service",
+                        lambda command, **kwargs: launched.append(command) or "tm-final-report-1234")
+    monkeypatch.setattr(final_report, "_launcher_alive", lambda receipt: bool(receipt))
     assert final_report.launch_final_report_job(spec)["state"] == "failed"
     assert not launched
     assert final_report.launch_final_report_job(spec, retry_failed=True)["launch_status"] == "started"
     assert json.loads(path.read_text())["attempt"] == 1
-    monkeypatch.setattr(runtime_manager, "process_identity_alive", lambda *args: True)
     assert final_report.launch_final_report_job(spec, retry_failed=True)["launch_status"] == "running"
     assert len(launched) == 1
+
+
+@pytest.mark.parametrize("state", ["running", "queued"])
+def test_dead_consumer_is_retryable_and_read_projection_does_not_write(tmp_path, monkeypatch, state):
+    from theory_master import final_report, worker_launch
+    from theory_master.final_report_publication import final_report_descriptor
+    spec = _registered_report_spec(tmp_path)
+    job = final_report.ensure_final_report_job(spec)
+    registry = final_report.report_registry(spec)
+    path = registry / "jobs" / f"{job['job_id']}.json"
+    job.update(state=state, attempt=1)
+    final_report.atomic_json(path, job)
+    final_report.atomic_json(registry / f"launch-{job['job_id']}.json", {"pid": 12345, "pid_start_ticks": 12})
+    monkeypatch.setattr(final_report, "_launcher_alive", lambda receipt: False)
+    before = path.read_bytes(), spec.graph_database.read_bytes()
+    assert final_report_descriptor(tmp_path)["state"] == "failed"
+    assert (path.read_bytes(), spec.graph_database.read_bytes()) == before
+    assert final_report.launch_final_report_job(spec)["state"] == "failed"
+    assert json.loads(path.read_text())["retryable"] is True
+    monkeypatch.setattr(worker_launch, "_launch_detached_service", lambda *a, **kw: "tm-final-report-retry")
+    assert final_report.launch_final_report_job(spec, retry_failed=True)["launch_status"] == "started"
+    assert spec.graph_database.read_bytes() == before[1]
+
+
+def test_direct_cli_generation_lock_prevents_false_orphan_and_second_launch(tmp_path, monkeypatch):
+    from theory_master import final_report, worker_launch
+    spec = _registered_report_spec(tmp_path)
+    job = final_report.ensure_final_report_job(spec)
+    registry = final_report.report_registry(spec)
+    path = registry / "jobs" / f"{job['job_id']}.json"
+    job.update(state="running", attempt=1)
+    final_report.atomic_json(path, job)
+    monkeypatch.setattr(worker_launch, "_launch_detached_service", lambda *a, **kw: pytest.fail("duplicate launch"))
+    with final_report._lock(registry / f"{job['job_id']}.lock"):
+        assert final_report.report_job_status(tmp_path, job)["state"] == "running"
+        assert final_report.launch_final_report_job(spec, retry_failed=True)["launch_status"] == "running"
+    assert json.loads(path.read_text()) == job
+    with final_report._lock(registry / "dispatch.lock"):
+        assert final_report.report_job_status(tmp_path, job)["state"] == "running"
+
+
+def test_service_probe_recognizes_startup_and_failure_without_saved_pid(monkeypatch):
+    from theory_master import final_report, runtime_manager
+    monkeypatch.setattr(runtime_manager, "process_identity_alive", lambda *a: False)
+    for active, expected in [("activating", True), ("active", True), ("failed", False),
+                             ("inactive", False), ("", True)]:
+        monkeypatch.setattr(final_report.subprocess, "run", lambda *a, **kw: SimpleNamespace(stdout=active))
+        assert final_report._launcher_alive({"unit": "tm-final-report-1234"}) is expected
+    def unavailable(*a, **kw):
+        raise FileNotFoundError("systemctl")
+    monkeypatch.setattr(final_report.subprocess, "run", unavailable)
+    assert final_report._launcher_alive({"unit": "tm-final-report-1234"}) is True
 
 
 def test_completion_read_only_repairs_queue_and_dispatch_failure_is_isolated(tmp_path: Path, monkeypatch):

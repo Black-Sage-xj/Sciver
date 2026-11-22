@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 
-def _launch_detached_service(args: list[str], *, root: Path, env: dict[str, str], output: Any, kind: str) -> None:
+def _launch_detached_service(args: list[str], *, root: Path, env: dict[str, str], output: Any, kind: str) -> str:
     """Launch each TM executor as its own systemd user service, not an Observer child.
 
     setsid() does not leave the Observer systemd cgroup. A scope launcher may
@@ -27,6 +27,7 @@ def _launch_detached_service(args: list[str], *, root: Path, env: dict[str, str]
                           stderr=subprocess.STDOUT, check=False, timeout=15)
     if proc.returncode:
         raise RuntimeError(f"independent TM service failed to start ({kind}, exit {proc.returncode})")
+    return unit
 
 
 def _task_scoped_process_env(root: Path) -> dict[str, str]:

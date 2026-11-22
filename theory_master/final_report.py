@@ -81,6 +81,67 @@ def _read_job(path: Path) -> dict[str, Any]:
     return job
 
 
+def _lock_held(path: Path) -> bool:
+    """Probe existing locks without creating files on report read paths."""
+    if path.is_symlink():
+        raise ValueError("final report lock must not be a symbolic link")
+    if not path.is_file():
+        return False
+    with path.open("r", encoding="utf-8") as stream:
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+    return False
+
+
+def _launcher_alive(launcher: dict[str, Any]) -> bool:
+    from .runtime_manager import process_identity_alive
+    if process_identity_alive(launcher.get("pid"), launcher.get("pid_start_ticks")):
+        return True
+    unit = launcher.get("unit")
+    if not isinstance(unit, str) or not unit.startswith("tm-final-report-") or any(
+        char not in "abcdefghijklmnopqrstuvwxyz0123456789-." for char in unit
+    ):
+        return False
+    try:
+        status = subprocess.run(["systemctl", "--user", "show", unit, "--property=ActiveState", "--value"],
+            capture_output=True, text=True, timeout=3, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        # An unavailable service manager is not proof that its service died.
+        return True
+    # Missing units are reported as inactive. Empty/unrecognized output can
+    # indicate a disconnected user bus, so do not declare a live job dead.
+    return status.stdout.strip() not in {"inactive", "failed", "unknown"}
+
+
+def report_job_status(research_root: Path, job: dict[str, Any], *, dispatch_locked: bool = False,
+                      generation_locked: bool = False) -> dict[str, Any]:
+    """Project interrupted consumers as failed; never launch or mutate on reads.
+
+    The generation lock also protects direct CLI consumers with no dispatch
+    receipt. A dispatch lock protects the service startup-to-receipt window.
+    """
+    if job.get("state") not in {"queued", "running"}:
+        return job
+    registry = Path(research_root) / ".theory-master" / "final-reports"
+    receipt = registry / f"launch-{job['job_id']}.json"
+    if receipt.is_symlink():
+        raise ValueError("unsafe report launcher receipt")
+    if (not generation_locked and _lock_held(registry / f"{job['job_id']}.lock")) or (
+        not dispatch_locked and _lock_held(registry / "dispatch.lock")
+    ):
+        return job
+    previous = json.loads(receipt.read_text(encoding="utf-8")) if receipt.is_file() else {}
+    if _launcher_alive(previous):
+        return job
+    if job.get("state") == "queued" and not previous:
+        return job
+    return {**job, "state": "failed", "retryable": True,
+            "error": "Final report consumer exited before recording a result; retry report generation."}
+
+
 def ensure_final_report_job(spec: Any, *, database: Path | None = None) -> dict[str, Any] | None:
     """Idempotently enqueue an SQLite-sealed task without importing a model client.
 
@@ -165,40 +226,48 @@ def launch_final_report_job(spec: Any, *, database: Path | None = None,
     retry, and this dispatcher never resumes or starts a scientific Cycle.
     """
     job = ensure_final_report_job(spec, database=database)
-    if job is None or job["state"] not in ({"queued", "failed"} if retry_failed else {"queued"}):
+    if job is None:
         return job
     root = Path(spec.research_root).resolve()
     if not (root / ".theory-master" / "task.json").is_file():
         return {**job, "launch_status": "task_binding_unavailable"}
     registry = report_registry(spec)
     receipt = registry / f"launch-{job['job_id']}.json"
-    from .runtime_manager import process_identity_alive, process_start_ticks
     with _lock(registry / "dispatch.lock"):
-        job = _read_job(registry / "jobs" / f"{job['job_id']}.json")
+        path = registry / "jobs" / f"{job['job_id']}.json"
+        try:
+            with _lock(registry / f"{job['job_id']}.lock", blocking=False):
+                job = _read_job(path)
+                reconciled = report_job_status(root, job, dispatch_locked=True, generation_locked=True)
+                if reconciled != job:
+                    job = {**reconciled, "updated_at": _now(), "finished_at": _now()}
+                    atomic_json(path, job)
+        except BlockingIOError:
+            return {**_read_job(path), "launch_status": "running"}
         if job["state"] not in ({"queued", "failed"} if retry_failed else {"queued"}):
             return job
         if receipt.is_symlink():
             raise ValueError("unsafe report launcher receipt")
         if receipt.is_file():
             previous = json.loads(receipt.read_text(encoding="utf-8"))
-            if process_identity_alive(previous.get("pid"), previous.get("pid_start_ticks")):
+            if _launcher_alive(previous):
                 return {**job, "launch_status": "running", "launcher": previous}
         if job["state"] == "failed":
             job.update(state="queued", updated_at=_now())
-            atomic_json(registry / "jobs" / f"{job['job_id']}.json", job)
+            atomic_json(path, job)
         command = [sys.executable, "-m", "theory_master.final_report", "--task", str(root), "--generate"]
         source_root = str(Path(__file__).resolve().parent.parent)
-        environment = dict(os.environ)
+        from .worker_launch import _launch_detached_service, _task_scoped_process_env
+        environment = _task_scoped_process_env(root)
         previous_path = environment.get("PYTHONPATH", "")
         environment["PYTHONPATH"] = source_root + (os.pathsep + previous_path if previous_path else "")
         log_path = registry / f"consumer-{job['job_id']}.log"
         if log_path.is_symlink():
             raise ValueError("unsafe report consumer log")
         with log_path.open("ab") as log:
-            process = subprocess.Popen(command, cwd=registry, stdin=subprocess.DEVNULL,
-                stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True,
-                env=environment)
-        launcher = {"pid": process.pid, "pid_start_ticks": process_start_ticks(process.pid),
+            unit = _launch_detached_service(command, root=registry, env=environment,
+                                            output=log, kind="final-report")
+        launcher = {"unit": unit,
                     "started_at": _now(), "log_path": str(log_path), "source_root": source_root}
         atomic_json(receipt, launcher)
     return {**job, "launch_status": "started", "launcher": launcher}
@@ -227,7 +296,9 @@ def generate_final_report(spec: Any, backend: Any = None, *, database: Path | No
             job = {key: job[key] for key in (
                 "schema", "job_id", "created_at", "attempt", "research_root", "plan_path",
                 "graph_database", "goal_terminal")}
+            from .runtime_manager import process_start_ticks
             job.update(state="running", attempt=int(job.get("attempt", 0)) + 1,
+                       consumer_pid=os.getpid(), consumer_start_ticks=process_start_ticks(os.getpid()),
                        started_at=_now(), updated_at=_now())
             atomic_json(path, job)
             destination = (Path(output_dir).expanduser().resolve() if output_dir is not None
