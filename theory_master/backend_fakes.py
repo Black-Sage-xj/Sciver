@@ -29,6 +29,10 @@ def _fixture_prompt_context(prompt: str) -> dict[str, Any]:
 def _fake_sqlite_lineage(context: dict[str, Any]) -> dict[str, Any]:
     """Offline Lead fixture derives H lineage only from the injected SQLite view."""
     graph = context.get("agent_graph") if isinstance(context.get("agent_graph"), dict) else {}
+    followup = context.get("judge_followup")
+    if followup:
+        return {"lineage_main_node_id": followup["hypothesis_id"], "lineage_other_node_ids": [],
+                "evolution_operator": "specialize"}
     frontiers = graph.get("current_frontiers") or []
     active = [row for row in frontiers if isinstance(row, dict)
               and "active" in (row.get("states") or []) and row.get("id")]
@@ -126,7 +130,8 @@ class FakeBackend:
                 value = {"selected_candidate_id": selected,
                          "selection_reason": "prefer the qualified deterministic smoke candidate"}
             else:
-                value = {"candidates": [{"hypothesis": "smoke-h",
+                value = {"candidates": [{"hypothesis": ("A controlled follow-up resolves the gap of " + context["judge_followup"]["hypothesis_id"]
+                                                         if context.get("judge_followup") else "smoke-h"),
                                           "scope": "deterministic offline smoke scope",
                                           "why_now": "deterministic fixture is immediately executable",
                                           "transition": {"prior_gap": "The offline Goal still needs its bounded smoke claim checked.",
@@ -241,7 +246,8 @@ class CanonicalFakeBackend(FakeBackend):
             if stage == "frontier_proposal":
                 return thread, json.dumps({
                     "candidates": [{
-                        "hypothesis": "canonical smoke claim",
+                        "hypothesis": ("Canonical follow-up tests the gap of " + context["judge_followup"]["hypothesis_id"]
+                                       if context.get("judge_followup") else "canonical smoke claim"),
                         "scope": "deterministic canonical smoke scope",
                         "why_now": "the deterministic canonical fixture is immediately executable",
                         "transition": {"prior_gap": "The canonical fixture Goal still needs a bounded claim checked.",

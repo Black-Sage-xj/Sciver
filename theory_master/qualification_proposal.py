@@ -40,6 +40,11 @@ class QualificationProposal:
                 current_cycle=str(self.session.run_id),
             ),
         }
+        from .judge_followup import qualification_followup
+        followup = qualification_followup(self.session)
+        if followup:
+            self.session.preparation_feedback["judge_followup"] = followup
+            self.session.preparation_feedback["entry_hypothesis_id"] = followup["hypothesis_id"]
         self.session.prior_frontier: dict[str, Any] = {}
 
     def title_for(self, hypothesis: str):
@@ -423,6 +428,13 @@ class QualificationProposal:
                 )
             except ValueError as exc:
                 raise RecoveryStop(str(exc)) from exc
+            if claimed and self.session.preparation_feedback.get("judge_followup"):
+                # An explicit human conjecture owns its own scientific lineage.
+                for key in ("judge_followup", "entry_hypothesis_id"):
+                    self.session.preparation_feedback.pop(key, None)
+                    self.session.lead_context.pop(key, None)
+                self.session.state.pop("incoming_judge_followup", None)
+                self.session.owner._persist(self.session.state)
             if direction:
                 self.session.lead_context["operator_guidance"] = direction
             resumed_literature = (
@@ -437,7 +449,8 @@ class QualificationProposal:
 
             previous_stop = (
                 preceding_qualification_stop(self.session)
-                if not direction and resumed_literature is None else None
+                if not direction and resumed_literature is None
+                and not self.session.preparation_feedback.get("judge_followup") else None
             )
             supervisor_frontier = (
                 review_exhausted_frontier(self.session, previous_stop)

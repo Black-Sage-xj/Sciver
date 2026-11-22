@@ -618,6 +618,7 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
             "registered_fixture_inputs": context.get("registered_fixture_inputs"),
             "prequalification_holdout": context.get("prequalification_holdout"),
             "qualification_feedback": feedback,
+            "judge_followup": context.get("judge_followup"),
             "lead_literature_result": _literature_digest(context.get("lead_literature_result")),
             "workspace_access": _workspace_access(context, qualification_role="research_lead"),
         }.items() if value not in (None, "", [], {})}
@@ -678,6 +679,7 @@ def stage_context(role: str, stage: str, context: Mapping[str, Any], *, continua
         # Candidate lineage is supplied only from the canonical SQLite graph.
         graph_access = _graph_access(context)
         projected = {
+            "judge_followup": context.get("judge_followup"),
             "goal": context.get("goal"),
             "research_contract": context.get("research_contract"),
             "final_gate": context.get("final_gate"),

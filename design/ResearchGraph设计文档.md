@@ -5,7 +5,7 @@
 ## 科学身份与裁决
 
 - 每个**新**科学 Cycle 锁定一个新的、可独立裁决的冻结 H。新 H 可从一个或多个旧 H 产生，须说明相对来源的可证伪科学增量，来源分为唯一 `lineage_main_node_id` 和 0–2 个 `lineage_other_node_ids`；由 Lead 选择 main，只有 main 的有类型 H→H 边参与分支布局，其它来源保留在 SQLite 与详情中，网页聚焦目标节点时以虚线显示。换字、换方法或重复检验本身不构成增量。
-- 同一 Cycle 的 Investigator 轮次、Judge rework、恢复与重试复用其已锁定 H，不创建第二个 H。`hypothesis_cycle_owners` 记录新规则下的 Cycle↔H 一对一身份。
+- 同一 Cycle 的 Investigator 操作、协议重试与恢复复用已锁定 H。Judge 因证据不足提出的异议连同来源 H 保存在该轮；该 H 无终局科学裁决。下一 Cycle 由 Lead 基于反馈提出候选，经正常资格审查和锁定后以来源 H 为主前序创建新节点。已进入旧协议同轮 Judge 返工的历史身份继续有效。`hypothesis_cycle_owners` 记录新规则下的 Cycle↔H 一对一身份。
 - 每个有终局科学裁决的 Cycle 恰有一条 **Cycle Outcome**。它含原 Judge verdict、冻结检验、理由、发现、问题、边界、Evidence、报告链接和完整 Markdown 汇总。`supported/rejected/open` 只覆盖该轮冻结命题及 scope。一个 Cycle 的多次尝试和中间决定是过程历史，不产生多个终局 Outcome。
 - 运行中、失败、中断、取消或仅运维收尾而无科学裁决的 Cycle 保留运行记忆，但没有科学 Outcome；不得用 `open` 补齐。Goal Completion 是独立任务级裁决。
 - 历史宽泛 H 可以关联多个不同 Cycle Outcome。H 的整体 `scientific_status` 是单独的历史/全命题判断，不能从最新或最强局部裁决自动推断。一个旧 H 下的 supported 与 rejected 可以同时存在，分别指向不同冻结命题。

@@ -13,7 +13,7 @@ The graph records how research moves from hypotheses to evidence and conclusions
 ## 1. Hypothesis, Cycle, and Outcome
 
 - **Hypothesis (H)**: a testable scientific proposition with conditions, scope, and decision criteria.
-- **Cycle**: one investigation of a frozen proposition. Each new scientific Cycle freezes a new H; recovery, retries, and Judge rework within that Cycle retain the same H.
+- **Cycle**: one investigation of a frozen proposition. Each new scientific Cycle freezes a new H. A valid Judge assessment ends the experiment. If decisive evidence is missing, the source H keeps its evidence and has no terminal verdict. The next Cycle’s Lead receives the original objection. A qualified successor links back to the source H as its main parent.
 - **Outcome**: the Judge's terminal scientific verdict for that Cycle, with rationale, findings, open questions, boundaries, evidence, and report. Each terminally adjudicated Cycle has exactly one Outcome.
 
 Outcomes are embedded in H cards. Broad historical hypotheses may contain several Cycle Outcomes. Read each frozen proposition and scope: a local result applies to its own scope, while assessment of the whole H is recorded separately.

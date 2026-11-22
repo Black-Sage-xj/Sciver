@@ -113,6 +113,8 @@ Without `--prepare-only`, `test` starts real model-based research and uses accou
 
 Fresh Test0 tasks declare a public JSON submission schema. Before Goal completion, Sciver validates the formally registered artifact against that schema; missing fields return to the original Investigator within its existing thread, budget and bounded correction allowance. Scientific acceptance still belongs to the Judge. Historical sealed tasks are preserved.
 
+Each research Cycle tests one locked hypothesis. The Judge’s scientific assessment ends that experiment. When decisive evidence is missing, the next Cycle’s Research Lead receives the original objection and proposes a linked hypothesis for Challenger review. The earlier hypothesis has no terminal verdict. A terminal result of `supported`, `rejected` or `open` proceeds to a separate task-completion assessment.
+
 ### Before starting real research
 
 - Release users should first run `python -m pip install --find-links "$HOME/sciver-install/v0.1.1" 'sciver[sdk]==0.1.1'` in the activated environment to install model-client dependencies. This step downloads extra dependencies; see [Wheel installation](docs/distribution.md) for fully offline deployment. The source development installation already includes the SDK dependencies.

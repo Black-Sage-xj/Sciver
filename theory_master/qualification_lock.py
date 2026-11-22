@@ -29,6 +29,10 @@ class QualificationLockCommit:
             self.session.selected_id
         ]
         _require_reviewed_candidate(self.session.selected, self.session.selected_review)
+        from .judge_followup import candidate_problem
+        problem = candidate_problem(self.session.selected, self.session.preparation_feedback.get("judge_followup"))
+        if problem:
+            self.session.review.stop_unqualified(problem, [self.session.selected_id])
         self.session.decision = str(
             self.session.final_selection.get("decision") or ""
         ).strip()

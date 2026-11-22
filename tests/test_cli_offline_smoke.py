@@ -33,8 +33,12 @@ class OfflineSmokeTests(unittest.TestCase):
             plan = (artifact_root / "research_plan.md").read_text()
             self.assertIn("# Final Gate\n", plan)
             config = json.loads((artifact_root / "theory-master.config.json").read_text())
-            states = list(Path(config["research_root"]).glob("*/research_state.json"))
-            self.assertTrue(states)
-            state = json.loads(states[-1].read_text())
-            self.assertEqual(state["branches"][-1]["status"], "supported")
+            states = sorted(
+                (json.loads(path.read_text()) for path in Path(config["research_root"]).glob("*/research_state.json")),
+                key=lambda state: state["cycle_number"],
+            )
+            self.assertEqual(states[0]["closure_reason"], "judge_followup_required")
+            self.assertIsNone(states[0]["scientific_verdict"])
+            self.assertEqual(states[1]["incoming_judge_followup"]["hypothesis_id"], states[0]["hypothesis_lock"]["id"])
+            self.assertEqual(states[-1]["branches"][-1]["status"], "supported")
             self.assertFalse((isolated / "home" / ".codex" / "auth.json").exists())

@@ -293,6 +293,8 @@ class CycleRunner:
         judge, verdict = self.owner._investigate_and_judge(
             self.state, self.branch, self.finalized
         )
+        if self.state.get("judge_followup"):
+            return
         if self.state.get("operational_only_closure"):
             self.owner._finalize_non_scientific_cycle(
                 self.state, self.branch, self.active_title, self.active_hypothesis

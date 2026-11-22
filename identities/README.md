@@ -6,7 +6,7 @@ Role Core / Identity 只维护同一角色所有 Stage 共用的身份、权限�
 
 Stage 由实际 role / phase / mode 决定。Stage Card 的目标、权限、出口与内嵌 procedure 由 `stage_definition_text()` 一次渲染；已取消独立 `PROCEDURE_CARDS` 注册表。初始调用和新线程恢复接收完整当前阶段定义；同线程续轮仍明确当前阶段，并仅投影必要的新对象或身份引用。稳定科学原则放在 Identity，阶段定义无需重复整个角色权限。
 
-Lead 的提案、有限修订、合格候选选择有独立边界；综合使用新的认识 episode，前沿维护只标记现有 H。Challenger 的原审查和一次修订复核不能互相替代。Investigator 的 investigate / integrate_literature / judge_rework 使用 Native Goal，普通 Stage 文本仅供观察或离线兼容；preserve_research 是正式普通 Stage，只保全既有工作。Literature 每个独立外部任务使用新线程；Judge 证据裁决与任务 Final Gate 裁决由不同 Stage 界定；Reporter 的唯一 report 返回完整科学报告正文和标题。
+Lead 的提案、有限修订、合格候选选择有独立边界；综合使用新的认识 episode，前沿维护只标记现有 H。Challenger 的原审查和一次修订复核不能互相替代。Investigator 的 investigate / integrate_literature 使用 Native Goal，旧协议在办 Cycle 的 judge_rework 也使用 Native Goal，普通 Stage 文本仅供观察或离线兼容；preserve_research 是正式普通 Stage，只保全既有工作。Literature 每个独立外部任务使用新线程；Judge 证据裁决与任务 Final Gate 裁决由不同 Stage 界定；Reporter 的唯一 report 返回完整科学报告正文和标题。
 
 任务范围以 Research Plan 的 Goal / Research Contract / Final Gate 为准，Scientific Model 承载精简长期认识。SQLite 与正式裁决记录保存科学状态；Canvas 是浏览投影。阶段从这些实际要求决定适用的覆盖、比较及证据条件，不对开放科研统一强加代际序列或经验匹配要求。展示字段限制由 Contract 常量生成，失败回退属于 SDK。
 

@@ -137,6 +137,8 @@ def _completed_scientific_verdict(folder: Path, selected: str) -> str | None:
     verdict = str(state.get("scientific_verdict") or "").strip().lower()
     if state.get("assessment_state") == "terminal" and verdict in {"supported", "rejected", "open"}:
         return verdict
+    if state.get("closure_reason") == "judge_followup_required" and state.get("judge_followup"):
+        return "judge_followup"
     # Operationally completed without a scientific Judge: never invent Open.
     return "unadjudicated"
 

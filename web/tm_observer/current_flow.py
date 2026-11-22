@@ -79,19 +79,13 @@ CURRENT_FLOW_MERMAID = r"""flowchart TD
 
     CANVAS_H --> INV_CTX
 
-    INV_CTX["SDK：组装 Investigator Context<br/>─────────────<br/>Scientific payload 仍最小：<br/>• hypothesis<br/>• scope（若有）<br/>• decisive_test<br/><br/>按需 handoff：<br/>• cannot_repair reason + frozen blockers（仅适用时）<br/>• previous_scientific_delta（跨 executor / fresh recovery）<br/>• Judge objection（仅 rework）<br/>• actionable-no-progress corrective directive（仅首次重试）<br/><br/>研究仍受 frozen_objective 与 allowed inputs 约束<br/><br/>Runtime navigation boundary：<br/>• Task root = scientific read anchor<br/>• Cycle workspace = write root<br/>• 空 Evidence Registry ≠ 输入缺失<br/><br/>不注入文件清单 / source manifest payload<br/>不注入 hypothesis_ref / C-1 / Evidence refs"]
+    INV_CTX["SDK：组装 Investigator Context<br/>─────────────<br/>Scientific payload 仍最小：<br/>• hypothesis<br/>• scope（若有）<br/>• decisive_test<br/><br/>按需 handoff：<br/>• cannot_repair reason + frozen blockers（仅适用时）<br/>• previous_scientific_delta（跨 executor / fresh recovery）<br/>• actionable-no-progress corrective directive（仅首次重试）<br/><br/>研究仍受 frozen_objective 与 allowed inputs 约束<br/><br/>Runtime navigation boundary：<br/>• Task root = scientific read anchor<br/>• Cycle workspace = write root<br/>• 空 Evidence Registry ≠ 输入缺失<br/><br/>不注入文件清单 / source manifest payload<br/>不注入 hypothesis_ref / C-1 / Evidence refs"]
 
-    INV_A["Investigator LLM<br/>investigate / integrate_literature / judge_rework<br/>─────────────<br/>一次调用内完成当前必要且可执行研究<br/>自主组合理论 / 数值 / local source review<br/>本地材料从 Task root 聚焦发现<br/>新计算/产物只写 Cycle workspace<br/><br/>提交可供 Judge 审查的 findings：<br/>• findings[].statement（唯一必需）<br/>• 不重复声明类型、边界和本地引用列表<br/>• strong identity → optional provenance<br/>• Final Formatting 保留 A 层 Finding 数量/顺序<br/><br/>不输出 remaining_scientific_question<br/>不选择下一 executor"]
+    INV_A["Investigator LLM<br/>investigate / integrate_literature<br/>─────────────<br/>一次调用内完成当前必要且可执行研究<br/>自主组合理论 / 数值 / local source review<br/>本地材料从 Task root 聚焦发现<br/>新计算/产物只写 Cycle workspace<br/><br/>提交可供 Judge 审查的 findings：<br/>• findings[].statement（唯一必需）<br/>• 不重复声明类型、边界和本地引用列表<br/>• strong identity → optional provenance<br/>• Final Formatting 保留 A 层 Finding 数量/顺序<br/><br/>不输出 remaining_scientific_question<br/>不选择下一 executor"]
 
     CLOSE_C["C：SDK Deterministic Closure<br/>─────────────<br/>• 绑定 finding refs<br/>• 注册 Evidence<br/>• hypothesis_ref + cycle_id + criterion_id<br/>• producer invocation linkage<br/>• 更新 compact Evidence / Coverage<br/>• 保存 Investigator 提交与确定性闭合"]
 
 
-
-    LIT_Q["SDK：queue Literature task<br/>＋ Scholarly Retrieval<br/>─────────────<br/>仅 Judge objection 授权的 external scholarly gap"]
-
-    LIT["Literature LLM<br/>─────────────<br/>landscape / targeted_source / novelty_check<br/>每个独立 task fresh thread"]
-
-    LIT_C["SDK Literature Closure<br/>─────────────<br/>验证并注册<br/>criterion-bindable<br/>Literature Evidence"]
 
     NONSCI["SDK Non-scientific Closure<br/>─────────────<br/>不调用 / 不伪造 Judge scientific verdict<br/>不修改 Scientific Model<br/>不创建 Canvas Decision<br/><br/>已 Lock 的 stable H id<br/>与 durable identity index 必须保留"]
 
@@ -102,9 +96,6 @@ CURRENT_FLOW_MERMAID = r"""flowchart TD
     CLOSE_C --> READY
     INV_A -- "transport blocked" --> NONSCI
     CLOSE_C -- "无可裁决 Evidence" --> NONSCI
-    LIT_Q --> LIT
-    LIT --> LIT_C
-    LIT_C --> INV_CTX
 
 
     %% =========================================================
@@ -113,40 +104,24 @@ CURRENT_FLOW_MERMAID = r"""flowchart TD
 
     READY --> JUDGE
 
-    JUDGE["Judge<br/>terminal_assessment · v7<br/>─────────────<br/>只读取最小科学语义：<br/>• hypothesis / scope? / decisive_test<br/>• current scientific findings<br/>• prior objection 语义（若 reassessment）<br/>• same-H 已裁决 scientific outcomes<br/><br/>不读取 C-1 / Evidence-objection IDs / attempt-round<br/>不读取历史 Evidence ledger / routing bookkeeping"]
+    JUDGE["Judge<br/>terminal_assessment<br/>─────────────<br/>只读取最小科学语义：<br/>• hypothesis / scope? / decisive_test<br/>• current scientific findings<br/>• same-H 已裁决 scientific outcomes<br/><br/>不读取 C-1 / Evidence-objection IDs / attempt-round<br/>不读取历史 Evidence ledger / routing bookkeeping"]
 
     J_OUT{"Judge 判断"}
 
     TERMINAL["Terminal scientific verdict<br/>─────────────<br/>• supported<br/>• rejected<br/>• milestone_advanced<br/>• open"]
 
-    OBJECTION["Bounded scientific rework request<br/>─────────────<br/>verdict = null<br/>+ exactly one objection<br/><br/>Agent 只描述：<br/>• requested_resolution<br/>• needs_external_scholarship<br/><br/>不再分类 theoretical / numerical / local-source<br/>不再给 search hints"]
-
-    AUTH["SDK Rework Closure + Authorization<br/>─────────────<br/>自动派生：<br/>• C-1 binding + reason=rationale<br/>• objection_id / source_gap_id<br/>• false→Investigator / true→Literature<br/>• Literature task / rework_plan<br/><br/>再检查 executability + budget"]
-
-    REWORK_TARGET{"target executor"}
-
-    FORCE_OPEN["SDK terminalize → open<br/>─────────────<br/>rework 未授权 /<br/>budget exhausted /<br/>resource unavailable"]
+    FEEDBACK["SDK 保存原始 Judge 异议、理由及来源 H<br/>本轮实验结束，H 保留未终判状态"]
 
     JUDGE --> J_OUT
-
-    J_OUT -- "terminal" --> TERMINAL
-    J_OUT -- "需要一个局部科学缺口" --> OBJECTION
-
-    OBJECTION --> AUTH
-
-    AUTH -- "授权" --> REWORK_TARGET
-    AUTH -- "拒绝 / budget exhausted" --> FORCE_OPEN
-
-    REWORK_TARGET -- "needs_external_scholarship=false" --> INV_CTX
-    REWORK_TARGET -- "needs_external_scholarship=true" --> LIT_Q
-
+    J_OUT -- "有科学结论" --> TERMINAL
+    J_OUT -- "证据不足，verdict = null" --> FEEDBACK
+    FEEDBACK -- "下一 Cycle 从 Lead 提案进入资格审查" --> BUDGET
 
     %% =========================================================
     %% 5. Cross-Cycle H semantics
     %% =========================================================
 
     TERMINAL --> H_STATE
-    FORCE_OPEN --> H_STATE
 
     H_STATE["SDK：Hypothesis Lifecycle<br/>─────────────<br/>Catalog 是 identity index：<br/>{id, hypothesis, scope}<br/><br/>scientific_status 与 frontier_status<br/>由 Canvas 节点分别维护<br/>不再保存 live / terminal 第三套状态"]
 
@@ -210,7 +185,12 @@ CURRENT_FLOW_MERMAID = r"""flowchart TD
     %% 9. Next Cycle
     %% =========================================================
 
-    CLOSED --> BUDGET{"同一次 invocation<br/>还有 Cycle budget？"}
+    CLOSED --> GOAL_TRIGGER{"本轮科学裁决"}
+    GOAL_TRIGGER -- "supported / rejected / open" --> TASK_GATE{"任务完成审查"}
+    TASK_GATE -- "passed" --> TASK_DONE(["任务完成"])
+    TASK_GATE -- "not_passed" --> BUDGET
+    GOAL_TRIGGER -- "milestone_advanced" --> BUDGET
+    BUDGET{"同一次 invocation<br/>还有 Cycle budget？"}
 
     BUDGET -- "否" --> END(["Invocation 结束"])
 

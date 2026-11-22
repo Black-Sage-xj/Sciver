@@ -68,7 +68,7 @@ class QualificationReview:
             ] = True
             self.session.owner._persist(self.session.state)
             raise _ProposalRetry(reason)
-        if not supervisor:
+        if not supervisor and not self.session.preparation_feedback.get("judge_followup"):
             from .supervisor_qualification_recovery import review_exhausted_frontier
 
             stopped = {

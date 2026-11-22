@@ -31,6 +31,19 @@ class TaskCycleHistoryTests(unittest.TestCase):
         return {"event": "CYCLE_STARTED", "at": f"2026-10-19T14:{minute:02d}:00+08:00",
                 "text": f"Cycle started · {cid}"}
 
+    def test_judge_followup_labels_closed_cycle_without_promoting_it_to_open(self):
+        self.snapshot("1", [self.start("1", 0)])
+        (self.root / "1" / "research_state.json").write_text(json.dumps({
+            "cycle_id": "1", "status": "over", "scientific_verdict": None,
+            "closure_reason": "judge_followup_required",
+            "judge_followup": {"cycle": "1", "hypothesis_id": "H-0001"},
+        }))
+        catalog = cycle_catalog(self.root)
+        summary = cycle_summary(self.root, catalog, "1")
+        html = _recent_timeline("", [], cycle_catalog=catalog, cycle_summaries={"1": summary})
+        self.assertIn("证据不足 · 交回 Lead", html)
+        self.assertNotIn("假设裁决 · open", html)
+
     def test_old_cycles_remain_visible_when_latest_snapshot_contains_only_latest(self):
         self.snapshot("1", [self.start("1", 0), {"event": "JUDGE_VERDICT",
             "at": "2026-10-19T14:01:00+08:00", "text": "Judge verdict: supported"}])

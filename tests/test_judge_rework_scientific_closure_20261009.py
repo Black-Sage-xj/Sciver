@@ -26,13 +26,19 @@ class JudgeReworkScientificClosureTest(unittest.TestCase):
         self.assertIn("exact Judge request", rework)
         self.assertNotIn("findings[].limitations", rework)
 
-    def test_resume_same_cycle_does_not_replay_exhausted_rework(self):
+    def test_legacy_cycle_resume_does_not_replay_exhausted_rework(self):
         from test_core import TheoryMasterTest  # unittest discovers tests/ as an import root
         with tempfile.TemporaryDirectory() as temp:
             spec, backend = TheoryMasterTest().make(Path(temp), reworks=9)
             spec = replace(spec, max_judge_reworks_per_cycle=3)
-            first = Workflow(spec, backend).run()
-            directory = Path(first["cycle_dir"])
+            checkpoint = Workflow(spec, backend, stop_before="hypothesis_lock").run()
+            self.assertEqual(checkpoint["status"], "checkpoint_reached")
+            directory = Path(checkpoint["cycle_dir"])
+            state_file = directory / "research_state.json"
+            historical = json.loads(state_file.read_text(encoding="utf-8"))
+            historical.pop("judge_cycle_boundary", None)
+            state_file.write_text(json.dumps(historical), encoding="utf-8")
+            first = Workflow(spec, backend).resume(directory.name)
             self.assertEqual(first["status"], "needs_attention")
             self.assertEqual(first["attention"]["code"], "judge_rework_budget_exhausted")
             self.assertIsNone(first["scientific_verdict"])

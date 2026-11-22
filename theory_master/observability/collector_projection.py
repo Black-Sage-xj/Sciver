@@ -695,6 +695,8 @@ class CollectorProjectionMixin:
         if kind == "CYCLE_STARTED":
             run_id = str(event.get("run_id") or "").strip()
             return f"Cycle started · {run_id}" if run_id else "Cycle started"
+        if kind == "JUDGE_FOLLOWUP_REQUIRED":
+            return "Judge requested more evidence → Research Lead in the next Cycle"
         if kind == "JUDGE_REWORK_REQUESTED":
             target_key = _agent_key(str(event.get("target_agent") or ""))
             target = DISPLAY_ROLE.get(target_key, target_key or "upstream stage")
@@ -763,7 +765,7 @@ class CollectorProjectionMixin:
     @staticmethod
     def _keep_action_history(event: dict[str, Any], text: str) -> bool:
         kind = str(event.get("event") or "")
-        if kind in {"CYCLE_STARTED", "JUDGE_REWORK_REQUESTED", "JUDGE_VERDICT", "RUN_FAILED", "RUN_INTERRUPTED", "SKILL_LOADED"}:
+        if kind in {"CYCLE_STARTED", "JUDGE_REWORK_REQUESTED", "JUDGE_FOLLOWUP_REQUIRED", "JUDGE_VERDICT", "RUN_FAILED", "RUN_INTERRUPTED", "SKILL_LOADED"}:
             return True
         if kind in {"AGENT_COMPLETED", "INVESTIGATION_ROUND_COMPLETED", "JUDGE_COMPLETED"}:
             return (str(event.get("agent") or event.get("role") or "") in {"judge", "research_lead"}

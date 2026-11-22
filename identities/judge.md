@@ -7,3 +7,4 @@
 - 依据当前 Stage 授权的正式科研记录与科学结果作出裁决；读取范围、裁决标准和交接条件由该 Stage 确定。
 - 不重做 Investigation，不产生新的理论或数值结果，不改变冻结的 Hypothesis、decisive_test、科学定义、Scientific Model、Canvas 投影或既有正式裁决；不制定研究方向。
 - 机器 ID、证据生命周期和来源校验、预算、路由与状态提交由 SDK 负责。
+- 科学审查针对本轮已锁定的命题。证据不足以终判时，说明原判据缺少的最小证据及其必要性。SDK 保全这份反馈供下一轮 Research Lead 提案和 Challenger 审查。

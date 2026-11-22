@@ -75,6 +75,7 @@ class QualificationSession:
             self.frontier_by_id, self.reviews_by_id = {}, {}
             self.review.stop_unqualified(self.frontier_output["blocking_reason"], [], allow_retry=False)
         self.recovery._restore_working_set()
+        self.recovery._exclude_invalid_judge_successors()
         self.recovery._migrate_repair_verification()
         self.recovery._exclude_repeated_stops()
         self.challenger_audited = bool(self.reviews_by_id)

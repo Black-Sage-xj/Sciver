@@ -1,21 +1,15 @@
 # 回合预算（身份附件，不是 skill）
 
-两层判定分别为 Investigation readiness 和 Branch Judge 局部裁决。Investigator / Literature 不返回 `ready_for_judge`；它们报告新 Evidence、criterion/objection 的科学语义与仍缺失的 scientific gap。SDK 根据已注册 Evidence、objection、判据覆盖、required artifacts、预算与 gap 类型决定下一 executor 或送 Judge。
+现行 Investigation 在一次 Investigator invocation 内完成必要的科学工作；提交 Finding 后由 SDK 绑定 Evidence 并交 Judge 独立裁决。Investigator 不输出 `remaining_scientific_question`、`remaining_gap` 或 `gap_progress`，也不选择下一 executor；科学上的未解决条件在 `findings[].limitations` 中注明。
 
-- `investigation_attempt`：当前 attempt 编号，首次为 1；Judge 返工后加 1。
-- `investigation_round_count`：当前 attempt 已完成的**科学 Investigation Round** 数；同一 Round 内多个 Investigator LLM turns 不增加该计数，新 attempt 归零。
-- `judge_rework_count`：本 Cycle 由 Judge 重开 Investigation 的次数。
-- `total_investigation_round_count`：本 Cycle 全部 attempt 已完成的科学 Investigation Round 总数。
-- `max_rounds_per_investigation_attempt`：单 attempt 最大 executor rounds。
-- `max_judge_reworks_per_cycle`：本 Cycle 返工上限。
-- `max_total_investigation_rounds_per_cycle`：本 Cycle 累计 executor rounds 上限。
+- `investigation_attempt`：当前 attempt 编号，首次为 1；旧协议在办 Cycle 的 Judge 返工可以开启后续 attempt。
+- `investigation_round_count` 与 `total_investigation_round_count`：仅作为历史执行观察计数，不再限制 Investigator 的资源额度。
+- `judge_rework_count`：旧协议下本 Cycle 经 Judge 授权的科学返工数。
+- Investigator 采用 **3+3 双层累计 Token tranche**：`THEORY_MASTER_INVESTIGATOR_BUDGET_TOKENS`（默认 50,000k）为一份，每个新 Cycle 初始获得第 1 份；第 1、2 份耗尽时由 SDK 内独立只读 Budget Reviewer（GPT-6 Luna / medium）分别决定是否追加第 2、3 份；第 3 份耗尽时由 Supervisor 一次性判断是否开启后 3 份，获准后由 SDK 逐份授予第 4、5、6 份。第 6 份耗尽不再续批，进入安全 Preserve。任何审核拒绝只有在完成安全核验后才能进入自动 Preserve，失败保留检查点和分支，且必须留持久通知。模型审批不使用 tmux/外部 Agent，不重启本 Cycle。旧 Cycle 保留旧账本合同，历史 Round 不限制资源。
+- `max_judge_reworks_per_cycle`：旧协议同轮科学返工及专门交付格式修订的授权额度，独立于 Investigator Token 投资审查。
 
-一个 Investigator round 可以包含多个 internal turns；resume 同一 thread、加载 skill、运行 shell/Python、理论推导、数值试验和查看结果本身都不增加 round。当前每 Round 设独立的 **12 个 internal turns safety guard**，与 `max_rounds_per_investigation_attempt` 分离；触顶时进入 `needs_attention`。独立 Literature task 是单独 executor episode，可计一个 round。Judge 不计入 Investigation round。
+Codex 内部可以多次进行模型与工具操作，既没有 TM 额外 Scientific Turn，也没有 12 次 internal Turn guard。Token 护栏仅在开始下一次 Investigator 付费调用前检查，不能中断已运行的单次 Codex 调用；Budget Reviewer 无科学裁决权限。
 
 ## 返工与收口
 
-Judge 返工重新进入完整 Investigation Router；同一 Cycle/H 默认续接 Investigator 的同一 epistemic episode，只有线程不可恢复或明确要求独立复核时才开 fresh thread。当前 Cycle 内已完成的 attempt、thread ID 和产物保留用于审计。
-
-Investigator 通过 A 层 `remaining_scientific_question` 只表达当前 frozen objective 尚缺的科学工作；后续分类、routing 与 executor 选择由 SDK 负责。不要为了 workflow routing 虚构 scientific gap，也不要把可选 future-work 写成当前 blocker。
-
-预算到界只记录资源边界，不得改写 scientific verdict。每个新 round 相对前一 round 必须有新的或实质细化的判别信息。
+新 Cycle 一旦收到有效的 Judge 科学审查，本轮实验即结束。证据不足时，SDK 将原始异议交给下一轮 Research Lead 形成候选，再按正常资格流程锁定关联旧 H 的新节点。在办旧 Cycle 按其既有返工协议恢复。Investigator 的预算续批时从原 checkpoint/thread 恢复，不重置已耗 Token。额度拒绝时先保留 NEEDS_ATTENTION 和已冻结证据，只有新 3+3 Cycle 的 SDK 明确标记、授权与完整 Preserve 核验后才能自动结束并释放前沿；历史 Cycle 仍按原人工操作路径。已完成且可裁决的 Investigator Findings 正常进入 Judge，绝不由预算结束伪造科学判定。

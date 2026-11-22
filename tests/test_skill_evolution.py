@@ -403,7 +403,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
                             "# Scientific Model\n\nNo prior findings.\n")
             spec = TaskSpec.load(plan)
             config = json.loads(spec.config_path.read_text())
-            config["max_cycles"] = 1
+            config["max_cycles"] = 2
             spec.config_path.write_text(json.dumps(config))
             spec = TaskSpec.from_config(spec.config_path)
             write(spec.research_root, kind="flag", key="skill_learning", value=True)
@@ -413,7 +413,10 @@ class WorkflowIntegrationTests(unittest.TestCase):
             self.assertEqual(len(SkillLibrary().proposals(task_key(spec.research_root))), 1)
             self.assertTrue(all(role not in {"skill_learner", "skill_reviewer"} for role, _ in backend.prompts))
             investigator_prompts = [p for r, p in backend.prompts if r == "investigator"]
-            self.assertTrue(any("SDK LEARNED TASK-SKILL CATALOGUE UPDATE" in p for p in investigator_prompts[1:]))
+            self.assertEqual(len(investigator_prompts), 2)
+            self.assertEqual(state["incoming_judge_followup"]["cycle"], "1")
+            self.assertIn("SDK LEARNED TASK-SKILL CATALOGUE UPDATE", investigator_prompts[1])
+            self.assertIn("learned-residual-check", investigator_prompts[1])
             self.assertTrue(all("skill" not in value for value in state["agent_outputs"].values()))
 
 

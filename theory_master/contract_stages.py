@@ -341,7 +341,7 @@ JUDGE_INVESTIGATION_RESULT_PROMPT_NOTE = (
     'Exclusive union: terminal verdicts omit objection; verdict=null requires exactly one objection '
     'containing only requested_resolution and boolean needs_external_scholarship. '
     'Terminal verdicts are the exact JSON strings "supported", "rejected", '
-    '"milestone_advanced", or "open". JSON null requests one bounded rework.'
+    '"milestone_advanced", or "open". JSON null records the missing result and its rationale. The SDK preserves the objection for the Research Lead in the next Cycle.'
 )
 
 def _reject_candidate_workflow_marker(text: Any, label: str) -> None:

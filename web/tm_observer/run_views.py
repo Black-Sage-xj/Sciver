@@ -840,6 +840,8 @@ def _recent_timeline(raw: Any, source_events: Any = None, *,
         clock_html = '<time>' + _e(clock_value) + '</time>' if clock_value else ""
         verdict = str(summary.get("verdict") or "").strip()
         verdict_html = (
+            '<span class="tm-cycle-verdict" title="Judge 已结束本轮，下一轮由 Research Lead 提案">证据不足 · 交回 Lead</span>'
+            if verdict == "judge_followup" else
             '<span class="tm-cycle-verdict" title="本 Cycle 已结束，但没有终局科学 Judge 裁决">'
             '未裁决</span>' if verdict == "unadjudicated" else
             '<span class="tm-cycle-verdict" title="本 Cycle 的假设裁决；任务是否完成由 Goal 验收决定">假设裁决 · ' +

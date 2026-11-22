@@ -538,7 +538,7 @@ class TheoryMasterTest(unittest.TestCase):
 
     def test_happy_path_events_and_sqlite_projection(self):
         with tempfile.TemporaryDirectory() as temp:
-            spec, backend = self.make(Path(temp))
+            spec, backend = self.make(Path(temp), reworks=0)
             state = Workflow(spec, backend).run()
             self.assertEqual(state['branches'][-1]['status'], 'supported')
             self.assertIn('research_lead', state['threads'])
@@ -695,32 +695,36 @@ class TheoryMasterTest(unittest.TestCase):
                 for node in branch.get("nodes", [])
             ))
 
-    def test_rework_cap_pauses_without_scientific_open(self):
-        with tempfile.TemporaryDirectory() as temp:
-            from dataclasses import replace
-            spec, backend = self.make(Path(temp), reworks=9)
-            spec = replace(spec, max_judge_reworks_per_cycle=3)
-            state = Workflow(spec, backend).run()
-            self.assertEqual(state['judge_rework_count'], 3)
-            self.assertEqual(state['investigation_attempt'], 4)
-            self.assertEqual(state['status'], 'needs_attention')
-            self.assertTrue(state['resumable'])
-            self.assertIsNone(state['scientific_verdict'])
-            self.assertEqual(state['assessment_state'], 'rework_requested')
-            self.assertEqual(state['closure_reason'], 'judge_rework_budget_exhausted')
-            self.assertEqual(state['resource_disposition'], 'budget_exhausted')
-            self.assertEqual(state['next_disposition'], 'rework_blocked')
-            self.assertEqual(state['attention']['code'], 'judge_rework_budget_exhausted')
-            self.assertNotEqual(state['runtime_state'], 'over')
-            terminal = state['role_outputs']['judge']
-            self.assertIsNone(terminal['verdict'])
-            self.assertEqual(len(terminal['objections']), 1)
-            self.assertIsInstance(terminal['rework_plan'], dict)
-            original = state['rework_authorization']['judge_request']
-            self.assertEqual(len(original['objections']), 1)
-            self.assertIsInstance(original['rework_plan'], dict)
-            branch_canvas = json.loads(spec.branch_canvas.read_text(encoding='utf-8'))
-            self.assertFalse(any(str(n.get('id', '')).endswith('-decision') for n in branch_canvas.get('nodes', [])))
+    def test_judge_objection_closes_current_cycle_without_adjudication(self):
+        from dataclasses import replace
+        for cap in (0, 3):
+            with self.subTest(cap=cap), tempfile.TemporaryDirectory() as temp:
+                spec, backend = self.make(Path(temp), reworks=1)
+                workflow = Workflow(replace(spec, max_judge_reworks_per_cycle=cap), backend)
+                state = workflow.run()
+
+                h_id = state['hypothesis_lock']['id']
+                self.assertTrue(state['judge_cycle_boundary'])
+                self.assertEqual((state['status'], state['phase']), ('over', 'complete'))
+                self.assertEqual(state['closure_reason'], 'judge_followup_required')
+                self.assertEqual(state['next_start_node_id'], h_id)
+                self.assertIsNone(state.get('scientific_verdict'))
+                self.assertEqual(state['investigation_attempt'], 1)
+                self.assertEqual(state['judge_rework_count'], 0)
+                self.assertEqual(len(list_cycle_dirs(spec.research_root)), 1)
+                followup = state['judge_followup']
+                self.assertEqual(followup['hypothesis_id'], h_id)
+                self.assertEqual(str(followup['cycle']), state['cycle_id'])
+                self.assertIsNone(followup['judge']['verdict'])
+                self.assertEqual(followup['judge']['objections'][0]['requested_resolution'],
+                                 'run the controlled check')
+                self.assertFalse(state.get('goal_completion'))
+                events = [json.loads(row) for row in (Path(state['cycle_dir']) / 'events.jsonl').read_text().splitlines()]
+                stages = [row['payload']['stage'] for row in events if row['type'] == 'role.started']
+                self.assertNotIn('goal_completion', stages)
+                self.assertNotIn('judge_rework', stages)
+                with ScienceGraphStore(spec.graph_database, readonly=True) as store:
+                    self.assertIsNone(store.cycle_evaluation(state['cycle_id']))
 
     def test_rejected_judge_rework_pauses_and_preserves_request_for_audit(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -743,6 +747,27 @@ class TheoryMasterTest(unittest.TestCase):
             self.assertEqual(authorization['reason'], 'synthetic_rework_denial')
             self.assertEqual(len(authorization['judge_request']['objections']), 1)
             self.assertIsInstance(authorization['judge_request']['rework_plan'], dict)
+
+    def test_followup_verdict_only_adjudicates_the_new_hypothesis(self):
+        with tempfile.TemporaryDirectory() as temp:
+            spec, backend = self.make(Path(temp), reworks=1, max_cycles=2)
+            second = Workflow(spec, backend).run()
+            first = json.loads((spec.research_root / '1' / 'research_state.json').read_text())
+            old_h = first['hypothesis_lock']['id']
+            new_h = second['hypothesis_lock']['id']
+            self.assertEqual(first['closure_reason'], 'judge_followup_required')
+            self.assertEqual(second['incoming_judge_followup'], {'cycle': first['cycle_id'], 'hypothesis_id': old_h})
+            self.assertNotEqual(new_h, old_h)
+            self.assertEqual(second['hypothesis_lock']['status'], 'locked')
+            self.assertEqual(second['scientific_verdict'], 'supported')
+            events = [json.loads(row) for row in (Path(second['cycle_dir']) / 'events.jsonl').read_text().splitlines()]
+            roles = [row['payload']['role'] for row in events if row['type'] == 'role.started']
+            self.assertLess(roles.index('research_lead'), roles.index('challenger'))
+            self.assertLess(roles.index('challenger'), roles.index('investigator'))
+            with ScienceGraphStore(spec.graph_database, readonly=True) as store:
+                self.assertIsNone(store.cycle_evaluation(first['cycle_id']))
+                self.assertEqual(store.cycle_evaluation(second['cycle_id'])['hypothesis_id'], new_h)
+                self.assertEqual(store.agent_hypothesis_detail(new_h)['lineage_main_node_id'], old_h)
 
     def test_max_cycles_two_open_cycles(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -1522,7 +1547,7 @@ class TheoryMasterTest(unittest.TestCase):
     def test_epistemic_episode_thread_policy_for_lead_judge_and_reporter(self):
         class CapturingBackend(FakeBackend):
             def __init__(self):
-                super().__init__(reworks=1)
+                super().__init__(reworks=0)
                 self.live_threads: dict[str, list[str]] = {}
             def invoke(self, role, prompt, thread_id, model, provider):
                 thread, raw = super().invoke(role, prompt, thread_id, model, provider)
@@ -1536,7 +1561,6 @@ class TheoryMasterTest(unittest.TestCase):
             # Judge adjudication and task-level Goal Completion are separate SDK stages.
             self.assertEqual(len(set(backend.live_threads['judge'])), 2)
             self.assertEqual(len(set(backend.live_threads['reporter'])), 1)
-            self.assertEqual(len(set(backend.live_threads['investigator'])), 1)
             self.assertEqual(len(set(backend.live_threads['investigator'])), 1)
 
 
@@ -2272,10 +2296,10 @@ class TheoryMasterTest(unittest.TestCase):
         self.assertEqual(len(ctx["required_context"]), CONTEXT_VALUE_MAX_CHARS + 10)
         self.assertEqual(ctx["notes"], notes)
 
-    def test_evidence_projections_and_fresh_rework_thread(self):
+    def test_evidence_projections_for_an_adjudicated_hypothesis(self):
         class CapturingBackend(FakeBackend):
             def __init__(self):
-                super().__init__(reworks=1)
+                super().__init__(reworks=0)
                 self.prompts: dict[str, list[str]] = {}
                 self.threads_by_role: dict[str, list[str]] = {}
             def invoke(self, role, prompt, thread_id, model, provider):
@@ -2359,9 +2383,7 @@ class TheoryMasterTest(unittest.TestCase):
                 self.assertTrue(set(outcome_refs).issubset(manifest_ids))
             reporter_ids = backend.threads_by_role["reporter"]
             self.assertEqual(len(reporter_ids), 1)
-            numerical_ids = backend.threads_by_role["investigator"]
-            self.assertGreaterEqual(len(numerical_ids), 2)
-            self.assertEqual(numerical_ids[0], numerical_ids[1])
+            self.assertEqual(len(backend.threads_by_role["investigator"]), 1)
             attempt = json.loads((cycle / "investigation_attempts" / "attempt-0001" / "state.json").read_text(encoding="utf-8"))
             # The Investigator does not assign criterion IDs or decide coverage.
             # The SDK submits the complete scientific result to Judge, which alone adjudicates it.
@@ -2371,7 +2393,7 @@ class TheoryMasterTest(unittest.TestCase):
             self.assertTrue(readiness["ready"])
             self.assertNotIn("criterion_coverage", readiness)
 
-    def test_judge_rework_reopens_investigator_without_specialist_handoff(self):
+    def test_new_judge_objection_does_not_reopen_investigator_or_dispatch_literature(self):
         class CapturingBackend(FakeBackend):
             def __init__(self):
                 super().__init__(reworks=1)
@@ -2382,20 +2404,25 @@ class TheoryMasterTest(unittest.TestCase):
                 context = json.JSONDecoder().raw_decode(prompt.split('Context:\n', 1)[1])[0]
                 if role in {'investigator', 'literature'}:
                     self.executor_calls.append((role, thread_id))
+                thread, raw = super().invoke(role, prompt, thread_id, model, provider)
                 if role == 'judge':
                     self.branch_judge_contexts.append(context)
-                return super().invoke(role, prompt, thread_id, model, provider)
+                    assessment = json.loads(raw)
+                    assessment['objection']['needs_external_scholarship'] = True
+                    return thread, json.dumps(assessment)
+                return thread, raw
 
         with tempfile.TemporaryDirectory() as temp:
             spec, _ = self.make(Path(temp))
             backend = CapturingBackend()
             state = Workflow(spec, backend).run()
-            self.assertEqual(state['investigation_attempt'], 2)
-            self.assertEqual(state['judge_rework_count'], 1)
+            self.assertEqual(state['closure_reason'], 'judge_followup_required')
+            self.assertEqual(state['investigation_attempt'], 1)
+            self.assertEqual(state['judge_rework_count'], 0)
             self.assertEqual(state['total_investigation_round_count'], len(backend.executor_calls))
             self.assertEqual({role for role, _ in backend.executor_calls}, {'investigator'})
-            self.assertEqual(len(backend.executor_calls), 2)
-            self.assertEqual(backend.executor_calls[0][1], backend.executor_calls[1][1])
+            self.assertEqual(len(backend.executor_calls), 1)
+            self.assertEqual(len(backend.branch_judge_contexts), 1)
             self.assertTrue(all('research_contract' not in context
                                 for context in backend.branch_judge_contexts))
             self.assertTrue(all('adjudication_scope' not in context for context in backend.branch_judge_contexts))

@@ -111,6 +111,8 @@ sciver test Test0 ~/Sciver-workspace/another-test0 --prepare-only --open
 
 省略 `--prepare-only` 时，`test` 会启动真实模型研究并消耗账号额度。目标目录须为空；上述命令 创建全新任务并校验数据，不会启动模型研究。自动命名任务目录可使用 `sciver test Test0 --root ~/Sciver-workspace --prepare-only`。独立交付、账号配置与排障见[首次使用](docs/first-use.md)和 [wheel 安装](docs/distribution.md)。
 
+每个科研 Cycle 检验一个锁定假设。Judge 完成科学审查时，本轮实验结束。若缺少决定性证据，原假设保留未终判状态，下一轮由 Research Lead 阅读原始异议、提出关联假设，再经 Challenger 资格审查。若本轮裁为 `supported`、`rejected` 或 `open`，任务另行进入完成审查。
+
 ### 开始真实研究前
 
 - Release 安装用户先在已激活的环境中执行 `python -m pip install --find-links "$HOME/sciver-install/v0.1.1" 'sciver[sdk]==0.1.1'`，安装模型客户端依赖；这一步需要联网下载额外依赖，完全离线部署见 [wheel 安装](docs/distribution.md)。源码开发安装已包含 SDK 依赖。

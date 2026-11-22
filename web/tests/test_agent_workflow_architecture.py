@@ -54,7 +54,7 @@ class AgentWorkflowArchitectureTests(unittest.TestCase):
             "selection_repair",
             "repair_verification",
             "preserve_research",
-            "Forced terminal open",
+            "Next-Cycle Judge feedback",
             "Scientific Model Commit",
             "Goal Completion 独立关口",
             "Cycle OVER ≠ Goal complete",

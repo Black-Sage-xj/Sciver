@@ -327,6 +327,27 @@ class QualificationRecovery:
                         "unknown legacy repair verification state; no scientific approval"
                     )
 
+    def _exclude_invalid_judge_successors(self):
+        from .judge_followup import candidate_problem
+
+        followup = self.session.preparation_feedback.get("judge_followup")
+        if not followup:
+            return
+        problems = {cid: reason for cid, candidate in self.session.frontier_by_id.items()
+                    if (reason := candidate_problem(candidate, followup))}
+        if not problems:
+            return
+        self.session.owner._emit(self.session.state, "qualification.invalid_judge_successor", {
+            "parent_hypothesis_id": followup["hypothesis_id"], "candidate_problems": problems,
+        })
+        if len(problems) == len(self.session.frontier_by_id):
+            self.session.review.stop_unqualified(" ".join(dict.fromkeys(problems.values())), list(problems))
+        for cid in problems:
+            self.session.frontier_by_id.pop(cid)
+            self.session.reviews_by_id.pop(cid, None)
+        self.session.pending_ids = [cid for cid in self.session.pending_ids if cid not in problems]
+        self.persist_qualification_working_set()
+
     def _exclude_repeated_stops(self):
         from .qualification_stop_history import previous_qualification_stop
 

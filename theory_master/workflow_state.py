@@ -473,6 +473,7 @@ class WorkflowStateMixin:
                  "resource_disposition": None, "next_disposition": "investigate",
                  "runtime_state": "running", "protocol_health": "valid",
                  "investigation_attempt": 0, "investigation_round_count": 0,
+                 "judge_cycle_boundary": True,
                  "judge_rework_count": 0, "scientific_rework_count": 0,
                  "json_parse_repair_count": 0, "json_normalization_count": 0, "contract_repair_count": 0,
                  "minor_anomaly_count": 0,
@@ -535,7 +536,7 @@ class WorkflowStateMixin:
         state.setdefault("scientific_phase", "qualification")
         if state["protocol_health"] not in {"valid", "degraded", "violation", "migration_required"}:
             state["protocol_health"] = "violation"
-        if state["scientific_phase"] not in {"qualification", "locked", "investigating", "adjudicated", "committed"}:
+        if state["scientific_phase"] not in {"qualification", "locked", "investigating", "reviewed", "adjudicated", "committed"}:
             state["scientific_phase"] = "investigating"
         state.setdefault("scientific_verdict", None)
         state.setdefault("assessment_state", "pending")

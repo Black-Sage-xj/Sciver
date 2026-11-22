@@ -10,7 +10,7 @@ TheoryMaster 是推进长周期开放科学问题的可恢复科研 Workflow Eng
 核心约束：
 
 - 科学方向、证据生产、资格审查和终局裁决各有明确角色；SDK 负责组织、校验、登记和恢复。
-- 每个新科学 Cycle 锁定一个新的 H 及其 `scope / decisive_test`。同 Cycle 的重试、返工与恢复复用原锁定对象。
+- 每个新科学 Cycle 锁定一个新的 H 及其 `scope / decisive_test`。锁定后，Judge 对正式 Investigator 结果的一次有效科学审查结束本轮实验。协议修复与中断恢复复用原锁定对象。
 - 一个 Cycle 有终局科学裁决时，保存一条 Cycle Outcome；运行失败、暂停或资源停止本身不产生科学裁决。
 - 科学身份、证据、调用和提交可追溯；下游投影失败可独立恢复。
 - 科研上下文按需读取，长期认识不依赖 Agent 对话存续。
@@ -84,7 +84,7 @@ Lead 触发的文献检索材料存于当前 Cycle 的 `workspace/literature/sdk
   → Investigator / investigate
   → SDK / Evidence 登记与 Investigation Result
   → Judge / terminal_assessment
-      ├─ 有界 objection → 必要 Literature → Investigator / judge_rework → Judge
+      ├─ 必要证据缺失 → 封存本轮原始异议及来源 H → 下一 Cycle 的 Lead 提案与 Challenger 资格审查
       └─ terminal verdict
   → Lead / cycle_synthesis
   → SDK / Scientific Model keep|replace commit
@@ -92,7 +92,7 @@ Lead 触发的文献检索材料存于当前 Cycle 的 `workspace/literature/sdk
   → Reporter / report
   → SDK / Cycle Outcome 与图谱投影提交
   → Cycle 收口
-  → 若本轮 supported：fresh Judge / goal_completion
+  → 若本轮 supported / rejected / open：fresh Judge / goal_completion
       ├─ passed → Task 完成，关闭 active / parked 分支
       └─ not_passed → 按运行预算和调度进入下一 Cycle
 ```
@@ -147,7 +147,7 @@ Evidence 先由 Registry 登记，再生成裁决视图。SDK 负责 producer in
 
 Judge 消费 compact `investigation_result` 和明确限定范围的历史裁决视图，独立决定 Evidence 是否回答冻结检验。历史视图从当前 Registry 权威无副作用地生成，不信任旧 Manifest 的资格快照，不重新登记旧证据。
 
-Judge 的 objection 必须是冻结命题内的最小可执行增量；SDK 验证后按既有有限返工和资源边界调度。没有新正式提交的研究、预算否决或运行失败，均不能冒充新 Findings 或 terminal `open`。没有可裁决 Evidence 时保存非科学停止原因与检查点。
+Judge 若认定终局所需的证据仍然缺失，在 rationale 与 objection 中给出理由、最小判别结果和外部学术证据需求。SDK 保存原始反馈并结束当前 Cycle 的实验。该 H 保持未终判，本轮跳过 Goal Gate。下一 Cycle 的 Research Lead 接收反馈并提出可独立裁决的候选，通过 Challenger 的正常资格审查后才以来源 H 为主前序锁定新节点。锁定前的候选修订、无效 Judge 输出的协议重试、以及已提交科学结论后的专门交付格式修复都沿用各自原流程。没有新正式提交的研究、预算否决或运行失败，均不能冒充新 Findings 或 terminal `open`。没有可裁决 Evidence 时保存非科学停止原因与检查点。
 
 Judge 在现有 rationale/requested_resolution 中说明所缺的必要冻结前提、现有结果为何不足和剩余可执行的科学比较。SDK 自动绑定的 `C-1` 仅是路由锚点；结构授权不声称证明异议内容的科学必要性。SDK 不按 holdout 关键词替代科学裁决，也不直接改写旧 Judge 决定。
 
@@ -305,6 +305,6 @@ JSON 规范化在顶层数组漏写结束符、随后出现当前 Schema 已知�
 
 当原 Investigator 调用因 Native Goal blocked 失败且没有提交科研交付时，操作员可在该 Cycle 的 `attention/technical-recovery-authorization.json` 明确登记一次已完成的技术产物恢复。该授权位于 Agent 可写工作区之外，绑定原失败调用、线程、冻结科学对象、原脚本/恢复脚本和已恢复产物的 SHA-256，并记录必要的资源例外；必须同时向原 Investigator 提供待消费的操作员说明。SDK验证原 Goal 的终局身份、既有停机/预算/协议约束及全部文件身份，才生成一次性修复凭据并允许新 Goal 检查已恢复产物。旧失败、已花额度、原 Goal 身份和所有科学判据保留；凭据不代替 Investigator 交付或 Judge 裁决，不自行增加科研 Cycle 或额度，也不授权后续额外计算。没有完整操作员授权及产物证明时维持原有 hold。
 
-Judge 返工中的终局 blocked Goal 可使用同一操作员产物恢复入口，但只允许 `verified_artifact_rescan`，不开放新的有界计算。授权必须显式绑定 `judge_rework`、原 Judge 输出和 objections、原返工授权、当前未交付 attempt、既有 Evidence 清单与字节身份、冻结 H；验证、消费和 setup-only 重试均重新核对这些绑定。恢复后的 Investigator 按原返工步骤核查已保存产物，保留原失败和累计预算，通过正常交付再由 Judge 独立裁定。此次恢复不扩展 Investigator 或 Judge 的科学权限。
+已经进入旧协议 Judge 同轮返工的在办 Cycle，其终局 blocked Goal 可使用同一操作员产物恢复入口，但只允许 `verified_artifact_rescan`，不开放新的有界计算。授权必须显式绑定 `judge_rework`、原 Judge 输出和 objections、原返工授权、当前未交付 attempt、既有 Evidence 清单与字节身份、冻结 H；验证、消费和 setup-only 重试均重新核对这些绑定。恢复后的 Investigator 按原返工步骤核查已保存产物，保留原失败和累计预算，通过正常交付再由 Judge 独立裁定。此次恢复不扩展 Investigator 或 Judge 的科学权限。
 
 若 blocked 调用已经写出本调用专属 `.tm-handoff` 文件，只有 `judge_rework` 的产物重读授权同时列出该文件路径与 SHA-256，并以 `prior_handoff_sha256` 显式绑定时，才可将它作为新 Investigator Goal 的只读候选材料。blocked Goal 和该文件均不构成已完成交付；新调用必须自行核查并写入自己的交付路径，SDK 才能按正常合同送 Judge。没有此绑定、文件缺失或字节变化时拒绝恢复。

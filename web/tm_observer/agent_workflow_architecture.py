@@ -80,12 +80,12 @@ SDK_DETAILS: dict[str, dict[str, Any]] = {
         "role_label": "SDK / deterministic layer",
         "stage": "Investigation Context + Router",
         "objective": "Build the minimal context for the locked objective and route only the work needed for the current Cycle.",
-        "may_do": "Supply the frozen hypothesis/scope/decisive_test, previous scientific delta when applicable, authorized Judge objections, and the task-root / Cycle-workspace boundaries.",
+        "may_do": "Supply the frozen hypothesis/scope/decisive_test, previous scientific delta when applicable, and the task-root / Cycle-workspace boundaries.",
         "must_not": "Treat an empty Evidence Registry as proof that no inputs exist, inject a redundant source manifest, or delegate next-Cycle hypothesis choice to Investigator.",
         "exit": "The correct Investigator stage starts with the same frozen scientific objective and bounded writable workspace.",
         "contract_rules": [
             "Task root is the scientific read anchor; Cycle workspace is the write root.",
-            "Only the current frozen objective is authoritative during Investigation and rework.",
+            "Only the current frozen objective is authoritative during the investigation.",
         ],
     },
     "sdk:evidence-closure": {
@@ -100,25 +100,13 @@ SDK_DETAILS: dict[str, dict[str, Any]] = {
             "A no-Evidence / transport-blocked closeout does not create a scientific Decision or commit a new Scientific Model.",
         ],
     },
-    "sdk:rework-gate": {
+    "sdk:judge-feedback": {
         "role_label": "SDK / deterministic layer",
-        "stage": "Rework Authorization Gate",
-        "objective": "Enforce the bounded, evidence-directed Judge rework contract.",
-        "may_do": "Bind the objection to the frozen criterion, derive the allowed executor, and check executability, budget, and external-scholarship eligibility.",
-        "must_not": "Allow open-ended retries, silently change the frozen objective, or route unavailable/duplicate work into an unbounded loop.",
-        "exit": "Authorized work returns to the same H/test; denied, exhausted, or unavailable rework resolves to terminal open.",
-        "contract_rules": [
-            "A rework request contains one local scientific objection.",
-            "Investigator handles non-external scientific resolution; Literature is used only for an authorized external scholarly gap.",
-        ],
-    },
-    "sdk:forced-open": {
-        "role_label": "SDK / deterministic layer",
-        "stage": "Forced terminal open",
-        "objective": "Close a rework path that cannot be safely or legitimately executed.",
-        "may_do": "Record an open terminal outcome when rework is denied, budget is exhausted, or required resources are unavailable.",
-        "must_not": "Present an unexecuted rework as evidence or claim the decisive test was resolved.",
-        "exit": "Research Lead synthesis receives the terminal open decision and records the actual epistemic result.",
+        "stage": "Next-Cycle Judge feedback",
+        "objective": "Close this experiment and preserve why a necessary scientific result is missing.",
+        "may_do": "Bind the original Judge ruling and objection to their source Cycle and hypothesis.",
+        "must_not": "Issue a verdict on the source hypothesis or run its task-completion gate.",
+        "exit": "The next Cycle’s Research Lead receives the feedback and proposes a linked candidate for Challenger review.",
     },
     "sdk:model-commit": {
         "role_label": "SDK / deterministic layer",
@@ -454,38 +442,22 @@ def agent_workflow_architecture_body() -> str:
 
     phase_4 = _phase(
         "04",
-        "Independent Judge · 独立裁决与有界返工",
-        "Judge 只评估当前冻结 decisive_test 和可裁决证据；返工必须有明确请求、授权、预算与可执行路径。",
+        "Independent Judge · 实验裁决与跨轮反馈",
+        "Judge 按冻结假设与判据审查正式提交。有效审查结束本轮实验。",
         [
             _route([
-                stage("judge", "terminal_assessment", title="terminal_assessment", summary="只根据冻结判据、当前科学 findings 与适用的既往裁决语义作判断。"),
-                sdk("rework-gate", "Terminal / Rework Gate", "终局判定直接收口；返工则进入确定性授权与预算检查。"),
-            ], label="Judge terminal / rework routing")
+                stage("judge", "terminal_assessment", title="terminal_assessment", summary="审查本轮提交的科学证据，给出结论或指明必要证据缺口。"),
+            ], label="Judge scientific assessment")
         ],
         [
             _branch(
-                "Investigator 返工",
-                "one objection · authorized",
-                "SDK 授权后回到同一个冻结 H / decisive_test；返工不是新假设，也不允许开放式循环。",
+                "证据不足，交给下一轮 Lead",
+                "verdict = null",
+                "本轮 H 保留未终判状态，本轮不触发 Goal Gate。下一轮独立提案和资格审查通过后，锁定关联来源 H 的新节点。",
                 [
-                    stage("investigator", "judge_rework", summary="按 requested_resolution 补齐指定证据或解决局部科学缺口。", compact=True),
-                    sdk("evidence-closure", "Evidence closure", "返工结果重新进入确定性闭合与 readiness 检查。", conditional=True, compact=True),
+                    sdk("judge-feedback", "Next-Cycle Judge feedback", "保存原裁决理由、异议、证据需求和来源 H。", conditional=True, compact=True),
+                    stage("research_lead", "frontier_proposal", summary="依据原始异议提出可独立检验的关联候选，交 Challenger 审查。", compact=True),
                 ],
-            ),
-            _branch(
-                "外部学术返工",
-                "external scholarship = true",
-                "只有 Judge 授权的外部学术缺口才交给 Literature；结果返回 Investigator 并重新闭合证据。",
-                [
-                    stage("literature", "targeted_source", summary="完成被授权的外部学术来源核查。", compact=True),
-                    stage("investigator", "integrate_literature", summary="整合来源证据，再交回 SDK 闭合。", compact=True),
-                ],
-            ),
-            _branch(
-                "返工不可执行",
-                "denied / exhausted / unavailable",
-                "返工被拒绝、预算耗尽或资源不可用时，终局为 open；不能声称未执行的工作已解决判据。",
-                [sdk("forced-open", "Forced terminal open", "将真实未解决状态送入 Lead synthesis。", conditional=True, compact=True)],
             ),
         ],
     )
@@ -510,7 +482,7 @@ def agent_workflow_architecture_body() -> str:
         [
             _branch(
                 "Goal Completion 独立关口",
-                "terminal verdict = supported",
+                "terminal verdict = supported / rejected / open",
                 "只有满足触发条件时才调用 Judge goal_completion。Goal passed 与 Cycle OVER 是两个独立状态，不得互相推断。",
                 [
                     sdk("goal-gate", "Master Goal Gate", "确定是否触发全局 Goal Completion。", conditional=True, compact=True),
@@ -667,7 +639,7 @@ def agent_workflow_architecture_body() -> str:
   <div class="aa-hero">
     <div class="aa-eyebrow">SCIVER · CURRENT SOURCE</div>
     <h1>Agent Workflow Architecture</h1>
-    <p>一个 Cycle 的完整科研执行框架：候选资格审查 → Hypothesis Lock → 证据研究 → 独立裁决 → 科研状态与产物收口。Agent 阶段详情来自当前 Stage Registry / Contract；条件分支单独展示，避免把修订、返工和安全停止误画成主路径。</p>
+    <p>一个 Cycle 的完整科研执行框架：候选资格审查 → Hypothesis Lock → 证据研究 → 独立裁决 → 科研状态与产物收口。Agent 阶段详情来自当前 Stage Registry / Contract；条件分支单独展示，避免把锁前修订、跨轮反馈和安全停止误画成主路径。</p>
     <div class="aa-stats">
       <span class="aa-stat">6 个正式 Agent 角色</span>
       <span class="aa-stat">SDK 确定性关口独立显示</span>
@@ -696,7 +668,7 @@ def agent_workflow_architecture_body() -> str:
       {phase_6}
       <div class="aa-legend" aria-label="Diagram legend">
         <span><i></i> Agent / SDK 主路径节点</span>
-        <span class="aa-legend-branch"><i></i> 条件分支 / 有界返工</span>
+        <span class="aa-legend-branch"><i></i> 条件分支 / 跨轮反馈</span>
         <span>彩色上边线区分 Agent 角色；灰蓝色节点表示 SDK / Runtime 所有的确定性步骤。</span>
       </div>
       <p class="aa-footnote">来源：当前 stage_registry.py、contract_stages.py 与 stage_workflow_mermaid()。此图是可读的工作流总览；字段级输入 / 返回合同仍以 <a href="/workflow-stage-preview/">Workflow Stage Preview</a> 为准，完整判定链可在 <a href="/current-flow/">Current Flow</a> 查看。</p>

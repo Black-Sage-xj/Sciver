@@ -1189,6 +1189,9 @@ class InvestigationMixin:
             key = f"attempt-{state['investigation_attempt']:04d}"
             record = state["investigation_attempts"][key]
             capability = state["next_executor"]
+            if state.get("judge_cycle_boundary") and record.get("judge_decision"):
+                # Final projection can be retried after the judgment was saved.
+                capability = "judge"
             recovery_literature_dedup = False
             attention_code = str((state.get("attention") or {}).get("code") or "")
             if (attention_code in {
@@ -1505,7 +1508,7 @@ class InvestigationMixin:
             plan = judge.get("rework_plan") if isinstance(judge.get("rework_plan"), dict) else {}
             target = plan.get("target_executor") or plan.get("target_role")
             rework_exhausted = state["judge_rework_count"] >= budgets["max_judge_reworks_per_cycle"]
-            if insufficient and rework_exhausted:
+            if insufficient and not state.get("judge_cycle_boundary") and rework_exhausted:
                 self._pause_unfinished_judge_rework(
                     state, record, judge, code="judge_rework_budget_exhausted",
                     detail=(
@@ -1534,6 +1537,34 @@ class InvestigationMixin:
                     ),
                     target=target, reason=authorization_reason,
                 )
+            if state.get("judge_cycle_boundary"):
+                # End this experiment at the Judge decision. Qualification in
+                # the next Cycle owns both the new question and its graph node.
+                hypothesis_id = state["hypothesis_lock"]["id"]
+                branch["status"] = "needs_more_evidence"
+                already_recorded = bool(state.get("judge_followup"))
+                state.update({
+                    "status": "over", "phase": "complete", "resumable": False,
+                    "execution_active": False, "scientific_verdict": None,
+                    "assessment_state": "insufficient_evidence", "scientific_phase": "reviewed",
+                    "closure_reason": "judge_followup_required",
+                    "next_disposition": "new_cycle", "next_executor": None,
+                    "next_start_node_id": hypothesis_id,
+                    "scientific_model_version_out": state.get("scientific_model_version_in"),
+                    "scientific_model_update_status": "kept",
+                    "scientific_model_patch_status": "kept",
+                    "judge_followup": {
+                        "hypothesis_id": hypothesis_id, "cycle": self.cycle_dir.name,
+                        "source_branch_anchor_id": self.spec.branch_anchor_id, "judge": judge,
+                    },
+                })
+                state["role_outputs"]["judge"] = judge
+                if not already_recorded:
+                    self._emit(state, "judge.followup_required", {
+                        "role": "judge", "hypothesis_id": hypothesis_id, "cycle": self.cycle_dir.name,
+                        "next_role": "research_lead", "reason": authorization_reason,
+                    })
+                return judge, verdict
             if target == "literature":
                 objection = next((item for item in (judge.get("objections") or []) if isinstance(item, dict)), {})
                 plan = judge.get("rework_plan") if isinstance(judge.get("rework_plan"), dict) else {}

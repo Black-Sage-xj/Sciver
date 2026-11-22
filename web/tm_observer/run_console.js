@@ -370,11 +370,11 @@
           goal.textContent='Goal 已通过';
           summary.append(goal);
         }
-        if(['supported','rejected','open','unadjudicated'].includes(item.verdict)) {
+        if(['supported','rejected','open','unadjudicated','judge_followup'].includes(item.verdict)) {
           const verdict=document.createElement('span');
           verdict.className='tm-cycle-verdict';
-          verdict.title=item.verdict==='unadjudicated'?'本 Cycle 未形成最终科学裁决':'本 Cycle 的假设裁决；任务是否完成由 Goal 验收决定';
-          verdict.textContent=item.verdict==='unadjudicated'?'未裁决':
+          verdict.title=item.verdict==='judge_followup'?'Judge 已结束本轮，下一轮由 Research Lead 提案':item.verdict==='unadjudicated'?'本 Cycle 未形成最终科学裁决':'本 Cycle 的假设裁决；任务是否完成由 Goal 验收决定';
+          verdict.textContent=item.verdict==='judge_followup'?'证据不足 · 交回 Lead':item.verdict==='unadjudicated'?'未裁决':
             '假设裁决 · '+item.verdict+(item.verdict==='open'?'（未决）':'');
           summary.append(verdict);
         }

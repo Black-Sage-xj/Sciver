@@ -100,7 +100,13 @@ class ObservabilityTest(unittest.TestCase):
             self.assertTrue(agent_inputs)
             self.assertTrue(all(str(event.get("content") or "").strip() for event in agent_inputs))
             self.assertTrue(any(event.get("stage") == "frontier_proposal" for event in agent_inputs))
-            self.assertIn("JUDGE_REWORK_REQUESTED", kinds)
+            self.assertIn("JUDGE_FOLLOWUP_REQUIRED", kinds)
+            self.assertNotIn("JUDGE_REWORK_REQUESTED", kinds)
+            first_events = (spec.research_root / "1" / "events.jsonl").read_text().splitlines()
+            followups = [event for line in first_events
+                         if (event := json.loads(line))["type"] == "judge.followup_required"]
+            self.assertEqual(len(followups), 1)
+            self.assertEqual(followups[0]["payload"]["next_role"], "research_lead")
             header = render_header(snap)
             self.assertIn("Started", header)
             self.assertIn("Cycle start", header)
