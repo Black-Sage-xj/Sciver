@@ -15,6 +15,19 @@ class InvocationContextPreparation:
     def __init__(self, session: InvocationSession):
         self.session = session
 
+    def _record_thread_resume_failure(self, error_type: str, message: str) -> None:
+        from .supervisor_incident import _safe
+
+        failure = {
+            "role": self.session.actual,
+            "stage": self.session.stage,
+            "thread_id": self.session.thread_id,
+            "error_type": error_type,
+            "error": _safe(message, 4000),
+        }
+        self.session.state.setdefault("recovery", {})["thread_resume_failure"] = failure
+        self.session.owner._emit(self.session.state, "agent.thread_resume_failed", failure)
+
     def _prepare_context(self):
         global_context = {
             "goal": self.session.owner.spec.goal,
@@ -236,6 +249,10 @@ class InvocationContextPreparation:
                 if self.session.context.get("submission_delivery"):
                     from .submission_rework import _stop
                     _stop(self.session.owner, self.session.state, "Backend replaced the original Investigator thread; public submission cannot use a new session.")
+                self._record_thread_resume_failure(
+                    "ThreadIdentityChanged",
+                    f"Backend attached {self.session.identifier} instead of the requested thread.",
+                )
                 self.session.continuation = False
                 self.session.state.setdefault("recovery", {})[
                     "mode"
@@ -259,6 +276,7 @@ class InvocationContextPreparation:
                 or not self.session.thread_id
             ):
                 raise
+            self._record_thread_resume_failure(type(exc).__name__, str(exc))
             self.session.state.setdefault("recovery", {})[
                 "mode"
             ] = "fresh_thread_fallback"

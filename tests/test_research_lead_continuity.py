@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -73,3 +74,86 @@ def test_worker_uses_own_preceding_cycle(previous):
                {"status": "over", "cycle_execution_context": {"worker_id": "worker-1"}})
     assert prepare(LeadOwner(root, "5", "worker-1"), {}).thread_id == "worker-lead"
     assert prepare(LeadOwner(root, "4", "worker-2"), {}).thread_id is None
+
+
+def test_cycle_rebind_releases_writer_process_before_resuming_lead(previous, monkeypatch):
+    import fcntl
+    import subprocess
+    import sys
+
+    from openai_codex import Sandbox
+    from theory_master.codex_backend import CodexBackend
+
+    root = previous.spec.research_root
+    workspace = root / "1" / "workspace"
+    workspace.mkdir(parents=True)
+    monkeypatch.setenv("CODEX_HOME", str(root / "codex"))
+    monkeypatch.setattr("theory_master.codex_backend._codex_home", lambda: root / "codex")
+    owner = LeadOwner(root, "2")
+    owner.spec.notes_mirror_dir = None
+    owner.spec.branch_canvas = root / "exploration.canvas"
+    owner.spec.branch_canvas.write_text('{"nodes": [], "edges": []}')
+    owner._graph_database_path = lambda: root / "science_graph.sqlite3"
+    backend = CodexBackend(workspace, owner.routes)
+    owner.backend = backend
+    lock_path = root / "lead-writer.lock"
+    writer_code = """
+import fcntl
+import sys
+with open(sys.argv[1], "a+") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    print("locked", flush=True)
+    sys.stdin.read()
+"""
+    with subprocess.Popen(
+        [sys.executable, "-c", writer_code, str(lock_path)],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+    ) as writer, lock_path.open("a+") as resumed_lock:
+        assert writer.stdout.readline().strip() == "locked"
+
+        def close_writer():
+            writer.terminate()
+            writer.wait(timeout=5)
+
+        old_client = SimpleNamespace(close=Mock(side_effect=close_writer))
+        backend.client = old_client
+        backend.threads = {"first-lead": object()}
+        client = Mock()
+
+        def resume(thread_id, **kwargs):
+            fcntl.flock(resumed_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return SimpleNamespace(id=thread_id)
+
+        client.thread_resume.side_effect = resume
+        monkeypatch.setattr(backend, "_ensure_client", lambda: client)
+        monkeypatch.setattr(backend, "_thread_config", lambda *args: {})
+        try:
+            owner._bind_cycle(root / "2", create=True)
+            old_client.close.assert_called_once()
+            assert writer.poll() is not None
+            assert backend.client is None and backend.threads == {}
+            call = prepare(owner, {"runtime_codex_account": "1"})
+            assert call.thread_id == "first-lead" and call.continuation
+            assert backend.ensure_thread("research_lead", call.thread_id, "m", "p") == "first-lead"
+            assert client.thread_resume.call_args.kwargs["cwd"] == str(root / "2" / "workspace")
+            assert client.thread_resume.call_args.kwargs["sandbox"] == Sandbox.read_only
+            client.thread_start.assert_not_called()
+        finally:
+            if writer.poll() is None:
+                close_writer()
+
+
+def test_failed_client_close_keeps_the_client_available_for_recovery(previous):
+    root = previous.spec.research_root
+    owner = LeadOwner(root, "2")
+    owner.spec.notes_mirror_dir = None
+    owner.spec.branch_canvas = root / "exploration.canvas"
+    owner.spec.branch_canvas.write_text('{"nodes": [], "edges": []}')
+    owner._graph_database_path = lambda: root / "science_graph.sqlite3"
+    client = SimpleNamespace(close=Mock(side_effect=RuntimeError("close failed")))
+    owner.backend = SimpleNamespace(cwd=root / "1", client=client,
+                                    threads={"first-lead": object()})
+    with pytest.raises(RuntimeError, match="close failed"):
+        owner._bind_cycle(root / "2", create=True)
+    assert owner.backend.client is client
+    assert "first-lead" in owner.backend.threads

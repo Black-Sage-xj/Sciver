@@ -311,6 +311,38 @@ def test_preparation_does_not_relabel_typed_stops_as_submission_failure(tmp_path
     assert session.owner.backend.ensure_thread.call_count == 1
 
 
+@pytest.mark.parametrize("replacement", [
+    RuntimeError("writer lock busy password=synthetic-value"), "replacement-thread",
+])
+def test_lead_fallback_records_the_original_failure(tmp_path, replacement):
+    session = preparation_session(tmp_path)
+    session.role = session.actual = "research_lead"
+    session.stage = "cycle_synthesis"
+    session.context = {}
+    session.owner.routes = {"research_lead": NS(model="model", provider="provider")}
+    session.owner._load_research_lead_state = lambda: {}
+    session.owner._research_lead_reset_epoch = lambda: None
+    session.state["threads"] = {"research_lead": THREAD}
+    session.state["runtime_thread_providers"] = {"research_lead": "provider"}
+    InvocationPreparation(session)._prepare_thread()
+    session.owner.backend.ensure_thread.side_effect = [replacement, "replacement-thread"]
+    InvocationContextPreparation(session)._prepare_context()
+    assert session.identifier == "replacement-thread" and not session.continuation
+    assert session.state["recovery"]["mode"] == "fresh_thread_fallback"
+    failure = session.state["recovery"]["thread_resume_failure"]
+    assert failure["thread_id"] == THREAD
+    assert failure["role"] == "research_lead" and failure["stage"] == "cycle_synthesis"
+    if isinstance(replacement, BaseException):
+        assert failure["error_type"] == "RuntimeError"
+        assert failure["error"] == "writer lock busy password=[redacted]"
+    else:
+        assert failure["error_type"] == "ThreadIdentityChanged"
+        assert "replacement-thread" in failure["error"]
+    session.owner._emit.assert_called_once_with(
+        session.state, "agent.thread_resume_failed", failure,
+    )
+
+
 def test_reconnect_rejects_backend_thread_replacement_before_second_turn(tmp_path, monkeypatch):
     monkeypatch.setenv("THEORY_MASTER_INVESTIGATOR_BUDGET_TOKENS", "2000")
     session = preparation_session(tmp_path)

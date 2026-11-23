@@ -442,7 +442,11 @@ class WorkflowStateMixin:
             self.backend.cwd = self.cycle_workspace  # type: ignore[attr-defined]
             if hasattr(self.backend, "cycle_id"):
                 self.backend.cycle_id = cycle.name  # type: ignore[attr-defined]
-            if getattr(self.backend, "client", None) is not None:
+            client = getattr(self.backend, "client", None)
+            if client is not None:
+                # SDK reader threads keep the old app-server alive. Release its
+                # thread writer locks before another client resumes the Lead.
+                client.close()
                 self.backend.client = None  # type: ignore[attr-defined]
                 if hasattr(self.backend, "threads"):
                     self.backend.threads = {}  # type: ignore[attr-defined]
