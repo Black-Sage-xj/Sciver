@@ -57,6 +57,8 @@ class QualificationSession:
     branch: Any = None
 
     def __post_init__(self):
+        if self.preparation_feedback is None:
+            self.preparation_feedback = {}
         from .qualification_proposal import QualificationProposal
         from .qualification_recovery import QualificationRecovery
         from .qualification_review import QualificationReview
