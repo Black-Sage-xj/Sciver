@@ -206,6 +206,7 @@ MODULE_CATEGORIES: dict[str, str] = {
     "test_repair_verification_state_machine_20261022": "architecture",
     "test_cycle_anomalies": "regression",
     "test_costs": "ui",
+    "test_usage_readonly_auth": "regression",
     "test_cycle_audit_relay": "regression",
     "test_cycle_git_commit": "invariant",
     "test_error_relay": "invariant",
