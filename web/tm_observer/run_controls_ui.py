@@ -37,6 +37,9 @@ def can_resume_state(state: dict[str, Any]) -> bool:
 
 
 def control_panel(run: dict[str, Any]) -> str:
+    external = run.get("external_execution")
+    if isinstance(external, dict) and external.get("managed"):
+        return '<p class="tm-tui-unavailable" role="status">此任务由批次队列管理，启动和恢复沿用该队列。</p>'
     state = run_monitor.data(run)
     status = str(state.get("status") or "").upper()
     cycle = str(state.get("cycle_id") or run.get("cycle") or "")

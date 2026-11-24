@@ -601,6 +601,22 @@ def collect_run(task: TaskLocation | Path) -> dict[str, Any]:
         "method": "derived",
     }
 
+    from .external_execution import project as project_external
+    external = project_external(research_root, task_root, config, runtime, research_state,
+                                {**run_state, "current_agent": active_agent})
+    if external is not None:
+        state = external["state"]
+        phase = external["phase"]
+        pid_int, pid_alive = external["pid"], external["pid_alive"]
+        execution_active, active_agent = external["execution_active"], external["active_agent"]
+        if external.get("display_name"):
+            task_name = str(external["display_name"])
+        last_activity = _latest_stamp([last_activity, external.get("updated_at")])
+        provenance["last_activity_at"]["source"] += "; " + str(external.get("status_source") or external["source"])
+        for field in ("state", "phase", "pid", "pid_alive", "active_agent"):
+            provenance[field] = {"source": external["source"], "field": field,
+                                 "method": "registered_executor_projection"}
+
     warnings: list[dict[str, str]] = []
     if state == "ORPHANED":
         warnings.append(
@@ -622,7 +638,7 @@ def collect_run(task: TaskLocation | Path) -> dict[str, Any]:
                 "source": run_source if run_state else research_source,
             }
         )
-    if not cycle_dir:
+    if not cycle_dir and state not in {"QUEUED", "RECOVERING"}:
         warnings.append(
             {
                 "code": "NO_CYCLE",
@@ -654,6 +670,8 @@ def collect_run(task: TaskLocation | Path) -> dict[str, Any]:
         "active_agent": active_agent,
         "pid": pid_int,
         "pid_alive": pid_alive,
+        "execution_active": execution_active,
+        "external_execution": external,
         "started_at": started_at,
         "last_activity_at": last_activity,
         "tokens_total": tokens_total,

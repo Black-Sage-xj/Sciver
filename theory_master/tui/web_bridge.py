@@ -123,7 +123,7 @@ def _latest_dialogue(run_dir: Path | None) -> dict[str, str] | None:
 
 
 def project(research_root: Path, *, secondary: str = "", cycle_dir: Path | None = None,
-            worker_id: str | None = None) -> dict[str, Any]:
+            worker_id: str | None = None, external_lifecycle: dict | None = None) -> dict[str, Any]:
     source = FileSource(research_root)
     if worker_id is not None:
         # Worker tabs must not display FileSource's task-global latest Cycle.
@@ -191,6 +191,13 @@ def project(research_root: Path, *, secondary: str = "", cycle_dir: Path | None 
     # Work on a copy. Never edit the canonical runtime_events.jsonl,
     # run_state.json, or original action_history on disk.
     state = {**state, "action_history": _readable_action_history(state.get("action_history"))}
+    if isinstance(external_lifecycle, dict) and external_lifecycle.get("managed") and worker_id is None:
+        state.update(status=external_lifecycle.get("status", "UNKNOWN"),
+                     phase=external_lifecycle.get("phase", "unknown"),
+                     execution_active=external_lifecycle.get("execution_active") is True,
+                     current_agent=external_lifecycle.get("active_agent"))
+        if state["status"] not in {"NEEDS_ATTENTION", "PAUSED"}:
+            state.update(attention={}, human_attention=None, error=None)
     parts: dict[str, str] = {}
     for key, renderer in PRIMARY.items():
         try:
@@ -550,7 +557,7 @@ def main() -> int:
         if worker_id is not None and not isinstance(worker_id, str):
             return 2
         result = project(research_root, secondary=secondary, cycle_dir=cycle_dir,
-                         worker_id=worker_id)
+                         worker_id=worker_id, external_lifecycle=request.get("external_lifecycle"))
         sys.stdout.write(json.dumps(result, ensure_ascii=False, default=str))
         return 0
     except (OSError, TypeError, ValueError, UnicodeError, json.JSONDecodeError):

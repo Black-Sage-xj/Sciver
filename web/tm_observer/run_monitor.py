@@ -84,6 +84,14 @@ def data(run: dict[str, Any]) -> dict[str, Any]:
     snapshot.setdefault("master_id", run.get("run_id"))
     snapshot.setdefault("status", run.get("raw_status") or run.get("state"))
     snapshot.setdefault("current_agent", run.get("active_agent"))
+    external = run.get("external_execution")
+    if isinstance(external, dict) and external.get("managed"):
+        snapshot.update(status=external["status"], phase=external["phase"],
+                        execution_active=external["execution_active"],
+                        current_agent=external.get("active_agent"), resumable=False)
+        if external["status"] not in {"NEEDS_ATTENTION", "PAUSED"}:
+            snapshot["attention"] = {}
+            snapshot["human_attention"] = None
     return snapshot
 
 

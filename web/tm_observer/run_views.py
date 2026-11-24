@@ -65,7 +65,7 @@ def _state_class(status: Any) -> str:
         return "running"
     if status in {"FAILED", "FAILED_RECOVERY", "ORPHANED", "UNRESPONSIVE"}:
         return "error"
-    if status in {"NEEDS_ATTENTION", "PAUSED", "INTERRUPTED", "WAITING_QUOTA"}:
+    if status in {"NEEDS_ATTENTION", "PAUSED", "INTERRUPTED", "WAITING_QUOTA", "OBSERVATION_STALE", "TIME_LIMIT"}:
         return "attention"
     return "neutral"
 
@@ -76,6 +76,8 @@ def _state_label(status: Any) -> str:
     return {
         "LIVE": "运行中", "RUNNING": "运行中", "ACTIVE": "运行中",
         "STARTING": "正在启动", "RECOVERING": "正在恢复",
+        "QUEUED": "排队中", "TIME_LIMIT": "达到时间上限",
+        "OBSERVATION_STALE": "状态采集待更新",
         "PAUSED": "已暂停", "INTERRUPTED": "已中断", "WAITING_QUOTA": "等待额度",
         "NEEDS_ATTENTION": "需要处理", "FAILED": "运行失败",
         "FAILED_RECOVERY": "恢复失败", "ORPHANED": "运行进程失联",
@@ -106,6 +108,8 @@ def _index_url(query: str, status: str, page: int) -> str:
 
 
 def _index_state(row: dict[str, Any]) -> str:
+    if (row.get("external_execution") or {}).get("managed"):
+        return str(row.get("state") or "UNKNOWN").upper()
     if row.get("sealed_goal_cycle"):
         return "GOAL_PASSED"
     return str(row.get("state") or "UNKNOWN").upper()
@@ -188,6 +192,24 @@ def run_index_body(state: dict[str, Any], *, query: str = "", status: str = "", 
     const row=event.target.closest('tr[data-task-url]');
     if(row&&['Enter',' '].includes(event.key)){{event.preventDefault();window.location.assign(row.dataset.taskUrl);}}
   }});
+  let refreshing=false;
+  async function refreshTasks(){{
+    if(refreshing||document.hidden||table.contains(document.activeElement))return;
+    refreshing=true;
+    try{{
+      const response=await fetch(window.location.href,{{cache:'no-store',credentials:'same-origin'}});
+      if(!response.ok)return;
+      const page=new DOMParser().parseFromString(await response.text(),'text/html');
+      const body=page.querySelector('.tm-run-table tbody');
+      if(body)table.tBodies[0].innerHTML=body.innerHTML;
+      for(const selector of ['.tm-run-heading','.tm-run-pagination']){{
+        const old=document.querySelector(selector),next=page.querySelector(selector);
+        if(old&&next)old.innerHTML=next.innerHTML;
+      }}
+    }}catch(error){{ /* Keep the last readable snapshot during a connection gap. */ }}
+    finally{{refreshing=false;}}
+  }}
+  window.setInterval(refreshTasks,5000);
 }})();
 </script>
 '''
@@ -197,7 +219,15 @@ def _index_state_badge(row: dict[str, Any]) -> str:
     status = _index_state(row)
     goal_cycle = row.get("sealed_goal_cycle")
     title = f"Goal 通过于 Cycle {goal_cycle}" if goal_cycle else row.get("state") or "UNKNOWN"
-    chip = "" if goal_cycle else supervisor_index_chip(row)
+    external = row.get("external_execution") or {}
+    if external.get("managed"):
+        title = external.get("message") or title
+        if goal_cycle:
+            title += f" · Goal 通过于 Cycle {goal_cycle}"
+    chip = "" if goal_cycle or external.get("managed") else supervisor_index_chip(row)
+    if external.get("queue_position"):
+        queue_label = "评分队列" if status == "TIME_LIMIT" else "队列"
+        chip += '<small class="tm-run-id"> ' + queue_label + '第 ' + _e(external["queue_position"]) + ' 位</small>'
     return (f'<span class="tm-run-state tm-run-state-{_state_class(status)}" title="{_e(title)}">'
             f'{_e(_state_label(status))}</span>{chip}')
 
@@ -1722,6 +1752,11 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
         '<p class="tm-tui-unavailable">' + _e(projection.get("unavailable")) + '</p>'
         if projection.get("unavailable") else ""
     )
+    external = run.get("external_execution")
+    if isinstance(external, dict) and external.get("managed"):
+        state_note = ('<p class="tm-tui-unavailable" role="status" data-execution-state="'
+                      + _e(external["state"]) + '">' + _e(external.get("message"))
+                      + ' · 状态采集：' + _e(_relative_time(external.get("observed_at"))) + '</p>')
     if pause_pending:
         state_note += ('<p class="tm-tui-unavailable" role="status">'
                        '暂停请求已收到；当前 Agent 仍在执行，等待安全检查点后才会暂停。</p>')
@@ -1813,9 +1848,9 @@ def run_detail_body(run: dict[str, Any], *, tab: str = "activity", fragment: boo
                               attention=projection.get("attention"), show_codex_quota=True,
                               recovery_info=projection.get("recovery_info"),
                               quota_snapshot=quota_snapshot, worker_account=pinned_worker_account, explore_map_card=explore_map,
-                              resume_available=can_resume_state(run_monitor.data(run)),
-                              run_available=(status_key in {"OVER", "CANCELLED", "STOPPED", "IDLE", "NEW"}),
-                              allow_process_actions=not bool(selected_worker),
+                              resume_available=not bool(external) and can_resume_state(run_monitor.data(run)),
+                              run_available=(not bool(external) and status_key in {"OVER", "CANCELLED", "STOPPED", "IDLE", "NEW"}),
+                              allow_process_actions=not bool(selected_worker) and not bool(external),
                               effective_status=status_key,
                               worker_state_actions=bool(selected_worker and worker_actions),
                               worker_cycle_progress=worker_cycle_progress)}

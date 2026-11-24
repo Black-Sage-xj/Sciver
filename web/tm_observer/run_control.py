@@ -210,6 +210,9 @@ def execute(run: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     Caller MUST first authenticate and check Origin/CSRF. Discovered `run`
     must come from the server's own task index, never a client-supplied path.
     """
+    external = run.get("external_execution")
+    if isinstance(external, dict) and external.get("managed"):
+        raise OperatorError("此任务由批次队列管理，请通过该队列操作，避免重复启动或影响正在运行的任务", 409)
     action = payload.get("action")
     if not isinstance(action, str) or action not in ACTIONS:
         raise OperatorError("不支持的任务操作")

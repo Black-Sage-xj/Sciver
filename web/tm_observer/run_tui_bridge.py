@@ -21,7 +21,8 @@ SECONDARY = frozenset({"logs", "thread", "events", "artifacts", "research"})
 def read_tui(run: dict[str, Any], *, secondary: str = "") -> dict[str, Any]:
     cycle = _safe_cycle(run)
     if cycle is None:
-        return {"parts": {}, "unavailable": "该任务尚无可读取的 Cycle 数据"}
+        external = run.get("external_execution")
+        return {"parts": {}, "unavailable": external.get("message") if isinstance(external, dict) else "该任务尚无可读取的 Cycle 数据"}
     if secondary not in SECONDARY:
         secondary = ""
     root = Path(str(run["research_root"]))
@@ -32,7 +33,9 @@ def read_tui(run: dict[str, Any], *, secondary: str = "") -> dict[str, Any]:
         done = subprocess.run(
             [sys.executable, "-m", "theory_master.tui.web_bridge"],
             input=json.dumps({"research_root": str(root), "cycle_dir": str(cycle), "secondary": secondary,
-                              "worker_id": run.get("worker_id")}),
+                              "worker_id": run.get("worker_id"),
+                              "external_lifecycle": {key: (run.get("external_execution") or {}).get(key)
+                                  for key in ("managed", "status", "phase", "execution_active", "active_agent")}}),
             capture_output=True, text=True, timeout=9, check=False, shell=False, env=env,
         )
         if done.returncode != 0 or len(done.stdout) > (850_000 if secondary == "events" else 240_000):
