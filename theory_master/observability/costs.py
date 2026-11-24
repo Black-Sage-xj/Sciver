@@ -126,10 +126,15 @@ def assess_cost(*, provider: str | None, model_vendor: str | None, model: str | 
 def codex_thread_turn_usage_records(
     thread_ids: list[str], *, sessions_root: Path | None = None,
 ) -> list[tuple[str, str | None, dict[str, int]]]:
-    """Recover final usage keyed by native thread and completed turn IDs."""
+    """Read completed usage without initializing accounts or changing auth.
+
+    A pinned Worker can own credentials independently of the account selector.
+    Observability must not migrate that home merely to locate session files.
+    """
     if sessions_root is None:
-        from theory_master.codex_accounts import ensure_layout
-        codex_home = ensure_layout()["runtime"]
+        from theory_master.codex_accounts import runtime_home
+        worker_home = os.environ.get("THEORYMASTER_WORKER_CODEX_HOME", "").strip()
+        codex_home = Path(worker_home).expanduser() if worker_home else runtime_home()
         root = codex_home / "sessions"
     else:
         root = sessions_root
